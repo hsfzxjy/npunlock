@@ -8,6 +8,7 @@ include(CMakePackageConfigHelpers)
 
 option(NPUNLOCK_BUILD_TESTS "Build offline unit tests" ON)
 option(NPUNLOCK_ENABLE_NPU_TESTS "Enable tests that require an Intel NPU" OFF)
+option(NPUNLOCK_ENABLE_GRAPHINFER_TESTS "Enable caller-supplied graph inference tests" OFF)
 option(NPUNLOCK_ENABLE_MOVITOOLS_TESTS "Enable tests that invoke caller-supplied MoviTools" OFF)
 option(NPUNLOCK_ENABLE_PATCHBLOB_TESTS "Enable tests using caller-supplied retained graph fixtures" OFF)
 set(NPUNLOCK_MOVITOOLS_DIR "" CACHE PATH "Directory containing the three MoviTools DLLs")
@@ -20,6 +21,10 @@ set(NPUNLOCK_NPU_TEST_IR_XML "" CACHE FILEPATH "IR XML for the NPU integration t
 set(NPUNLOCK_NPU_TEST_WEIGHTS "" CACHE FILEPATH "Weights for the NPU integration test")
 set(NPUNLOCK_NPU_TEST_EXPECTED_BLOB "" CACHE FILEPATH
     "Expected repeatable native blob for the NPU integration test")
+set(NPUNLOCK_GRAPHINFER_TEST_GRAPH "" CACHE FILEPATH "Native graph for graphinfer testing")
+set(NPUNLOCK_GRAPHINFER_TEST_INPUT "" CACHE FILEPATH "Raw input tensor for graphinfer testing")
+set(NPUNLOCK_GRAPHINFER_TEST_EXPECTED_OUTPUT "" CACHE FILEPATH
+    "Expected raw output tensor for graphinfer testing")
 set(NPUNLOCK_PATCHBLOB_TEST_CARRIER "" CACHE FILEPATH "ACT carrier graph for patchblob testing")
 set(NPUNLOCK_PATCHBLOB_TEST_ELF "" CACHE FILEPATH "Linked SHAVE ELF for patchblob testing")
 set(NPUNLOCK_PATCHBLOB_TEST_EXPECTED_BLOB "" CACHE FILEPATH
@@ -57,20 +62,20 @@ target_link_libraries(npunlock_common PRIVATE $<BUILD_INTERFACE:npunlock_warning
 if(WIN32)
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_win32.c)
   set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_win32.c)
-  set(NPUNLOCK_RUN_WORKER_SOURCE src/npurun/run_worker_win32.c)
+  set(NPUNLOCK_INFER_WORKER_SOURCE src/graphinfer/infer_worker_win32.c)
   add_executable(npunlock_movi_worker src/workers/movi_worker.c)
   target_include_directories(npunlock_movi_worker PRIVATE src/workers)
   target_link_libraries(npunlock_movi_worker PRIVATE npunlock_warnings)
   add_executable(npunlock_ir_worker src/workers/ir_worker.c)
   target_include_directories(npunlock_ir_worker PRIVATE src/workers)
   target_link_libraries(npunlock_ir_worker PRIVATE npunlock_warnings)
-  add_executable(npunlock_run_worker src/workers/run_worker.c)
-  target_include_directories(npunlock_run_worker PRIVATE src/workers)
-  target_link_libraries(npunlock_run_worker PRIVATE npunlock_warnings)
+  add_executable(npunlock_infer_worker src/workers/infer_worker.c)
+  target_include_directories(npunlock_infer_worker PRIVATE src/workers)
+  target_link_libraries(npunlock_infer_worker PRIVATE npunlock_warnings)
 else()
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_stub.c)
   set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_stub.c)
-  set(NPUNLOCK_RUN_WORKER_SOURCE src/npurun/run_worker_stub.c)
+  set(NPUNLOCK_INFER_WORKER_SOURCE src/graphinfer/infer_worker_stub.c)
 endif()
 
 add_library(shavecc src/shavecc/shavecc.c ${NPUNLOCK_MOVI_STAGE_SOURCE})
@@ -102,26 +107,37 @@ target_include_directories(patchblob PUBLIC
 target_include_directories(patchblob PRIVATE src/common src/patchblob)
 target_link_libraries(patchblob PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
 
+add_library(graphinfer src/graphinfer/graphinfer.c ${NPUNLOCK_INFER_WORKER_SOURCE})
+add_library(npunlock::graphinfer ALIAS graphinfer)
+target_include_directories(graphinfer PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+target_include_directories(graphinfer PRIVATE src src/common src/graphinfer)
+target_link_libraries(graphinfer PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
+
 target_compile_definitions(npunlock_common PRIVATE NPUNLOCK_COMMON_BUILDING)
 target_compile_definitions(shavecc PRIVATE NPUNLOCK_SHAVECC_BUILDING)
 target_compile_definitions(ir2blob PRIVATE NPUNLOCK_IR2BLOB_BUILDING)
 target_compile_definitions(patchblob PRIVATE NPUNLOCK_PATCHBLOB_BUILDING)
-foreach(target npunlock_common shavecc ir2blob patchblob)
+target_compile_definitions(graphinfer PRIVATE NPUNLOCK_GRAPHINFER_BUILDING)
+foreach(target npunlock_common shavecc ir2blob patchblob graphinfer)
   if(BUILD_SHARED_LIBS)
     target_compile_definitions(${target} PUBLIC NPUNLOCK_SHARED)
   endif()
 endforeach()
 
-add_executable(npurun src/npurun/main.c ${NPUNLOCK_RUN_WORKER_SOURCE})
+add_executable(npurun src/npurun/main.c)
 target_include_directories(npurun PRIVATE src src/common src/npurun)
 target_link_libraries(npurun
-  PRIVATE shavecc ir2blob patchblob npunlock_common $<BUILD_INTERFACE:npunlock_warnings>
+  PRIVATE shavecc ir2blob patchblob graphinfer npunlock_common $<BUILD_INTERFACE:npunlock_warnings>
 )
 
 set(NPUNLOCK_FORMAT_SOURCES
   include/npunlock/api.h
   include/npunlock/buffer.h
   include/npunlock/error.h
+  include/npunlock/graphinfer.h
   include/npunlock/ir2blob.h
   include/npunlock/patchblob.h
   include/npunlock/shavecc.h
@@ -138,10 +154,11 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/ir2blob/ir_worker.h
   src/ir2blob/ir_worker_stub.c
   src/ir2blob/ir_worker_win32.c
+  src/graphinfer/graphinfer.c
+  src/graphinfer/infer_worker.h
+  src/graphinfer/infer_worker_stub.c
+  src/graphinfer/infer_worker_win32.c
   src/npurun/main.c
-  src/npurun/run_worker.h
-  src/npurun/run_worker_stub.c
-  src/npurun/run_worker_win32.c
   src/patchblob/patchblob.c
   src/patchblob/graph_blob.c
   src/patchblob/graph_blob.h
@@ -154,11 +171,12 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/workers/ir_protocol.h
   src/workers/ir_worker.c
   src/workers/level_zero_min.h
-  src/workers/run_protocol.h
-  src/workers/run_worker.c
+  src/workers/infer_protocol.h
+  src/workers/infer_worker.c
   tests/package/smoke.c
   tests/integration/test_shavecc.c
   tests/integration/test_ir2blob.c
+  tests/integration/test_graphinfer.c
   tests/integration/test_patchblob.c
   tests/unit/test_api.c
   tests/unit/test_common.c
@@ -204,10 +222,10 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
 
   add_executable(npunlock_test_api tests/unit/test_api.c)
   if(WIN32)
-    add_dependencies(npunlock_test_api npunlock_movi_worker npunlock_ir_worker npunlock_run_worker)
+    add_dependencies(npunlock_test_api npunlock_movi_worker npunlock_ir_worker npunlock_infer_worker)
   endif()
   target_link_libraries(
-    npunlock_test_api PRIVATE shavecc ir2blob patchblob npunlock_common npunlock_warnings
+    npunlock_test_api PRIVATE shavecc ir2blob patchblob graphinfer npunlock_common npunlock_warnings
   )
   add_test(NAME api_contract COMMAND npunlock_test_api)
 
@@ -326,11 +344,40 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     )
     set_tests_properties(npu_ir2blob_abs PROPERTIES TIMEOUT 30)
   endif()
+
+  if(NPUNLOCK_ENABLE_GRAPHINFER_TESTS)
+    if(NOT WIN32)
+      message(FATAL_ERROR "graphinfer integration tests require Windows")
+    endif()
+    foreach(required_file
+        NPUNLOCK_GRAPHINFER_TEST_GRAPH
+        NPUNLOCK_GRAPHINFER_TEST_INPUT
+        NPUNLOCK_GRAPHINFER_TEST_EXPECTED_OUTPUT)
+      if(NOT IS_ABSOLUTE "${${required_file}}" OR NOT EXISTS "${${required_file}}")
+        message(FATAL_ERROR "${required_file} must name an existing absolute file")
+      endif()
+    endforeach()
+    add_executable(npunlock_test_graphinfer_integration tests/integration/test_graphinfer.c)
+    target_link_libraries(
+      npunlock_test_graphinfer_integration PRIVATE graphinfer npunlock_common npunlock_warnings
+    )
+    add_dependencies(npunlock_test_graphinfer_integration npunlock_infer_worker)
+    add_test(
+      NAME npu_graphinfer
+      COMMAND npunlock_test_graphinfer_integration
+        "${NPUNLOCK_GRAPHINFER_TEST_GRAPH}"
+        "${NPUNLOCK_GRAPHINFER_TEST_INPUT}"
+        "${NPUNLOCK_GRAPHINFER_TEST_EXPECTED_OUTPUT}"
+    )
+    set_tests_properties(npu_graphinfer PROPERTIES TIMEOUT 30)
+  endif()
 endif()
 
-set(NPUNLOCK_INSTALL_TARGETS npunlock_common shavecc ir2blob patchblob npurun)
+set(NPUNLOCK_INSTALL_TARGETS npunlock_common shavecc ir2blob patchblob graphinfer npurun)
 if(WIN32)
-  list(APPEND NPUNLOCK_INSTALL_TARGETS npunlock_movi_worker npunlock_ir_worker npunlock_run_worker)
+  list(APPEND NPUNLOCK_INSTALL_TARGETS
+    npunlock_movi_worker npunlock_ir_worker npunlock_infer_worker
+  )
 endif()
 install(TARGETS ${NPUNLOCK_INSTALL_TARGETS}
   EXPORT npunlockTargets

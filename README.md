@@ -400,7 +400,7 @@ The project deliberately exposes only the contracts that have been observed and 
 
 ## Current MVP command
 
-`npurun build` is the file-oriented boundary over the three C libraries. It
+`npurun build` is the file-oriented boundary over the four C libraries. It
 compiles an OpenVINO-format IR through the NPU driver, compiles the supplied C
 through caller-selected MoviTools DLLs, validates and patches explicit ACT
 invocation/range pairs, then writes the graph and provenance manifest:
@@ -433,11 +433,16 @@ artifacts:
 npurun build `
   # the same build and explicit patch options shown above `
   --run-add1 `
+  --run-input input.fp16 `
   --run-output output.fp16
 ```
 
-This execution option is intentionally operator-specific. It is not a general
-graph runner and does not infer computation correctness from driver acceptance.
+The CLI oracle remains intentionally operator-specific. General caller-provided
+native graph and tensor execution is available through the public `graphinfer`
+C library. `graphinfer` selects inputs by explicit graph-argument index or exact
+name, requires the caller to cover every graph input, and returns all output
+metadata and buffers through library-owned allocations. Its current contract is
+bounded static dense FP16 tensors; driver calls execute in a finite-lived worker.
 
 ## Python frontend
 
@@ -455,8 +460,9 @@ xml, weights = serialized.xml, serialized.weights
 ```
 
 The package serializes OpenVINO-format IR without importing OpenVINO and binds
-the three public C libraries directly through `ctypes`. Custom nodes lower to
+the four public C libraries directly through `ctypes`. Custom nodes lower to
 caller-selected carrier operators and still require explicit advanced
 `PatchTarget` values, preserving the C MVP's validated selector boundary.
-General NumPy-backed `Program.run()` is not exposed yet because the public C
-ABI does not yet accept caller-supplied execution buffers.
+`Program.run()` validates named NumPy FP16 inputs against the symbolic graph,
+calls `graphinfer`, and returns copied NumPy outputs without implementing a
+second Level Zero execution path in Python.

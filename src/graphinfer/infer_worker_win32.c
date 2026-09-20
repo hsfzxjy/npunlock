@@ -9,9 +9,9 @@
 #include <string.h>
 #include <wchar.h>
 
+#include "infer_worker.h"
 #include "internal.h"
-#include "run_worker.h"
-#include "workers/run_protocol.h"
+#include "workers/infer_protocol.h"
 
 typedef struct request_writer {
   HANDLE pipe;
@@ -73,7 +73,7 @@ static wchar_t *utf8_to_wide(npunlock_view value) {
 }
 
 static wchar_t *default_worker_path(void) {
-  static const wchar_t worker_name[] = L"npunlock_run_worker.exe";
+  static const wchar_t worker_name[] = L"npunlock_infer_worker.exe";
   HMODULE module = NULL;
   wchar_t *path;
   DWORD length;
@@ -110,25 +110,68 @@ static wchar_t *default_worker_path(void) {
   return path;
 }
 
-static npunlock_status build_request(npunlock_view graph_blob, uint8_t **request,
-                                     size_t *request_size) {
-  size_t total;
+static npunlock_status build_request(uint32_t driver_index, uint32_t device_index,
+                                     npunlock_view graph_blob, const graphinfer_input *inputs,
+                                     size_t input_count, uint8_t **request, size_t *request_size) {
+  size_t descriptors_size;
+  size_t input_payload_size = 0;
+  size_t total = NPUNLOCK_INFER_REQUEST_HEADER_SIZE;
+  size_t payload_offset = 0;
+  size_t cursor;
+  size_t index;
   uint8_t *data;
-  if (!npunlock_view_is_valid(graph_blob) || graph_blob.size == 0 ||
-      graph_blob.size > NPUNLOCK_RUN_MAX_GRAPH_SIZE ||
-      !npunlock_checked_add_size(NPUNLOCK_RUN_REQUEST_HEADER_SIZE, graph_blob.size, &total)) {
+  if (!npunlock_checked_mul_size(input_count, NPUNLOCK_INFER_REQUEST_INPUT_SIZE,
+                                 &descriptors_size) ||
+      !npunlock_checked_add_size(total, descriptors_size, &total) ||
+      !npunlock_checked_add_size(total, graph_blob.size, &total)) {
+    return NPUNLOCK_STATUS_OVERFLOW;
+  }
+  for (index = 0; index < input_count; ++index) {
+    if (!npunlock_checked_add_size(input_payload_size, inputs[index].argument_name_utf8.size,
+                                   &input_payload_size) ||
+        !npunlock_checked_add_size(input_payload_size, inputs[index].data.size,
+                                   &input_payload_size)) {
+      return NPUNLOCK_STATUS_OVERFLOW;
+    }
+  }
+  if (graph_blob.size > NPUNLOCK_INFER_MAX_GRAPH_SIZE ||
+      input_payload_size > NPUNLOCK_INFER_MAX_INPUT_SIZE ||
+      !npunlock_checked_add_size(total, input_payload_size, &total)) {
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
   }
   data = (uint8_t *)calloc(1, total);
   if (data == NULL) {
     return NPUNLOCK_STATUS_OUT_OF_MEMORY;
   }
-  store_u32(data, NPUNLOCK_RUN_REQUEST_MAGIC);
-  store_u32(data + 4, NPUNLOCK_RUN_PROTOCOL_VERSION);
-  store_u32(data + 8, UINT32_MAX);
-  store_u32(data + 12, UINT32_MAX);
+  store_u32(data, NPUNLOCK_INFER_REQUEST_MAGIC);
+  store_u32(data + 4, NPUNLOCK_INFER_PROTOCOL_VERSION);
+  store_u32(data + 8, driver_index);
+  store_u32(data + 12, device_index);
   store_u64(data + 16, graph_blob.size);
-  memcpy(data + NPUNLOCK_RUN_REQUEST_HEADER_SIZE, graph_blob.data, graph_blob.size);
+  store_u32(data + 24, (uint32_t)input_count);
+  store_u32(data + 28, NPUNLOCK_INFER_REQUEST_INPUT_SIZE);
+  store_u64(data + 32, input_payload_size);
+  cursor = NPUNLOCK_INFER_REQUEST_HEADER_SIZE;
+  for (index = 0; index < input_count; ++index) {
+    uint8_t *descriptor = data + cursor + index * NPUNLOCK_INFER_REQUEST_INPUT_SIZE;
+    store_u32(descriptor, inputs[index].argument_index);
+    store_u32(descriptor + 4, (uint32_t)inputs[index].argument_name_utf8.size);
+    store_u64(descriptor + 8, inputs[index].data.size);
+    store_u64(descriptor + 16, payload_offset);
+    payload_offset += inputs[index].argument_name_utf8.size + inputs[index].data.size;
+  }
+  cursor += descriptors_size;
+  memcpy(data + cursor, graph_blob.data, graph_blob.size);
+  cursor += graph_blob.size;
+  for (index = 0; index < input_count; ++index) {
+    if (inputs[index].argument_name_utf8.size != 0) {
+      memcpy(data + cursor, inputs[index].argument_name_utf8.data,
+             inputs[index].argument_name_utf8.size);
+      cursor += inputs[index].argument_name_utf8.size;
+    }
+    memcpy(data + cursor, inputs[index].data.data, inputs[index].data.size);
+    cursor += inputs[index].data.size;
+  }
   *request = data;
   *request_size = total;
   return NPUNLOCK_STATUS_OK;
@@ -154,10 +197,44 @@ static DWORD WINAPI write_request(void *context) {
   return 0;
 }
 
+static bool response_expected_size(const uint8_t *response, size_t response_size,
+                                   size_t *expected) {
+  uint32_t output_count;
+  uint32_t descriptor_size;
+  uint64_t payload_size;
+  uint64_t diagnostic_size;
+  size_t descriptors_size;
+  size_t total = NPUNLOCK_INFER_RESPONSE_HEADER_SIZE;
+  if (response_size < NPUNLOCK_INFER_RESPONSE_HEADER_SIZE) {
+    return false;
+  }
+  if (load_u32(response) != NPUNLOCK_INFER_RESPONSE_MAGIC ||
+      load_u32(response + 4) != NPUNLOCK_INFER_PROTOCOL_VERSION || load_u32(response + 44) != 0) {
+    return false;
+  }
+  output_count = load_u32(response + 36);
+  descriptor_size = load_u32(response + 40);
+  diagnostic_size = load_u64(response + 48);
+  payload_size = load_u64(response + 56);
+  if (output_count > NPUNLOCK_INFER_MAX_ARGUMENTS ||
+      descriptor_size != NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE ||
+      diagnostic_size > NPUNLOCK_INFER_MAX_DIAGNOSTIC_SIZE ||
+      payload_size > NPUNLOCK_INFER_MAX_OUTPUT_SIZE ||
+      !npunlock_checked_mul_size(output_count, descriptor_size, &descriptors_size) ||
+      !npunlock_checked_add_size(total, descriptors_size, &total) ||
+      !npunlock_checked_add_size(total, (size_t)payload_size, &total) ||
+      !npunlock_checked_add_size(total, (size_t)diagnostic_size, &total)) {
+    return false;
+  }
+  *expected = total;
+  return true;
+}
+
 static bool append_response(uint8_t **data, size_t *size, size_t *capacity, HANDLE pipe,
                             DWORD available) {
-  const size_t maximum = NPUNLOCK_RUN_RESPONSE_HEADER_SIZE + NPUNLOCK_RUN_MAX_OUTPUT_SIZE +
-                         NPUNLOCK_RUN_MAX_DIAGNOSTIC_SIZE;
+  const size_t maximum = NPUNLOCK_INFER_RESPONSE_HEADER_SIZE +
+                         NPUNLOCK_INFER_MAX_ARGUMENTS * NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE +
+                         NPUNLOCK_INFER_MAX_OUTPUT_SIZE + NPUNLOCK_INFER_MAX_DIAGNOSTIC_SIZE;
   size_t required;
   DWORD received = 0;
   uint8_t *replacement;
@@ -190,23 +267,11 @@ static bool append_response(uint8_t **data, size_t *size, size_t *capacity, HAND
 
 static bool response_is_complete(const uint8_t *response, size_t response_size, bool *complete) {
   size_t expected;
-  uint32_t output_size;
-  uint32_t diagnostic_size;
   *complete = false;
-  if (response_size < NPUNLOCK_RUN_RESPONSE_HEADER_SIZE) {
+  if (response_size < NPUNLOCK_INFER_RESPONSE_HEADER_SIZE) {
     return true;
   }
-  if (load_u32(response) != NPUNLOCK_RUN_RESPONSE_MAGIC ||
-      load_u32(response + 4) != NPUNLOCK_RUN_PROTOCOL_VERSION || load_u32(response + 36) != 0) {
-    return false;
-  }
-  output_size = load_u32(response + 48);
-  diagnostic_size = load_u32(response + 52);
-  if (output_size > NPUNLOCK_RUN_MAX_OUTPUT_SIZE ||
-      diagnostic_size > NPUNLOCK_RUN_MAX_DIAGNOSTIC_SIZE ||
-      !npunlock_checked_add_size(NPUNLOCK_RUN_RESPONSE_HEADER_SIZE, output_size, &expected) ||
-      !npunlock_checked_add_size(expected, diagnostic_size, &expected) ||
-      response_size > expected) {
+  if (!response_expected_size(response, response_size, &expected) || response_size > expected) {
     return false;
   }
   *complete = response_size == expected;
@@ -214,14 +279,17 @@ static bool response_is_complete(const uint8_t *response, size_t response_size, 
 }
 
 static npunlock_status parse_response(const uint8_t *response, size_t response_size,
-                                      npunlock_run_worker_result *result) {
+                                      npunlock_infer_worker_result *result) {
+  uint32_t output_count;
+  uint64_t diagnostic_size;
+  uint64_t payload_size;
   size_t expected;
-  uint32_t output_size;
-  uint32_t diagnostic_size;
+  size_t descriptors_size;
+  const uint8_t *payload;
+  size_t cursor = 0;
+  size_t index;
   npunlock_status status;
-  if (response_size < NPUNLOCK_RUN_RESPONSE_HEADER_SIZE ||
-      load_u32(response) != NPUNLOCK_RUN_RESPONSE_MAGIC ||
-      load_u32(response + 4) != NPUNLOCK_RUN_PROTOCOL_VERSION) {
+  if (!response_expected_size(response, response_size, &expected) || expected != response_size) {
     return NPUNLOCK_STATUS_DRIVER_FAILED;
   }
   result->worker_status = load_u32(response + 8);
@@ -231,40 +299,76 @@ static npunlock_status parse_response(const uint8_t *response, size_t response_s
   result->driver_version = load_u32(response + 24);
   result->device_vendor_id = load_u32(response + 28);
   result->device_id = load_u32(response + 32);
-  result->element_count = load_u64(response + 40);
-  output_size = load_u32(response + 48);
-  diagnostic_size = load_u32(response + 52);
-  if (output_size > NPUNLOCK_RUN_MAX_OUTPUT_SIZE ||
-      diagnostic_size > NPUNLOCK_RUN_MAX_DIAGNOSTIC_SIZE ||
-      !npunlock_checked_add_size(NPUNLOCK_RUN_RESPONSE_HEADER_SIZE, output_size, &expected) ||
-      !npunlock_checked_add_size(expected, diagnostic_size, &expected) ||
-      expected != response_size) {
+  output_count = load_u32(response + 36);
+  diagnostic_size = load_u64(response + 48);
+  payload_size = load_u64(response + 56);
+  descriptors_size = (size_t)output_count * NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE;
+  payload = response + NPUNLOCK_INFER_RESPONSE_HEADER_SIZE + descriptors_size;
+  if (output_count != 0) {
+    result->outputs = (graphinfer_output *)calloc(output_count, sizeof(*result->outputs));
+    if (result->outputs == NULL) {
+      return NPUNLOCK_STATUS_OUT_OF_MEMORY;
+    }
+  }
+  result->output_count = output_count;
+  for (index = 0; index < output_count; ++index) {
+    const uint8_t *descriptor = response + NPUNLOCK_INFER_RESPONSE_HEADER_SIZE +
+                                index * NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE;
+    graphinfer_output *output = &result->outputs[index];
+    uint32_t name_size = load_u32(descriptor + 12);
+    uint32_t dims_count = load_u32(descriptor + 8);
+    uint64_t data_size = load_u64(descriptor + 40);
+    uint64_t payload_offset = load_u64(descriptor + 48);
+    size_t dimension;
+    if (load_u32(descriptor + 36) != 0 || load_u64(descriptor + 56) != 0 || dims_count == 0 ||
+        dims_count > GRAPHINFER_MAX_DIMS || load_u32(descriptor + 4) != GRAPHINFER_PRECISION_FP16 ||
+        payload_offset != cursor || cursor > payload_size || name_size > payload_size - cursor) {
+      return NPUNLOCK_STATUS_DRIVER_FAILED;
+    }
+    output->struct_size = sizeof(*output);
+    output->argument_index = load_u32(descriptor);
+    output->precision = load_u32(descriptor + 4);
+    output->dims_count = dims_count;
+    for (dimension = 0; dimension < GRAPHINFER_MAX_DIMS; ++dimension) {
+      output->dims[dimension] = load_u32(descriptor + 16 + dimension * 4);
+    }
+    status = npunlock_buffer_copy((npunlock_view){payload + cursor, name_size},
+                                  &output->argument_name_utf8);
+    if (status != NPUNLOCK_STATUS_OK) {
+      return status;
+    }
+    cursor += name_size;
+    if (cursor > payload_size || data_size == 0 || data_size > payload_size - cursor) {
+      return NPUNLOCK_STATUS_DRIVER_FAILED;
+    }
+    status =
+        npunlock_buffer_copy((npunlock_view){payload + cursor, (size_t)data_size}, &output->data);
+    if (status != NPUNLOCK_STATUS_OK) {
+      return status;
+    }
+    cursor += (size_t)data_size;
+  }
+  if (cursor != payload_size) {
     return NPUNLOCK_STATUS_DRIVER_FAILED;
   }
-  status = npunlock_buffer_copy(
-      (npunlock_view){response + NPUNLOCK_RUN_RESPONSE_HEADER_SIZE, output_size}, &result->output);
+  status =
+      npunlock_buffer_copy((npunlock_view){payload + (size_t)payload_size, (size_t)diagnostic_size},
+                           &result->diagnostic);
   if (status != NPUNLOCK_STATUS_OK) {
-    return status;
-  }
-  status = npunlock_buffer_copy(
-      (npunlock_view){response + NPUNLOCK_RUN_RESPONSE_HEADER_SIZE + output_size, diagnostic_size},
-      &result->diagnostic);
-  if (status != NPUNLOCK_STATUS_OK) {
-    npunlock_buffer_release(&result->output);
     return status;
   }
   switch (result->worker_status) {
-  case NPUNLOCK_RUN_WORKER_OK:
+  case NPUNLOCK_INFER_WORKER_OK:
     return NPUNLOCK_STATUS_OK;
-  case NPUNLOCK_RUN_WORKER_OUT_OF_MEMORY:
+  case NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY:
     return NPUNLOCK_STATUS_OUT_OF_MEMORY;
-  case NPUNLOCK_RUN_WORKER_LOADER_NOT_FOUND:
-  case NPUNLOCK_RUN_WORKER_NPU_NOT_FOUND:
+  case NPUNLOCK_INFER_WORKER_LOADER_NOT_FOUND:
+  case NPUNLOCK_INFER_WORKER_NPU_NOT_FOUND:
     return NPUNLOCK_STATUS_NOT_FOUND;
-  case NPUNLOCK_RUN_WORKER_GRAPH_EXTENSION_MISSING:
-  case NPUNLOCK_RUN_WORKER_UNSUPPORTED:
+  case NPUNLOCK_INFER_WORKER_GRAPH_EXTENSION_MISSING:
+  case NPUNLOCK_INFER_WORKER_UNSUPPORTED:
     return NPUNLOCK_STATUS_UNSUPPORTED;
-  case NPUNLOCK_RUN_WORKER_BAD_REQUEST:
+  case NPUNLOCK_INFER_WORKER_BAD_REQUEST:
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
   default:
     return NPUNLOCK_STATUS_DRIVER_FAILED;
@@ -279,18 +383,25 @@ static bool configure_job(HANDLE job) {
          FALSE;
 }
 
-void npunlock_run_worker_result_release(npunlock_run_worker_result *result) {
+void npunlock_infer_worker_result_release(npunlock_infer_worker_result *result) {
+  size_t index;
   if (result == NULL) {
     return;
   }
-  npunlock_buffer_release(&result->output);
+  for (index = 0; index < result->output_count; ++index) {
+    npunlock_buffer_release(&result->outputs[index].argument_name_utf8);
+    npunlock_buffer_release(&result->outputs[index].data);
+  }
+  free(result->outputs);
   npunlock_buffer_release(&result->diagnostic);
   memset(result, 0, sizeof(*result));
 }
 
-npunlock_status npunlock_run_native_worker(npunlock_view worker_executable_utf8,
-                                           npunlock_view graph_blob, uint32_t timeout_ms,
-                                           npunlock_run_worker_result *result) {
+npunlock_status npunlock_run_infer_worker(npunlock_view worker_executable_utf8,
+                                          uint32_t driver_index, uint32_t device_index,
+                                          npunlock_view graph_blob, const graphinfer_input *inputs,
+                                          size_t input_count, uint32_t timeout_ms,
+                                          npunlock_infer_worker_result *result) {
   SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
   STARTUPINFOW startup = {0};
   PROCESS_INFORMATION process = {0};
@@ -320,7 +431,8 @@ npunlock_status npunlock_run_native_worker(npunlock_view worker_executable_utf8,
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
   }
   memset(result, 0, sizeof(*result));
-  status = build_request(graph_blob, &request, &request_size);
+  status = build_request(driver_index, device_index, graph_blob, inputs, input_count, &request,
+                         &request_size);
   if (status != NPUNLOCK_STATUS_OK) {
     goto done;
   }
@@ -501,7 +613,7 @@ done:
   free(command_line);
   if (status != NPUNLOCK_STATUS_OK && status != NPUNLOCK_STATUS_DRIVER_FAILED &&
       status != NPUNLOCK_STATUS_NOT_FOUND && status != NPUNLOCK_STATUS_UNSUPPORTED) {
-    npunlock_run_worker_result_release(result);
+    npunlock_infer_worker_result_release(result);
   }
   return status;
 }

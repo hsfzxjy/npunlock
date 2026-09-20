@@ -118,6 +118,10 @@ class NativeLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(_native._PatchOptions), 12)
         self.assertEqual(ctypes.sizeof(_native._PatchTarget), 40)
         self.assertEqual(ctypes.sizeof(_native._PatchResult), 112)
+        self.assertEqual(ctypes.sizeof(_native._InferOptions), 32)
+        self.assertEqual(ctypes.sizeof(_native._InferInput), 40)
+        self.assertEqual(ctypes.sizeof(_native._InferOutput), 104)
+        self.assertEqual(ctypes.sizeof(_native._InferResult), 80)
 
     def test_patch_target_integer_bounds(self) -> None:
         with self.assertRaises(ValueError):
@@ -141,6 +145,20 @@ class FakeNative:
     def patch_graph(self, graph_blob: bytes, shave_elf: bytes, targets: object) -> npu.PatchResult:
         self.patch_args = (graph_blob, shave_elf, tuple(targets))
         return npu.PatchResult(b"patched", b"{}")
+
+    def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
+        values = tuple(inputs)  # type: ignore[arg-type]
+        self.infer_args = (graph_blob, values, kwargs)
+        source = np.frombuffer(values[0].data, dtype=np.float16)
+        output = (source + np.float16(1)).astype(np.float16).tobytes()
+        return npu.InferenceResult(
+            (npu.InferenceOutput(1, "Result_0", (1, 32), "f16", output),),
+            0,
+            0,
+            1,
+            0x8086,
+            0x7D1D,
+        )
 
 
 class CompilationFlowTests(unittest.TestCase):
@@ -166,8 +184,17 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(program.graph_blob, b"patched")
         self.assertIn(b'type="Abs"', fake.xml)
         self.assertEqual(fake.patch_args, (b"native", b"elf", (target,)))
-        with self.assertRaises(NotImplementedError):
-            program.run({"x": np.zeros((1, 32), dtype=np.float16)})
+        result = program.run({"x": np.zeros((1, 32), dtype=np.float16)})
+        np.testing.assert_array_equal(result["Result_0"], np.ones((1, 32), dtype=np.float16))
+        self.assertEqual(fake.infer_args[1][0].selector, "x")
+
+    def test_program_run_rejects_wrong_tensor_contract(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x, _shape=x.shape, _dtype=x.dtype)
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            program.run({"x": np.zeros((32,), dtype=np.float16)})
 
 
 if __name__ == "__main__":

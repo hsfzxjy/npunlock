@@ -123,6 +123,51 @@ class _PatchResult(ctypes.Structure):
     ]
 
 
+class _InferOptions(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("driver_index", ctypes.c_uint32),
+        ("device_index", ctypes.c_uint32),
+        ("timeout_ms", ctypes.c_uint32),
+        ("worker_executable_utf8", _View),
+    ]
+
+
+class _InferInput(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("argument_index", ctypes.c_uint32),
+        ("argument_name_utf8", _View),
+        ("data", _View),
+    ]
+
+
+class _InferOutput(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("argument_index", ctypes.c_uint32),
+        ("precision", ctypes.c_uint32),
+        ("dims_count", ctypes.c_uint32),
+        ("dims", ctypes.c_uint32 * 5),
+        ("argument_name_utf8", _Buffer),
+        ("data", _Buffer),
+    ]
+
+
+class _InferResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("selected_driver_index", ctypes.c_uint32),
+        ("selected_device_index", ctypes.c_uint32),
+        ("driver_version", ctypes.c_uint32),
+        ("device_vendor_id", ctypes.c_uint32),
+        ("device_id", ctypes.c_uint32),
+        ("outputs", ctypes.POINTER(_InferOutput)),
+        ("output_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 @dataclass(frozen=True, slots=True)
 class PatchTarget:
     invocation_index: int
@@ -165,6 +210,41 @@ class PatchResult:
     report_json: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class InferenceInput:
+    selector: int | str
+    data: bytes
+
+    def __post_init__(self) -> None:
+        if isinstance(self.selector, bool) or not isinstance(self.selector, (int, str)):
+            raise TypeError("inference selector must be an argument index or name")
+        if isinstance(self.selector, int) and not 0 <= self.selector < 0xFFFFFFFF:
+            raise ValueError("inference argument index must fit uint32")
+        if isinstance(self.selector, str) and not self.selector:
+            raise ValueError("inference argument name must not be empty")
+        if not isinstance(self.data, bytes) or not self.data:
+            raise ValueError("inference input data must be non-empty bytes")
+
+
+@dataclass(frozen=True, slots=True)
+class InferenceOutput:
+    argument_index: int
+    argument_name: str
+    shape: tuple[int, ...]
+    dtype: str
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class InferenceResult:
+    outputs: tuple[InferenceOutput, ...]
+    driver_index: int
+    device_index: int
+    driver_version: int
+    vendor_id: int
+    device_id: int
+
+
 def _owned_view(data: bytes) -> tuple[_View, object | None]:
     if not data:
         return _View(None, 0), None
@@ -195,6 +275,7 @@ class NativeLibraries:
         self.shave = load("shavecc")
         self.ir = load("ir2blob")
         self.patch = load("patchblob")
+        self.infer = load("graphinfer")
         self._bind()
 
     def _bind(self) -> None:
@@ -216,6 +297,15 @@ class NativeLibraries:
         ]
         self.patch.patchblob_patch.restype = ctypes.c_int
         self.patch.patchblob_result_release.argtypes = [ctypes.POINTER(_PatchResult)]
+        self.infer.graphinfer_infer.argtypes = [
+            ctypes.POINTER(_InferOptions),
+            _View,
+            ctypes.POINTER(_InferInput),
+            ctypes.c_size_t,
+            ctypes.POINTER(_InferResult),
+        ]
+        self.infer.graphinfer_infer.restype = ctypes.c_int
+        self.infer.graphinfer_result_release.argtypes = [ctypes.POINTER(_InferResult)]
 
     def _raise(self, stage: str, status: int, diagnostic: _Diagnostic) -> None:
         raw_name = self.common.npunlock_status_name(status)
@@ -350,3 +440,65 @@ class NativeLibraries:
             return PatchResult(_buffer_bytes(result.graph_blob), _buffer_bytes(result.report_json))
         finally:
             self.patch.patchblob_result_release(ctypes.byref(result))
+
+    def infer_graph(
+        self,
+        graph_blob: bytes,
+        inputs: Iterable[InferenceInput],
+        *,
+        timeout_ms: int = 20_000,
+        worker: str | None = None,
+    ) -> InferenceResult:
+        input_values = tuple(inputs)
+        if not input_values:
+            raise ValueError("at least one inference input is required")
+        graph_view, graph_owner = _owned_view(graph_blob)
+        worker_view, worker_owner = _owned_view(worker.encode("utf-8") if worker else b"")
+        native_inputs = (_InferInput * len(input_values))()
+        owners: list[object] = [graph_owner, worker_owner]
+        for index, value in enumerate(input_values):
+            if not isinstance(value, InferenceInput):
+                raise TypeError("inputs must contain InferenceInput values")
+            if isinstance(value.selector, str):
+                argument_index = 0xFFFFFFFF
+                name_view, name_owner = _owned_view(value.selector.encode("utf-8"))
+            else:
+                argument_index = value.selector
+                name_view, name_owner = _owned_view(b"")
+            data_view, data_owner = _owned_view(value.data)
+            owners.extend((name_owner, data_owner))
+            native_inputs[index] = _InferInput(
+                ctypes.sizeof(_InferInput), argument_index, name_view, data_view
+            )
+        _ = owners
+        options = _InferOptions(
+            ctypes.sizeof(_InferOptions), 0xFFFFFFFF, 0xFFFFFFFF, timeout_ms, worker_view
+        )
+        result = _InferResult()
+        result.struct_size = ctypes.sizeof(_InferResult)
+        status = self.infer.graphinfer_infer(
+            ctypes.byref(options), graph_view, native_inputs, len(input_values), ctypes.byref(result)
+        )
+        try:
+            if status != 0:
+                self._raise("graphinfer", status, result.diagnostic)
+            outputs = tuple(
+                InferenceOutput(
+                    output.argument_index,
+                    _buffer_bytes(output.argument_name_utf8).decode("utf-8", errors="strict"),
+                    tuple(output.dims[: output.dims_count]),
+                    "f16" if output.precision == 2 else f"precision-{output.precision}",
+                    _buffer_bytes(output.data),
+                )
+                for output in result.outputs[: result.output_count]
+            )
+            return InferenceResult(
+                outputs,
+                result.selected_driver_index,
+                result.selected_device_index,
+                result.driver_version,
+                result.device_vendor_id,
+                result.device_id,
+            )
+        finally:
+            self.infer.graphinfer_result_release(ctypes.byref(result))

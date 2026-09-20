@@ -1,10 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from ._native import IrCompileResult, NativeLibraries, PatchResult, PatchTarget
+from ._native import (
+    InferenceInput,
+    InferenceOutput,
+    InferenceResult,
+    IrCompileResult,
+    NativeLibraries,
+    PatchResult,
+    PatchTarget,
+)
 from .graph import Graph, Node, constant, custom, input, op
 from .ir import SerializedIR, serialize_ir
 from .tensor import DType, Shape, Tensor, TensorSpec
@@ -12,6 +20,9 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 __all__ = [
     "DType",
     "Graph",
+    "InferenceInput",
+    "InferenceOutput",
+    "InferenceResult",
     "IrCompileResult",
     "NativeLibraries",
     "Node",
@@ -55,13 +66,59 @@ class Program:
     serialized_ir: SerializedIR
     ir_provenance: IrCompileResult
     patch_reports: tuple[bytes, ...]
+    _libraries: NativeLibraries = field(repr=False, compare=False)
+    _timeout_ms: int = field(repr=False, compare=False)
+    _infer_worker: str | None = field(repr=False, compare=False)
 
     def run(self, inputs: Mapping[str, object]) -> Mapping[str, object]:
-        del inputs
-        raise NotImplementedError(
-            "general Python execution awaits a public C tensor-I/O API; "
-            "the current C runner intentionally supports only its fixed add-one proof"
+        import numpy as np
+
+        if not isinstance(inputs, Mapping):
+            raise TypeError("Program.run() inputs must be a mapping")
+        expected_names = tuple(value.name for value in self.graph.inputs)
+        if any(name is None for name in expected_names):
+            raise ValueError("all graph inputs must have names")
+        if set(inputs) != set(expected_names):
+            raise ValueError(
+                f"input names must exactly match {list(expected_names)!r}; got {list(inputs)!r}"
+            )
+        native_inputs: list[InferenceInput] = []
+        for tensor, name in zip(self.graph.inputs, expected_names):
+            assert name is not None
+            if tensor.dtype != "f16":
+                raise ValueError("graphinfer currently supports only static FP16 tensors")
+            array = np.asarray(inputs[name])
+            if array.dtype != np.dtype("float16") or tuple(array.shape) != tensor.shape:
+                raise ValueError(
+                    f"input {name!r} requires shape {tensor.shape!r} and dtype float16"
+                )
+            if not array.flags.c_contiguous:
+                array = np.ascontiguousarray(array)
+            native_inputs.append(InferenceInput(name, array.tobytes(order="C")))
+        inferred = self._libraries.infer_graph(
+            self.graph_blob,
+            native_inputs,
+            timeout_ms=self._timeout_ms,
+            worker=self._infer_worker,
         )
+        if len(inferred.outputs) != len(self.graph.outputs):
+            raise RuntimeError(
+                f"graph returned {len(inferred.outputs)} outputs; expected {len(self.graph.outputs)}"
+            )
+        values: dict[str, object] = {}
+        for index, (tensor, output) in enumerate(zip(self.graph.outputs, inferred.outputs)):
+            name = tensor.name or f"Result_{index}"
+            if output.dtype != "f16" or output.shape != tensor.shape:
+                raise RuntimeError(
+                    f"output {name!r} returned shape {output.shape!r} and dtype {output.dtype}"
+                )
+            expected_size = int(np.prod(tensor.shape, dtype=np.int64)) * np.dtype("float16").itemsize
+            if len(output.data) != expected_size:
+                raise RuntimeError(
+                    f"output {name!r} returned {len(output.data)} bytes; expected {expected_size}"
+                )
+            values[name] = np.frombuffer(output.data, dtype=np.float16).copy().reshape(tensor.shape)
+        return values
 
 
 def _kernel_source(value: object) -> bytes:
@@ -83,6 +140,7 @@ def compile(
     timeout_ms: int = 20_000,
     ir_worker: str | None = None,
     movi_worker: str | None = None,
+    infer_worker: str | None = None,
     libraries: NativeLibraries | None = None,
 ) -> Program:
     if not isinstance(graph, Graph):
@@ -129,4 +187,13 @@ def compile(
             patched = native.patch_graph(blob, elf, target_values)
             blob = patched.graph_blob
             reports.append(patched.report_json)
-    return Program(blob, graph, serialized, ir_result, tuple(reports))
+    return Program(
+        blob,
+        graph,
+        serialized,
+        ir_result,
+        tuple(reports),
+        native,
+        timeout_ms,
+        infer_worker,
+    )

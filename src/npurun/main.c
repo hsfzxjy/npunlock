@@ -5,13 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "npunlock/graphinfer.h"
 #include "npunlock/ir2blob.h"
 #include "npunlock/patchblob.h"
 #include "npunlock/shavecc.h"
 #include "npunlock/version.h"
 
 #include "internal.h"
-#include "run_worker.h"
 
 #define MAX_TARGETS 32u
 #define MAX_DEFINITIONS 32u
@@ -33,6 +33,7 @@ typedef struct build_arguments {
   const char *movi_worker_path;
   const char *ir_worker_path;
   const char *run_worker_path;
+  const char *run_input_path;
   const char *run_output_path;
   const char *definitions[MAX_DEFINITIONS];
   size_t definition_count;
@@ -46,6 +47,7 @@ typedef struct build_arguments {
   uint32_t timeout_ms;
   uint32_t image_alignment;
   uint32_t tail_padding;
+  uint32_t run_input_index;
   int run_add1;
 } build_arguments;
 
@@ -68,7 +70,8 @@ static void print_usage(const char *program) {
   printf("         --output GRAPH.blob --manifest BUILD.json [options]\n");
   printf("options: --build-flags TEXT --timeout-ms N --compiler-definition NAME=VALUE\n");
   printf("         --image-alignment N --tail-padding N --movi-worker FILE --ir-worker FILE\n");
-  printf("         --run-add1 --run-output FILE [--run-worker FILE]\n");
+  printf("         --run-add1 --run-input FILE --run-output FILE [--run-input-index N]\n");
+  printf("         [--run-worker FILE]\n");
 }
 
 static int parse_u32(const char *text, uint32_t *result) {
@@ -113,6 +116,7 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
   build->timeout_ms = 20000;
   build->image_alignment = 0x400;
   build->tail_padding = 0x80;
+  build->run_input_index = 0;
   for (index = 2; index < argument_count; ++index) {
     const char *option = arguments[index];
     const char *value = NULL;
@@ -135,6 +139,7 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     STRING_OPTION("--movi-worker", movi_worker_path)
     STRING_OPTION("--ir-worker", ir_worker_path)
     STRING_OPTION("--run-worker", run_worker_path)
+    STRING_OPTION("--run-input", run_input_path)
     STRING_OPTION("--run-output", run_output_path)
 #undef STRING_OPTION
     if (strcmp(option, "--run-add1") == 0) {
@@ -192,6 +197,11 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
           !parse_u32(value, &build->tail_padding)) {
         return 0;
       }
+    } else if (strcmp(option, "--run-input-index") == 0) {
+      if (!option_value(argument_count, arguments, &index, &value) ||
+          !parse_u32(value, &build->run_input_index)) {
+        return 0;
+      }
     } else {
       fprintf(stderr, "unknown build option: %s\n", option);
       return 0;
@@ -205,9 +215,9 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     fprintf(stderr, "missing or inconsistent required build options\n");
     return 0;
   }
-  if ((build->run_add1 && build->run_output_path == NULL) ||
-      (!build->run_add1 && build->run_output_path != NULL)) {
-    fprintf(stderr, "--run-add1 and --run-output must be specified together\n");
+  if ((build->run_add1 && (build->run_input_path == NULL || build->run_output_path == NULL)) ||
+      (!build->run_add1 && (build->run_input_path != NULL || build->run_output_path != NULL))) {
+    fprintf(stderr, "--run-add1, --run-input, and --run-output must be specified together\n");
     return 0;
   }
   if (strcmp(build->output_path, build->manifest_path) == 0 ||
@@ -228,6 +238,13 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
         (build->weights_path != NULL &&
          strcmp(build->run_output_path, build->weights_path) == 0)))) {
     fprintf(stderr, "output and manifest paths must not name an input or each other\n");
+    return 0;
+  }
+  if (build->run_input_path != NULL &&
+      (strcmp(build->run_input_path, build->output_path) == 0 ||
+       strcmp(build->run_input_path, build->manifest_path) == 0 ||
+       strcmp(build->run_input_path, build->run_output_path) == 0)) {
+    fprintf(stderr, "run input must not name an output file\n");
     return 0;
   }
   return 1;
@@ -359,7 +376,7 @@ static int write_json_string(FILE *stream, const char *value) {
 static int write_manifest(const char *path, const build_arguments *build,
                           const ir2blob_result *ir_result, const shavecc_result *shave_result,
                           const patchblob_result *patch_result, const build_provenance *provenance,
-                          const npunlock_run_worker_result *run_result) {
+                          const graphinfer_result *run_result) {
   FILE *stream = NULL;
   size_t index;
 #ifdef _WIN32
@@ -433,7 +450,8 @@ static int write_manifest(const char *path, const build_arguments *build,
                      "\"element_count\": %" PRIu64 ", \"mismatch_count\": 0}\n}\n",
                      run_result->selected_driver_index, run_result->selected_device_index,
                      run_result->driver_version, run_result->device_vendor_id,
-                     run_result->device_id, run_result->element_count) < 0) {
+                     run_result->device_id,
+                     (uint64_t)(run_result->outputs[0].data.size / sizeof(uint16_t))) < 0) {
     fclose(stream);
     return 0;
   }
@@ -524,21 +542,27 @@ static float fp16_to_float(uint16_t value) {
   return result;
 }
 
-static int validate_add1_output(const build_arguments *build,
-                                const npunlock_run_worker_result *result) {
-  const uint16_t *actual = (const uint16_t *)result->output.data;
+static int validate_add1_output(npunlock_view input, const graphinfer_result *result) {
+  const graphinfer_output *output;
+  const uint16_t *input_values = (const uint16_t *)input.data;
+  const uint16_t *actual;
+  uint64_t element_count;
   uint64_t index;
   uint64_t mismatches = 0;
-  (void)build;
-  if (result->element_count > SIZE_MAX / sizeof(uint16_t) ||
-      result->output.size != (size_t)result->element_count * sizeof(uint16_t)) {
-    fprintf(stderr, "execution output shape does not match the requested ACT contract\n");
+  if (result->output_count != 1 || result->outputs == NULL ||
+      result->outputs[0].precision != GRAPHINFER_PRECISION_FP16) {
+    fprintf(stderr, "add1 execution requires exactly one FP16 graph output\n");
     return 0;
   }
-  for (index = 0; index < result->element_count; ++index) {
-    float step = result->element_count > 1 ? 3.75f / (float)(result->element_count - 1) : 0.0f;
-    uint16_t input = float_to_fp16(-2.0f + (float)index * step);
-    uint16_t expected = float_to_fp16(fp16_to_float(input) + 1.0f);
+  output = &result->outputs[0];
+  if (input.size == 0 || input.size % sizeof(uint16_t) != 0 || output->data.size != input.size) {
+    fprintf(stderr, "add1 input/output byte sizes do not match\n");
+    return 0;
+  }
+  actual = (const uint16_t *)output->data.data;
+  element_count = input.size / sizeof(uint16_t);
+  for (index = 0; index < element_count; ++index) {
+    uint16_t expected = float_to_fp16(fp16_to_float(input_values[index]) + 1.0f);
     if (actual[index] != expected) {
       if (mismatches < 8) {
         fprintf(stderr, "add1 mismatch at %" PRIu64 ": expected 0x%04x, got 0x%04x\n", index,
@@ -549,7 +573,7 @@ static int validate_add1_output(const build_arguments *build,
   }
   if (mismatches != 0) {
     fprintf(stderr, "add1 oracle failed: %" PRIu64 "/%" PRIu64 " mismatches\n", mismatches,
-            result->element_count);
+            element_count);
     return 0;
   }
   return 1;
@@ -562,6 +586,7 @@ static int run_build(const build_arguments *build) {
   file_buffer weights = {0};
   file_buffer source = {0};
   file_buffer linker_script = {0};
+  file_buffer run_input = {0};
   npunlock_view definition_views[MAX_DEFINITIONS];
   patchblob_target targets[MAX_TARGETS];
   ir2blob_options ir_options = {0};
@@ -570,7 +595,7 @@ static int run_build(const build_arguments *build) {
   ir2blob_result ir_result = {0};
   shavecc_result shave_result = {0};
   patchblob_result patch_result = {0};
-  npunlock_run_worker_result run_result = {0};
+  graphinfer_result run_result = {0};
   build_provenance provenance = {0};
   npunlock_status status;
   size_t index;
@@ -590,6 +615,12 @@ static int run_build(const build_arguments *build) {
   linker_script = read_file(build->linker_script_path, 0);
   if (source.size == SIZE_MAX || linker_script.size == SIZE_MAX) {
     goto cleanup;
+  }
+  if (build->run_add1) {
+    run_input = read_file(build->run_input_path, 0);
+    if (run_input.size == SIZE_MAX) {
+      goto cleanup;
+    }
   }
   hash_view((npunlock_view){ir.data, ir.size}, provenance.ir_hash);
   hash_view((npunlock_view){weights.data, weights.size}, provenance.weights_hash);
@@ -660,44 +691,56 @@ static int run_build(const build_arguments *build) {
     goto cleanup;
   }
   if (build->run_add1) {
-    npunlock_view worker = {(const uint8_t *)build->run_worker_path,
-                            build->run_worker_path == NULL ? 0 : strlen(build->run_worker_path)};
-    status = npunlock_run_native_worker(
-        worker, (npunlock_view){patch_result.graph_blob.data, patch_result.graph_blob.size},
-        build->timeout_ms, &run_result);
+    graphinfer_options infer_options = {0};
+    graphinfer_input infer_input = {0};
+    infer_options.struct_size = sizeof(infer_options);
+    infer_options.driver_index = GRAPHINFER_AUTO_INDEX;
+    infer_options.device_index = GRAPHINFER_AUTO_INDEX;
+    infer_options.timeout_ms = build->timeout_ms;
+    infer_options.worker_executable_utf8 =
+        (npunlock_view){(const uint8_t *)build->run_worker_path,
+                        build->run_worker_path == NULL ? 0 : strlen(build->run_worker_path)};
+    infer_input.struct_size = sizeof(infer_input);
+    infer_input.argument_index = build->run_input_index;
+    infer_input.data = (npunlock_view){run_input.data, run_input.size};
+    status = graphinfer_infer(
+        &infer_options, (npunlock_view){patch_result.graph_blob.data, patch_result.graph_blob.size},
+        &infer_input, 1, &run_result);
     if (status != NPUNLOCK_STATUS_OK) {
-      if (run_result.diagnostic.data != NULL) {
-        fwrite(run_result.diagnostic.data, 1, run_result.diagnostic.size, stderr);
+      if (run_result.diagnostic.json.data != NULL) {
+        fwrite(run_result.diagnostic.json.data, 1, run_result.diagnostic.json.size, stderr);
         fputc('\n', stderr);
       }
       goto cleanup;
     }
-    if (!validate_add1_output(build, &run_result)) {
+    if (!validate_add1_output((npunlock_view){run_input.data, run_input.size}, &run_result)) {
       goto cleanup;
     }
   }
   if (!write_file(build->output_path, patch_result.graph_blob.data, patch_result.graph_blob.size) ||
       !write_manifest(build->manifest_path, build, &ir_result, &shave_result, &patch_result,
                       &provenance, build->run_add1 ? &run_result : NULL) ||
-      (build->run_add1 &&
-       !write_file(build->run_output_path, run_result.output.data, run_result.output.size))) {
+      (build->run_add1 && !write_file(build->run_output_path, run_result.outputs[0].data.data,
+                                      run_result.outputs[0].data.size))) {
     goto cleanup;
   }
   printf("wrote %zu-byte patched graph to %s\n", patch_result.graph_blob.size, build->output_path);
   printf("wrote build manifest to %s\n", build->manifest_path);
   if (build->run_add1) {
     printf("verified exact FP16 add1 semantics for %" PRIu64 " elements\n",
-           run_result.element_count);
-    printf("wrote %zu-byte raw output to %s\n", run_result.output.size, build->run_output_path);
+           (uint64_t)(run_result.outputs[0].data.size / sizeof(uint16_t)));
+    printf("wrote %zu-byte raw output to %s\n", run_result.outputs[0].data.size,
+           build->run_output_path);
   }
   success = 1;
 
 cleanup:
-  npunlock_run_worker_result_release(&run_result);
+  graphinfer_result_release(&run_result);
   patchblob_result_release(&patch_result);
   shavecc_result_release(&shave_result);
   ir2blob_result_release(&ir_result);
   free(linker_script.data);
+  free(run_input.data);
   free(source.data);
   free(weights.data);
   free(ir.data);

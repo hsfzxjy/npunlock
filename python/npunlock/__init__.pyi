@@ -28,6 +28,26 @@ class PatchTarget:
     def __init__(self, invocation_index: int, range_index: int, input_count: int,
                  element_count: int, span_bytes: int, contract_flags: int = ...) -> None: ...
 
+class InferenceInput:
+    selector: int | str
+    data: bytes
+    def __init__(self, selector: int | str, data: bytes) -> None: ...
+
+class InferenceOutput:
+    argument_index: int
+    argument_name: str
+    shape: Shape
+    dtype: DType
+    data: bytes
+
+class InferenceResult:
+    outputs: tuple[InferenceOutput, ...]
+    driver_index: int
+    device_index: int
+    driver_version: int
+    vendor_id: int
+    device_id: int
+
 class Program:
     graph_blob: bytes
     def run(self, inputs: Mapping[str, object]) -> Mapping[str, object]: ...
@@ -45,7 +65,8 @@ def compile(graph: Graph, *, native_dir: str | PathLike[str] | None = ...,
             linker_script: str | PathLike[str] | bytes | None = ...,
             build_flags: str = ..., definitions: tuple[str, ...] = ...,
             timeout_ms: int = ..., ir_worker: str | None = ...,
-            movi_worker: str | None = ..., libraries: Any = ...) -> Program: ...
+            movi_worker: str | None = ..., infer_worker: str | None = ...,
+            libraries: Any = ...) -> Program: ...
 
 def Abs(x: Tensor, *, _shape: object, _dtype: object, _name: str | None = ...) -> Tensor: ...
 def Add(a: Tensor, b: Tensor, *, _shape: object, _dtype: object,

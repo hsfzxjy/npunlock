@@ -6,6 +6,16 @@ param(
     [string[]] $MsvcRunArguments
 )
 
+# Some hosts inject both spellings into the otherwise case-insensitive Windows
+# environment. MSBuild materializes the block into a case-insensitive dictionary
+# and fails before starting cl.exe when both keys survive. Keep the canonical
+# mixed-case entry that Visual Studio's developer shell expects.
+if (Test-Path Env:PATH) {
+    $msvcRunPath = $env:PATH
+    Remove-Item Env:PATH
+    $env:Path = $msvcRunPath
+}
+
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
 $vs = & $vswhere `
@@ -24,13 +34,15 @@ if (-not (Test-Path $devshell)) {
     throw "Launch-VsDevShell.ps1 not found: $devshell"
 }
 
-& $devshell `
-    -Arch amd64 `
-    -HostArch amd64 `
-    -SkipAutomaticLocation 6>$null
+if (-not $env:VSCMD_VER) {
+    & $devshell `
+        -Arch amd64 `
+        -HostArch amd64 `
+        -SkipAutomaticLocation 6>$null
 
-if ($LASTEXITCODE) {
-    exit $LASTEXITCODE
+    if ($LASTEXITCODE) {
+        exit $LASTEXITCODE
+    }
 }
 
 & $MsvcRunExecutable @MsvcRunArguments

@@ -8,38 +8,64 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "infer_protocol.h"
 #include "level_zero_min.h"
-#include "run_protocol.h"
 
-#define RUN_AUTO_INDEX UINT32_MAX
-#define RUN_PAGE_SIZE 4096u
-#define RUN_FENCE_TIMEOUT_NS 5000000000ull
+#define INFER_AUTO_INDEX UINT32_MAX
+#define INFER_PAGE_SIZE 4096u
+#define INFER_FENCE_TIMEOUT_NS 5000000000ull
 
-typedef struct run_request {
+typedef struct infer_request_input {
+  uint32_t argument_index;
+  const uint8_t *name;
+  size_t name_size;
+  const uint8_t *data;
+  size_t data_size;
+} infer_request_input;
+
+typedef struct infer_request {
   uint32_t driver_index;
   uint32_t device_index;
   const uint8_t *graph;
   size_t graph_size;
-} run_request;
+  infer_request_input inputs[NPUNLOCK_INFER_MAX_ARGUMENTS];
+  size_t input_count;
+} infer_request;
 
-typedef struct run_result {
-  npunlock_run_worker_status status;
+typedef struct infer_result_output {
+  uint32_t argument_index;
+  uint32_t precision;
+  uint32_t dims_count;
+  uint32_t dims[5];
+  uint8_t name[256];
+  size_t name_size;
+  uint8_t *data;
+  size_t data_size;
+} infer_result_output;
+
+typedef struct infer_result {
+  npunlock_infer_worker_status status;
   uint32_t driver_result;
   uint32_t driver_index;
   uint32_t device_index;
   uint32_t driver_version;
   uint32_t vendor_id;
   uint32_t device_id;
-  uint64_t element_count;
-  uint8_t *output;
-  size_t output_size;
+  infer_result_output outputs[NPUNLOCK_INFER_MAX_ARGUMENTS];
+  size_t output_count;
   char *diagnostic;
-} run_result;
+} infer_result;
 
 typedef struct graph_argument {
   uint32_t index;
+  uint32_t type;
   uint32_t dims_count;
   uint32_t dims[5];
+  uint8_t name[256];
+  size_t name_size;
+  size_t data_size;
+  size_t request_input_index;
+  void *allocation;
 } graph_argument;
 
 typedef struct ze_functions {
@@ -117,6 +143,22 @@ static void store_u64(uint8_t *data, uint64_t value) {
   store_u32(data + 4, (uint32_t)(value >> 32));
 }
 
+static bool checked_add(size_t left, size_t right, size_t *result) {
+  if (left > SIZE_MAX - right) {
+    return false;
+  }
+  *result = left + right;
+  return true;
+}
+
+static bool checked_mul(size_t left, size_t right, size_t *result) {
+  if (left != 0 && right > SIZE_MAX / left) {
+    return false;
+  }
+  *result = left * right;
+  return true;
+}
+
 static bool write_all(HANDLE handle, const uint8_t *data, size_t size) {
   while (size != 0) {
     DWORD chunk = size > MAXDWORD ? MAXDWORD : (DWORD)size;
@@ -134,7 +176,9 @@ static bool read_request(HANDLE handle, uint8_t **data, size_t *size) {
   uint8_t *buffer = NULL;
   size_t used = 0;
   size_t capacity = 0;
-  const size_t maximum = NPUNLOCK_RUN_REQUEST_HEADER_SIZE + NPUNLOCK_RUN_MAX_GRAPH_SIZE;
+  const size_t maximum = NPUNLOCK_INFER_REQUEST_HEADER_SIZE +
+                         NPUNLOCK_INFER_MAX_ARGUMENTS * NPUNLOCK_INFER_REQUEST_INPUT_SIZE +
+                         NPUNLOCK_INFER_MAX_GRAPH_SIZE + NPUNLOCK_INFER_MAX_INPUT_SIZE;
   for (;;) {
     uint8_t chunk[16384];
     DWORD received = 0;
@@ -178,33 +222,79 @@ static bool read_request(HANDLE handle, uint8_t **data, size_t *size) {
   return true;
 }
 
-static bool parse_request(const uint8_t *data, size_t size, run_request *request) {
+static bool parse_request(const uint8_t *data, size_t size, infer_request *request) {
   uint64_t graph_size;
+  uint64_t payload_size;
+  uint32_t input_count;
+  size_t descriptors_size;
+  size_t expected = NPUNLOCK_INFER_REQUEST_HEADER_SIZE;
+  size_t payload_cursor = 0;
+  const uint8_t *payload;
+  size_t index;
   memset(request, 0, sizeof(*request));
-  if (size < NPUNLOCK_RUN_REQUEST_HEADER_SIZE || load_u32(data) != NPUNLOCK_RUN_REQUEST_MAGIC ||
-      load_u32(data + 4) != NPUNLOCK_RUN_PROTOCOL_VERSION || load_u64(data + 24) != 0) {
+  if (size < NPUNLOCK_INFER_REQUEST_HEADER_SIZE || load_u32(data) != NPUNLOCK_INFER_REQUEST_MAGIC ||
+      load_u32(data + 4) != NPUNLOCK_INFER_PROTOCOL_VERSION || load_u64(data + 40) != 0) {
     return false;
   }
   graph_size = load_u64(data + 16);
-  if (graph_size == 0 || graph_size > NPUNLOCK_RUN_MAX_GRAPH_SIZE ||
-      graph_size != size - NPUNLOCK_RUN_REQUEST_HEADER_SIZE) {
+  input_count = load_u32(data + 24);
+  payload_size = load_u64(data + 32);
+  if (graph_size == 0 || graph_size > NPUNLOCK_INFER_MAX_GRAPH_SIZE || input_count == 0 ||
+      input_count > NPUNLOCK_INFER_MAX_ARGUMENTS ||
+      load_u32(data + 28) != NPUNLOCK_INFER_REQUEST_INPUT_SIZE ||
+      payload_size > NPUNLOCK_INFER_MAX_INPUT_SIZE ||
+      !checked_mul(input_count, NPUNLOCK_INFER_REQUEST_INPUT_SIZE, &descriptors_size) ||
+      !checked_add(expected, descriptors_size, &expected) ||
+      !checked_add(expected, (size_t)graph_size, &expected) ||
+      !checked_add(expected, (size_t)payload_size, &expected) || expected != size) {
     return false;
   }
   request->driver_index = load_u32(data + 8);
   request->device_index = load_u32(data + 12);
-  request->graph = data + NPUNLOCK_RUN_REQUEST_HEADER_SIZE;
+  request->graph = data + NPUNLOCK_INFER_REQUEST_HEADER_SIZE + descriptors_size;
   request->graph_size = (size_t)graph_size;
-  return true;
+  request->input_count = input_count;
+  payload = request->graph + request->graph_size;
+  for (index = 0; index < input_count; ++index) {
+    const uint8_t *descriptor =
+        data + NPUNLOCK_INFER_REQUEST_HEADER_SIZE + index * NPUNLOCK_INFER_REQUEST_INPUT_SIZE;
+    infer_request_input *input = &request->inputs[index];
+    uint32_t name_size = load_u32(descriptor + 4);
+    uint64_t data_size = load_u64(descriptor + 8);
+    uint64_t offset = load_u64(descriptor + 16);
+    bool by_index;
+    bool by_name;
+    if (load_u64(descriptor + 24) != 0 || offset != payload_cursor ||
+        payload_cursor > payload_size || name_size > payload_size - payload_cursor) {
+      return false;
+    }
+    input->argument_index = load_u32(descriptor);
+    input->name = payload + payload_cursor;
+    input->name_size = name_size;
+    payload_cursor += name_size;
+    if (data_size == 0 || data_size > payload_size - payload_cursor) {
+      return false;
+    }
+    input->data = payload + payload_cursor;
+    input->data_size = (size_t)data_size;
+    payload_cursor += (size_t)data_size;
+    by_index = input->argument_index != INFER_AUTO_INDEX;
+    by_name = input->name_size != 0;
+    if (by_index == by_name || memchr(input->name, 0, input->name_size) != NULL) {
+      return false;
+    }
+  }
+  return payload_cursor == payload_size;
 }
 
-static void set_diagnostic(run_result *result, const char *message) {
+static void set_diagnostic(infer_result *result, const char *message) {
   size_t size;
   if (result->diagnostic != NULL || message == NULL) {
     return;
   }
   size = strlen(message);
-  if (size > NPUNLOCK_RUN_MAX_DIAGNOSTIC_SIZE) {
-    size = NPUNLOCK_RUN_MAX_DIAGNOSTIC_SIZE;
+  if (size > NPUNLOCK_INFER_MAX_DIAGNOSTIC_SIZE) {
+    size = NPUNLOCK_INFER_MAX_DIAGNOSTIC_SIZE;
   }
   result->diagnostic = (char *)malloc(size + 1);
   if (result->diagnostic != NULL) {
@@ -213,10 +303,10 @@ static void set_diagnostic(run_result *result, const char *message) {
   }
 }
 
-static void set_driver_error(run_result *result, uint32_t code, const char *stage) {
+static void set_driver_error(infer_result *result, uint32_t code, const char *stage) {
   char message[192];
   result->driver_result = code;
-  result->status = NPUNLOCK_RUN_WORKER_DRIVER_FAILED;
+  result->status = NPUNLOCK_INFER_WORKER_DRIVER_FAILED;
   snprintf(message, sizeof(message), "%s returned Level Zero result 0x%08x", stage, code);
   set_diagnostic(result, message);
 }
@@ -252,7 +342,7 @@ static bool load_ze_functions(HMODULE library, ze_functions *ze) {
 #undef LOAD
 }
 
-static bool select_npu(const run_request *request, const ze_functions *ze, run_result *result,
+static bool select_npu(const infer_request *request, const ze_functions *ze, infer_result *result,
                        npunlock_ze_driver_handle *selected_driver,
                        npunlock_ze_device_handle *selected_device) {
   npunlock_ze_init_driver_type_desc init = {NPUNLOCK_ZE_STRUCTURE_TYPE_INIT_DRIVER_TYPE_DESC, NULL,
@@ -266,14 +356,14 @@ static bool select_npu(const run_request *request, const ze_functions *ze, run_r
     return false;
   }
   if (driver_count == 0 ||
-      (request->driver_index != RUN_AUTO_INDEX && request->driver_index >= driver_count)) {
-    result->status = NPUNLOCK_RUN_WORKER_NPU_NOT_FOUND;
+      (request->driver_index != INFER_AUTO_INDEX && request->driver_index >= driver_count)) {
+    result->status = NPUNLOCK_INFER_WORKER_NPU_NOT_FOUND;
     set_diagnostic(result, "requested NPU Level Zero driver was not found");
     return false;
   }
   drivers = (npunlock_ze_driver_handle *)calloc(driver_count, sizeof(*drivers));
   if (drivers == NULL) {
-    result->status = NPUNLOCK_RUN_WORKER_OUT_OF_MEMORY;
+    result->status = NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY;
     return false;
   }
   code = ze->init_drivers(&driver_count, drivers, &init);
@@ -286,7 +376,7 @@ static bool select_npu(const run_request *request, const ze_functions *ze, run_r
     npunlock_ze_device_handle *devices = NULL;
     uint32_t device_count = 0;
     uint32_t device_index;
-    if (request->driver_index != RUN_AUTO_INDEX && request->driver_index != driver_index) {
+    if (request->driver_index != INFER_AUTO_INDEX && request->driver_index != driver_index) {
       continue;
     }
     code = ze->device_get(drivers[driver_index], &device_count, NULL);
@@ -295,7 +385,7 @@ static bool select_npu(const run_request *request, const ze_functions *ze, run_r
     }
     devices = (npunlock_ze_device_handle *)calloc(device_count, sizeof(*devices));
     if (devices == NULL) {
-      result->status = NPUNLOCK_RUN_WORKER_OUT_OF_MEMORY;
+      result->status = NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY;
       free(drivers);
       return false;
     }
@@ -306,7 +396,7 @@ static bool select_npu(const run_request *request, const ze_functions *ze, run_r
     }
     for (device_index = 0; device_index < device_count; ++device_index) {
       npunlock_ze_device_properties properties = {0};
-      if (request->device_index != RUN_AUTO_INDEX && request->device_index != device_index) {
+      if (request->device_index != INFER_AUTO_INDEX && request->device_index != device_index) {
         continue;
       }
       properties.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES;
@@ -326,13 +416,13 @@ static bool select_npu(const run_request *request, const ze_functions *ze, run_r
     free(devices);
   }
   free(drivers);
-  result->status = NPUNLOCK_RUN_WORKER_NPU_NOT_FOUND;
+  result->status = NPUNLOCK_INFER_WORKER_NPU_NOT_FOUND;
   set_diagnostic(result, "requested Level Zero VPU device was not found");
   return false;
 }
 
 static uint32_t find_graph_version(const ze_functions *ze, npunlock_ze_driver_handle driver,
-                                   run_result *result) {
+                                   infer_result *result) {
   npunlock_ze_driver_extension_properties *extensions = NULL;
   uint32_t count = 0;
   uint32_t index;
@@ -344,7 +434,7 @@ static uint32_t find_graph_version(const ze_functions *ze, npunlock_ze_driver_ha
   }
   extensions = (npunlock_ze_driver_extension_properties *)calloc(count, sizeof(*extensions));
   if (extensions == NULL && count != 0) {
-    result->status = NPUNLOCK_RUN_WORKER_OUT_OF_MEMORY;
+    result->status = NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY;
     return 0;
   }
   code = ze->driver_get_extensions(driver, &count, extensions);
@@ -362,14 +452,14 @@ static uint32_t find_graph_version(const ze_functions *ze, npunlock_ze_driver_ha
   }
   free(extensions);
   if (version == 0) {
-    result->status = NPUNLOCK_RUN_WORKER_GRAPH_EXTENSION_MISSING;
+    result->status = NPUNLOCK_INFER_WORKER_GRAPH_EXTENSION_MISSING;
     set_diagnostic(result, "selected NPU driver does not advertise ZE_extension_graph");
   }
   return version;
 }
 
 static bool get_graph_functions(const ze_functions *ze, npunlock_ze_driver_handle driver,
-                                uint32_t version, run_result *result, graph_functions *graph) {
+                                uint32_t version, infer_result *result, graph_functions *graph) {
   void *raw_driver_ddi = NULL;
   npunlock_ze_npu_get_extension_fn get_extension = NULL;
   npunlock_ze_graph_ddi_prefix *ddi = NULL;
@@ -381,6 +471,11 @@ static bool get_graph_functions(const ze_functions *ze, npunlock_ze_driver_handl
     return false;
   }
   memcpy(&get_extension, raw_driver_ddi, sizeof(get_extension));
+  if (get_extension == NULL) {
+    result->status = NPUNLOCK_INFER_WORKER_SYMBOL_MISSING;
+    set_diagnostic(result, "NPU driver extension table is invalid");
+    return false;
+  }
   request.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_DRIVER_EXTENSION_NPU_EXT;
   request.name = "ZE_extension_graph";
   request.version = version;
@@ -404,38 +499,48 @@ static bool get_graph_functions(const ze_functions *ze, npunlock_ze_driver_handl
   if (graph->create2 == NULL || graph->destroy == NULL || graph->get_properties3 == NULL ||
       graph->get_argument_properties3 == NULL || graph->set_argument == NULL ||
       graph->append_execute == NULL) {
-    result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
+    result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
     set_diagnostic(result, "required native graph execution entry point is unavailable");
     return false;
   }
   return true;
 }
 
-static bool argument_element_count(const npunlock_ze_graph_argument_properties_3 *properties,
-                                   uint64_t *count) {
-  uint64_t product = 1;
+static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *properties,
+                               size_t *data_size) {
+  size_t elements = 1;
   uint32_t index;
-  if (properties->dims_count == 0 || properties->dims_count > 5) {
+  if (properties->dims_count == 0 || properties->dims_count > 5 ||
+      properties->devicePrecision != NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16) {
     return false;
   }
   for (index = 0; index < properties->dims_count; ++index) {
-    if (properties->dims[index] == 0 || product > UINT64_MAX / properties->dims[index]) {
+    if (properties->dims[index] == 0 ||
+        !checked_mul(elements, properties->dims[index], &elements)) {
       return false;
     }
-    product *= properties->dims[index];
   }
-  *count = product;
-  return true;
+  return checked_mul(elements, sizeof(uint16_t), data_size) && *data_size != 0 &&
+         *data_size <= 64u * 1024u * 1024u;
 }
 
-static bool query_arguments(const graph_functions *graph, npunlock_ze_graph_handle handle,
-                            run_result *result, graph_argument *input, graph_argument *output,
-                            uint64_t *element_count) {
+static bool input_matches(const infer_request_input *input, const graph_argument *argument) {
+  if (input->argument_index != INFER_AUTO_INDEX) {
+    return input->argument_index == argument->index;
+  }
+  return input->name_size == argument->name_size &&
+         memcmp(input->name, argument->name, input->name_size) == 0;
+}
+
+static bool query_arguments(const infer_request *request, const graph_functions *graph,
+                            npunlock_ze_graph_handle handle, infer_result *result,
+                            graph_argument **arguments_out, size_t *argument_count_out) {
   npunlock_ze_graph_properties_3 properties = {0};
-  bool have_input = false;
-  bool have_output = false;
-  uint64_t input_count = 0;
-  uint64_t output_count = 0;
+  graph_argument *arguments = NULL;
+  bool matched_inputs[NPUNLOCK_INFER_MAX_ARGUMENTS] = {false};
+  size_t graph_input_count = 0;
+  size_t output_count = 0;
+  size_t total_output_size = 0;
   uint32_t index;
   uint32_t code;
   properties.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_GRAPH_PROPERTIES_3;
@@ -444,112 +549,104 @@ static bool query_arguments(const graph_functions *graph, npunlock_ze_graph_hand
     set_driver_error(result, code, "pfnGetProperties3");
     return false;
   }
-  if (properties.numGraphArgs != 2) {
-    result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
-    set_diagnostic(result, "execution requires exactly one input and one output argument");
+  if (properties.numGraphArgs == 0 || properties.numGraphArgs > NPUNLOCK_INFER_MAX_ARGUMENTS) {
+    result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
+    set_diagnostic(result, "graph argument count is outside the supported bound");
+    return false;
+  }
+  arguments = (graph_argument *)calloc(properties.numGraphArgs, sizeof(*arguments));
+  if (arguments == NULL) {
+    result->status = NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY;
     return false;
   }
   for (index = 0; index < properties.numGraphArgs; ++index) {
-    npunlock_ze_graph_argument_properties_3 argument = {0};
-    graph_argument selected = {0};
-    uint64_t count;
-    argument.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_GRAPH_ARGUMENT_PROPERTIES_3;
-    code = graph->get_argument_properties3(handle, index, &argument);
+    npunlock_ze_graph_argument_properties_3 metadata = {0};
+    graph_argument *argument = &arguments[index];
+    const char *name_end;
+    size_t input_index;
+    metadata.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_GRAPH_ARGUMENT_PROPERTIES_3;
+    code = graph->get_argument_properties3(handle, index, &metadata);
     if (code != NPUNLOCK_ZE_SUCCESS) {
       set_driver_error(result, code, "pfnGetArgumentProperties3");
+      free(arguments);
       return false;
     }
-    if (argument.devicePrecision != NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16 ||
-        !argument_element_count(&argument, &count)) {
-      result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
-      set_diagnostic(result, "execution requires bounded static FP16 graph arguments");
+    if ((metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT &&
+         metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT) ||
+        !argument_data_size(&metadata, &argument->data_size)) {
+      result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
+      set_diagnostic(result, "graphinfer supports only bounded static FP16 inputs and outputs");
+      free(arguments);
       return false;
     }
-    selected.index = index;
-    selected.dims_count = argument.dims_count;
-    memcpy(selected.dims, argument.dims, sizeof(selected.dims));
-    if (argument.type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT && !have_input) {
-      *input = selected;
-      input_count = count;
-      have_input = true;
-    } else if (argument.type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT && !have_output) {
-      *output = selected;
-      output_count = count;
-      have_output = true;
+    name_end = (const char *)memchr(metadata.name, 0, sizeof(metadata.name));
+    if (name_end == NULL) {
+      result->status = NPUNLOCK_INFER_WORKER_BAD_RESULT;
+      set_diagnostic(result, "graph argument name is not terminated");
+      free(arguments);
+      return false;
+    }
+    argument->index = index;
+    argument->type = metadata.type;
+    argument->dims_count = metadata.dims_count;
+    memcpy(argument->dims, metadata.dims, sizeof(argument->dims));
+    argument->name_size = (size_t)(name_end - metadata.name);
+    memcpy(argument->name, metadata.name, argument->name_size);
+    argument->request_input_index = SIZE_MAX;
+    if (argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
+      ++graph_input_count;
+      for (input_index = 0; input_index < request->input_count; ++input_index) {
+        if (input_matches(&request->inputs[input_index], argument)) {
+          if (argument->request_input_index != SIZE_MAX || matched_inputs[input_index]) {
+            result->status = NPUNLOCK_INFER_WORKER_BAD_REQUEST;
+            set_diagnostic(result, "input selector is ambiguous or duplicated");
+            free(arguments);
+            return false;
+          }
+          argument->request_input_index = input_index;
+          matched_inputs[input_index] = true;
+        }
+      }
+      if (argument->request_input_index == SIZE_MAX ||
+          request->inputs[argument->request_input_index].data_size != argument->data_size) {
+        result->status = NPUNLOCK_INFER_WORKER_BAD_REQUEST;
+        set_diagnostic(result, "graph input is missing or has an incorrect byte size");
+        free(arguments);
+        return false;
+      }
     } else {
-      result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
-      set_diagnostic(result, "execution graph argument roles are unsupported");
-      return false;
+      ++output_count;
+      if (!checked_add(total_output_size, argument->name_size, &total_output_size) ||
+          !checked_add(total_output_size, argument->data_size, &total_output_size) ||
+          total_output_size > NPUNLOCK_INFER_MAX_OUTPUT_SIZE) {
+        result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
+        set_diagnostic(result, "graph output payload exceeds the supported bound");
+        free(arguments);
+        return false;
+      }
     }
   }
-  if (!have_input || !have_output || input_count != output_count ||
-      input->dims_count != output->dims_count ||
-      memcmp(input->dims, output->dims, input->dims_count * sizeof(input->dims[0])) != 0 ||
-      input_count > NPUNLOCK_RUN_MAX_OUTPUT_SIZE / sizeof(uint16_t)) {
-    result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
-    set_diagnostic(result, "execution requires matching bounded input and output shapes");
+  if (graph_input_count != request->input_count || output_count == 0) {
+    result->status = NPUNLOCK_INFER_WORKER_BAD_REQUEST;
+    set_diagnostic(result, "caller inputs do not exactly cover graph inputs");
+    free(arguments);
     return false;
   }
-  *element_count = input_count;
+  for (index = 0; index < request->input_count; ++index) {
+    if (!matched_inputs[index]) {
+      result->status = NPUNLOCK_INFER_WORKER_BAD_REQUEST;
+      set_diagnostic(result, "caller supplied an input selector not present in the graph");
+      free(arguments);
+      return false;
+    }
+  }
+  *arguments_out = arguments;
+  *argument_count_out = properties.numGraphArgs;
   return true;
 }
 
-static uint16_t float_to_fp16(float value) {
-  uint32_t bits;
-  uint16_t sign;
-  uint32_t exponent_bits;
-  uint32_t mantissa;
-  int exponent;
-  memcpy(&bits, &value, sizeof(bits));
-  sign = (uint16_t)((bits >> 16) & 0x8000u);
-  exponent_bits = (bits >> 23) & 0xffu;
-  mantissa = bits & 0x7fffffu;
-  if (exponent_bits == 0xffu) {
-    uint16_t payload = (uint16_t)(mantissa >> 13);
-    return mantissa == 0 ? (uint16_t)(sign | 0x7c00u)
-                         : (uint16_t)(sign | 0x7c00u | (payload == 0 ? 1 : payload));
-  }
-  exponent = (int)exponent_bits - 127 + 15;
-  if (exponent >= 31) {
-    return (uint16_t)(sign | 0x7c00u);
-  }
-  if (exponent <= 0) {
-    uint32_t rounded;
-    uint32_t remainder;
-    uint32_t halfway;
-    unsigned shift;
-    if (exponent < -10) {
-      return sign;
-    }
-    mantissa |= 0x800000u;
-    shift = (unsigned)(14 - exponent);
-    rounded = mantissa >> shift;
-    remainder = mantissa & ((1u << shift) - 1u);
-    halfway = 1u << (shift - 1u);
-    if (remainder > halfway || (remainder == halfway && (rounded & 1u) != 0)) {
-      ++rounded;
-    }
-    return (uint16_t)(sign | rounded);
-  }
-  {
-    uint32_t rounded = mantissa >> 13;
-    uint32_t remainder = mantissa & 0x1fffu;
-    if (remainder > 0x1000u || (remainder == 0x1000u && (rounded & 1u) != 0)) {
-      ++rounded;
-      if (rounded == 0x400u) {
-        rounded = 0;
-        ++exponent;
-        if (exponent >= 31) {
-          return (uint16_t)(sign | 0x7c00u);
-        }
-      }
-    }
-    return (uint16_t)(sign | ((uint16_t)exponent << 10) | rounded);
-  }
-}
-
 static bool find_compute_queue(const ze_functions *ze, npunlock_ze_device_handle device,
-                               run_result *result, uint32_t *ordinal) {
+                               infer_result *result, uint32_t *ordinal) {
   npunlock_ze_command_queue_group_properties *groups;
   uint32_t count = 0;
   uint32_t index;
@@ -560,7 +657,7 @@ static bool find_compute_queue(const ze_functions *ze, npunlock_ze_device_handle
   }
   groups = (npunlock_ze_command_queue_group_properties *)calloc(count, sizeof(*groups));
   if (groups == NULL && count != 0) {
-    result->status = NPUNLOCK_RUN_WORKER_OUT_OF_MEMORY;
+    result->status = NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY;
     return false;
   }
   for (index = 0; index < count; ++index) {
@@ -581,7 +678,7 @@ static bool find_compute_queue(const ze_functions *ze, npunlock_ze_device_handle
     }
   }
   free(groups);
-  result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
+  result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
   set_diagnostic(result, "selected NPU exposes no compute command queue group");
   return false;
 }
@@ -589,7 +686,7 @@ static bool find_compute_queue(const ze_functions *ze, npunlock_ze_device_handle
 static bool submit(const ze_functions *ze, const graph_functions *graph,
                    npunlock_ze_context_handle context, npunlock_ze_device_handle device,
                    npunlock_ze_graph_handle handle, uint32_t ordinal, bool initialize,
-                   run_result *result) {
+                   infer_result *result) {
   npunlock_ze_command_queue_desc queue_desc = {0};
   npunlock_ze_command_list_desc list_desc = {0};
   npunlock_ze_fence_desc fence_desc = {0};
@@ -635,7 +732,7 @@ static bool submit(const ze_functions *ze, const graph_functions *graph,
     set_driver_error(result, code, "zeCommandQueueExecuteCommandLists");
     goto done;
   }
-  code = ze->fence_synchronize(fence, RUN_FENCE_TIMEOUT_NS);
+  code = ze->fence_synchronize(fence, INFER_FENCE_TIMEOUT_NS);
   if (code != NPUNLOCK_ZE_SUCCESS) {
     set_driver_error(result, code, "zeFenceHostSynchronize");
     goto done;
@@ -655,7 +752,22 @@ done:
   return success;
 }
 
-static void execute_graph(const run_request *request, run_result *result) {
+static bool bind_arguments(const graph_functions *graph, npunlock_ze_graph_handle handle,
+                           graph_argument *arguments, size_t argument_count, infer_result *result,
+                           const char *stage) {
+  size_t index;
+  for (index = 0; index < argument_count; ++index) {
+    uint32_t code =
+        graph->set_argument(handle, arguments[index].index, arguments[index].allocation);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      set_driver_error(result, code, stage);
+      return false;
+    }
+  }
+  return true;
+}
+
+static void execute_graph(const infer_request *request, infer_result *result) {
   HMODULE loader = NULL;
   ze_functions ze = {0};
   graph_functions graph = {0};
@@ -667,30 +779,23 @@ static void execute_graph(const run_request *request, run_result *result) {
   npunlock_ze_context_desc context_desc = {0};
   npunlock_ze_graph_desc_2 graph_desc = {0};
   npunlock_ze_graph_properties_3 graph_properties = {0};
-  npunlock_ze_host_mem_alloc_desc input_desc = {0};
-  npunlock_ze_host_mem_alloc_desc output_desc = {0};
-  graph_argument input_argument = {0};
-  graph_argument output_argument = {0};
-  void *input = NULL;
-  void *output = NULL;
-  uint64_t element_count = 0;
-  size_t tensor_bytes;
-  size_t allocation_bytes;
+  graph_argument *arguments = NULL;
+  size_t argument_count = 0;
   uint32_t graph_version;
   uint32_t queue_ordinal = 0;
   uint32_t code;
   size_t index;
 
   memset(result, 0, sizeof(*result));
-  result->status = NPUNLOCK_RUN_WORKER_DRIVER_FAILED;
+  result->status = NPUNLOCK_INFER_WORKER_DRIVER_FAILED;
   loader = LoadLibraryExW(L"ze_loader.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
   if (loader == NULL) {
-    result->status = NPUNLOCK_RUN_WORKER_LOADER_NOT_FOUND;
+    result->status = NPUNLOCK_INFER_WORKER_LOADER_NOT_FOUND;
     set_diagnostic(result, "Level Zero loader ze_loader.dll was not found in System32");
     goto done;
   }
   if (!load_ze_functions(loader, &ze)) {
-    result->status = NPUNLOCK_RUN_WORKER_SYMBOL_MISSING;
+    result->status = NPUNLOCK_INFER_WORKER_SYMBOL_MISSING;
     set_diagnostic(result, "Level Zero loader is missing a required execution export");
     goto done;
   }
@@ -724,45 +829,43 @@ static void execute_graph(const run_request *request, run_result *result) {
     set_driver_error(result, code, "pfnCreate2(native)");
     goto done;
   }
-  if (!query_arguments(&graph, handle, result, &input_argument, &output_argument, &element_count) ||
+  if (!query_arguments(request, &graph, handle, result, &arguments, &argument_count) ||
       !find_compute_queue(&ze, device, result, &queue_ordinal)) {
     goto done;
   }
-  tensor_bytes = (size_t)element_count * sizeof(uint16_t);
-  if (tensor_bytes == 0 || tensor_bytes > SIZE_MAX - (RUN_PAGE_SIZE - 1)) {
-    result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
-    set_diagnostic(result, "graph tensor size is outside the execution limit");
-    goto done;
+  for (index = 0; index < argument_count; ++index) {
+    graph_argument *argument = &arguments[index];
+    npunlock_ze_host_mem_alloc_desc allocation_desc = {0};
+    size_t allocation_size;
+    allocation_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC;
+    if (argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
+      allocation_desc.flags = NPUNLOCK_ZE_HOST_MEM_ALLOC_WRITE_COMBINED;
+    }
+    if (argument->data_size > SIZE_MAX - (INFER_PAGE_SIZE - 1)) {
+      result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
+      set_diagnostic(result, "graph tensor allocation size overflowed");
+      goto done;
+    }
+    allocation_size = (argument->data_size + INFER_PAGE_SIZE - 1) & ~(size_t)(INFER_PAGE_SIZE - 1);
+    code = ze.mem_alloc_host(context, &allocation_desc, allocation_size, INFER_PAGE_SIZE,
+                             &argument->allocation);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      set_driver_error(result, code, "zeMemAllocHost(graph argument)");
+      goto done;
+    }
+    memset(argument->allocation, 0, allocation_size);
+    if (argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
+      const infer_request_input *input = &request->inputs[argument->request_input_index];
+      memcpy(argument->allocation, input->data, input->data_size);
+    } else {
+      size_t element;
+      for (element = 0; element < argument->data_size / sizeof(uint16_t); ++element) {
+        ((uint16_t *)argument->allocation)[element] = 0x7e00u;
+      }
+    }
   }
-  allocation_bytes = (tensor_bytes + RUN_PAGE_SIZE - 1) & ~(size_t)(RUN_PAGE_SIZE - 1);
-  input_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC;
-  input_desc.flags = NPUNLOCK_ZE_HOST_MEM_ALLOC_WRITE_COMBINED;
-  output_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC;
-  code = ze.mem_alloc_host(context, &input_desc, allocation_bytes, RUN_PAGE_SIZE, &input);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "zeMemAllocHost(input)");
-    goto done;
-  }
-  code = ze.mem_alloc_host(context, &output_desc, allocation_bytes, RUN_PAGE_SIZE, &output);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "zeMemAllocHost(output)");
-    goto done;
-  }
-  memset(input, 0, allocation_bytes);
-  memset(output, 0, allocation_bytes);
-  for (index = 0; index < (size_t)element_count; ++index) {
-    float step = element_count > 1 ? 3.75f / (float)(element_count - 1) : 0.0f;
-    ((uint16_t *)input)[index] = float_to_fp16(-2.0f + (float)index * step);
-    ((uint16_t *)output)[index] = 0x7e00u;
-  }
-  code = graph.set_argument(handle, input_argument.index, input);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "pfnSetArgumentValue(input)");
-    goto done;
-  }
-  code = graph.set_argument(handle, output_argument.index, output);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "pfnSetArgumentValue(output)");
+  if (!bind_arguments(&graph, handle, arguments, argument_count, result,
+                      "pfnSetArgumentValue(pre-init)")) {
     goto done;
   }
   graph_properties.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_GRAPH_PROPERTIES_3;
@@ -773,7 +876,7 @@ static void execute_graph(const run_request *request, run_result *result) {
   }
   if ((graph_properties.initStageRequired & NPUNLOCK_ZE_GRAPH_STAGE_INITIALIZE) != 0) {
     if (graph.initialize == NULL) {
-      result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
+      result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
       set_diagnostic(result, "graph requires unavailable direct initialization");
       goto done;
     }
@@ -785,7 +888,7 @@ static void execute_graph(const run_request *request, run_result *result) {
   }
   if ((graph_properties.initStageRequired & NPUNLOCK_ZE_GRAPH_STAGE_COMMAND_LIST_INITIALIZE) != 0) {
     if (graph.append_initialize == NULL) {
-      result->status = NPUNLOCK_RUN_WORKER_UNSUPPORTED;
+      result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
       set_diagnostic(result, "graph requires unavailable command-list initialization");
       goto done;
     }
@@ -793,62 +896,80 @@ static void execute_graph(const run_request *request, run_result *result) {
       goto done;
     }
   }
-  code = graph.set_argument(handle, input_argument.index, input);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "pfnSetArgumentValue(input post-init)");
-    goto done;
-  }
-  code = graph.set_argument(handle, output_argument.index, output);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "pfnSetArgumentValue(output post-init)");
+  if (!bind_arguments(&graph, handle, arguments, argument_count, result,
+                      "pfnSetArgumentValue(post-init)")) {
     goto done;
   }
   if (!submit(&ze, &graph, context, device, handle, queue_ordinal, false, result)) {
     goto done;
   }
-  result->output = (uint8_t *)malloc(tensor_bytes);
-  if (result->output == NULL) {
-    result->status = NPUNLOCK_RUN_WORKER_OUT_OF_MEMORY;
-    goto done;
+  for (index = 0; index < argument_count; ++index) {
+    graph_argument *argument = &arguments[index];
+    infer_result_output *output;
+    if (argument->type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT) {
+      continue;
+    }
+    output = &result->outputs[result->output_count++];
+    output->argument_index = argument->index;
+    output->precision = NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16;
+    output->dims_count = argument->dims_count;
+    memcpy(output->dims, argument->dims, sizeof(output->dims));
+    output->name_size = argument->name_size;
+    memcpy(output->name, argument->name, output->name_size);
+    output->data = (uint8_t *)malloc(argument->data_size);
+    if (output->data == NULL) {
+      result->status = NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY;
+      goto done;
+    }
+    output->data_size = argument->data_size;
+    memcpy(output->data, argument->allocation, argument->data_size);
   }
-  memcpy(result->output, output, tensor_bytes);
-  result->output_size = tensor_bytes;
-  result->element_count = element_count;
-  result->status = NPUNLOCK_RUN_WORKER_OK;
+  result->status = NPUNLOCK_INFER_WORKER_OK;
   result->driver_result = NPUNLOCK_ZE_SUCCESS;
 
 done:
-  if (output != NULL) {
-    ze.mem_free(context, output);
+  if (arguments != NULL && context != NULL) {
+    for (index = 0; index < argument_count; ++index) {
+      if (arguments[index].allocation != NULL) {
+        ze.mem_free(context, arguments[index].allocation);
+      }
+    }
   }
-  if (input != NULL) {
-    ze.mem_free(context, input);
-  }
+  free(arguments);
   if (handle != NULL && graph.destroy != NULL) {
     graph.destroy(handle);
   }
   if (context != NULL) {
     ze.context_destroy(context);
   }
-  if (result->status != NPUNLOCK_RUN_WORKER_OK) {
-    free(result->output);
-    result->output = NULL;
-    result->output_size = 0;
-    result->element_count = 0;
+  if (result->status != NPUNLOCK_INFER_WORKER_OK) {
+    for (index = 0; index < result->output_count; ++index) {
+      free(result->outputs[index].data);
+      result->outputs[index].data = NULL;
+    }
+    result->output_count = 0;
   }
   if (loader != NULL) {
     FreeLibrary(loader);
   }
 }
 
-static bool send_response(HANDLE handle, const run_result *result) {
-  uint8_t header[NPUNLOCK_RUN_RESPONSE_HEADER_SIZE] = {0};
+static bool send_response(HANDLE handle, const infer_result *result) {
+  uint8_t header[NPUNLOCK_INFER_RESPONSE_HEADER_SIZE] = {0};
+  uint8_t descriptors[NPUNLOCK_INFER_MAX_ARGUMENTS * NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE] = {0};
   size_t diagnostic_size = result->diagnostic == NULL ? 0 : strlen(result->diagnostic);
-  if (result->output_size > UINT32_MAX || diagnostic_size > UINT32_MAX) {
-    return false;
+  size_t payload_size = 0;
+  size_t payload_offset = 0;
+  size_t index;
+  for (index = 0; index < result->output_count; ++index) {
+    if (!checked_add(payload_size, result->outputs[index].name_size, &payload_size) ||
+        !checked_add(payload_size, result->outputs[index].data_size, &payload_size) ||
+        payload_size > NPUNLOCK_INFER_MAX_OUTPUT_SIZE) {
+      return false;
+    }
   }
-  store_u32(header, NPUNLOCK_RUN_RESPONSE_MAGIC);
-  store_u32(header + 4, NPUNLOCK_RUN_PROTOCOL_VERSION);
+  store_u32(header, NPUNLOCK_INFER_RESPONSE_MAGIC);
+  store_u32(header + 4, NPUNLOCK_INFER_PROTOCOL_VERSION);
   store_u32(header + 8, (uint32_t)result->status);
   store_u32(header + 12, result->driver_result);
   store_u32(header + 16, result->driver_index);
@@ -856,12 +977,36 @@ static bool send_response(HANDLE handle, const run_result *result) {
   store_u32(header + 24, result->driver_version);
   store_u32(header + 28, result->vendor_id);
   store_u32(header + 32, result->device_id);
-  store_u64(header + 40, result->element_count);
-  store_u32(header + 48, (uint32_t)result->output_size);
-  store_u32(header + 52, (uint32_t)diagnostic_size);
-  return write_all(handle, header, sizeof(header)) &&
-         write_all(handle, result->output, result->output_size) &&
-         write_all(handle, (const uint8_t *)result->diagnostic, diagnostic_size);
+  store_u32(header + 36, (uint32_t)result->output_count);
+  store_u32(header + 40, NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE);
+  store_u64(header + 48, diagnostic_size);
+  store_u64(header + 56, payload_size);
+  for (index = 0; index < result->output_count; ++index) {
+    const infer_result_output *output = &result->outputs[index];
+    uint8_t *descriptor = descriptors + index * NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE;
+    size_t dimension;
+    store_u32(descriptor, output->argument_index);
+    store_u32(descriptor + 4, output->precision);
+    store_u32(descriptor + 8, output->dims_count);
+    store_u32(descriptor + 12, (uint32_t)output->name_size);
+    for (dimension = 0; dimension < 5; ++dimension) {
+      store_u32(descriptor + 16 + dimension * 4, output->dims[dimension]);
+    }
+    store_u64(descriptor + 40, output->data_size);
+    store_u64(descriptor + 48, payload_offset);
+    payload_offset += output->name_size + output->data_size;
+  }
+  if (!write_all(handle, header, sizeof(header)) ||
+      !write_all(handle, descriptors, result->output_count * NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE)) {
+    return false;
+  }
+  for (index = 0; index < result->output_count; ++index) {
+    if (!write_all(handle, result->outputs[index].name, result->outputs[index].name_size) ||
+        !write_all(handle, result->outputs[index].data, result->outputs[index].data_size)) {
+      return false;
+    }
+  }
+  return write_all(handle, (const uint8_t *)result->diagnostic, diagnostic_size);
 }
 
 int main(int argc, char **argv) {
@@ -871,8 +1016,9 @@ int main(int argc, char **argv) {
   HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
   uint8_t *request_data = NULL;
   size_t request_size = 0;
-  run_request request;
-  run_result result;
+  infer_request request;
+  infer_result result;
+  size_t index;
   int exit_code;
 
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
@@ -885,17 +1031,19 @@ int main(int argc, char **argv) {
   }
   response = (HANDLE)(uintptr_t)handle_value;
   memset(&result, 0, sizeof(result));
-  result.status = NPUNLOCK_RUN_WORKER_BAD_REQUEST;
+  result.status = NPUNLOCK_INFER_WORKER_BAD_REQUEST;
   if (input == NULL || input == INVALID_HANDLE_VALUE ||
       !read_request(input, &request_data, &request_size)) {
-    set_diagnostic(&result, "failed to read execution worker request");
+    set_diagnostic(&result, "failed to read graphinfer worker request");
   } else if (!parse_request(request_data, request_size, &request)) {
-    set_diagnostic(&result, "malformed execution worker request");
+    set_diagnostic(&result, "malformed graphinfer worker request");
   } else {
     execute_graph(&request, &result);
   }
   exit_code = send_response(response, &result) ? 0 : 3;
-  free(result.output);
+  for (index = 0; index < result.output_count; ++index) {
+    free(result.outputs[index].data);
+  }
   free(result.diagnostic);
   free(request_data);
   CloseHandle(response);
