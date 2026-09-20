@@ -399,8 +399,8 @@ npunlock_status npunlock_run_movi_stage(npunlock_view worker_executable_utf8,
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESTDHANDLES;
   startup.hStdInput = input_read;
-  startup.hStdOutput = null_output;
-  startup.hStdError = null_output;
+  startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+  startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
   if (!CreateProcessW(worker_path, command_line, NULL, NULL, TRUE,
                       CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &startup, &process)) {
     status = GetLastError() == ERROR_FILE_NOT_FOUND ? NPUNLOCK_STATUS_NOT_FOUND

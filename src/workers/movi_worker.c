@@ -414,14 +414,18 @@ static void run_tool(const worker_request *request, worker_result *result) {
                          &diagnostic_size);
   } else {
     movi_link_fn entry = NULL;
-    movi_buffer_list inputs = {request->inputs, request->input_count};
-    movi_buffer linked = {0};
+    struct {
+      movi_buffer b;
+      movi_buffer _[7];
+    } linked = {0};
+    struct {
+      movi_buffer_list bl;
+      movi_buffer_list _[7];
+    } inputs = {{request->inputs, request->input_count}, {0}};
     memcpy(&entry, &raw_entry, sizeof(entry));
-    /* TODO: reconcile this call boundary with the retained ctypes invocation; see
-     * docs/SHAVECC_STATUS.md. The real moviLLD64 currently exits 0xc0000005 here. */
-    return_value = entry((int)request->argument_count, request->arguments, &inputs, &linked);
-    output = linked.data;
-    output_size = linked.size;
+    return_value = entry((int)request->argument_count, request->arguments, &inputs.bl, &linked.b);
+    output = linked.b.data;
+    output_size = linked.b.size;
   }
   result->tool_return = return_value;
   if (!copy_result(output, output_size, &result->output) ||
