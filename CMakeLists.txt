@@ -8,6 +8,13 @@ include(CMakePackageConfigHelpers)
 
 option(NPUNLOCK_BUILD_TESTS "Build offline unit tests" ON)
 option(NPUNLOCK_ENABLE_NPU_TESTS "Enable tests that require an Intel NPU" OFF)
+option(NPUNLOCK_ENABLE_MOVITOOLS_TESTS "Enable tests that invoke caller-supplied MoviTools" OFF)
+set(NPUNLOCK_MOVITOOLS_DIR "" CACHE PATH "Directory containing the three MoviTools DLLs")
+set(NPUNLOCK_MOVITOOLS_TEST_SOURCE "" CACHE FILEPATH "C source for the MoviTools integration test")
+set(NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT "" CACHE FILEPATH
+    "Linker script for the MoviTools integration test")
+set(NPUNLOCK_MOVITOOLS_TEST_EXPECTED_ELF "" CACHE FILEPATH
+    "Expected repeatable ELF for the MoviTools integration test")
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -37,13 +44,23 @@ target_include_directories(npunlock_common
 )
 target_link_libraries(npunlock_common PRIVATE $<BUILD_INTERFACE:npunlock_warnings>)
 
-add_library(shavecc src/shavecc/shavecc.c)
+if(WIN32)
+  set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_win32.c)
+  add_executable(npunlock_movi_worker src/workers/movi_worker.c)
+  target_include_directories(npunlock_movi_worker PRIVATE src/workers)
+  target_link_libraries(npunlock_movi_worker PRIVATE npunlock_warnings)
+else()
+  set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_stub.c)
+endif()
+
+add_library(shavecc src/shavecc/shavecc.c ${NPUNLOCK_MOVI_STAGE_SOURCE})
 add_library(npunlock::shavecc ALIAS shavecc)
 target_include_directories(shavecc PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_include_directories(shavecc PRIVATE src/common)
+target_include_directories(shavecc PRIVATE src src/shavecc)
 target_link_libraries(shavecc PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
 
 add_library(ir2blob src/ir2blob/ir2blob.c)
@@ -98,7 +115,13 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/npurun/main.c
   src/patchblob/patchblob.c
   src/shavecc/shavecc.c
+  src/shavecc/movi_stage.h
+  src/shavecc/movi_stage_stub.c
+  src/shavecc/movi_stage_win32.c
+  src/workers/movi_protocol.h
+  src/workers/movi_worker.c
   tests/package/smoke.c
+  tests/integration/test_shavecc.c
   tests/unit/test_api.c
   tests/unit/test_common.c
   tests/unit/test_elf32.c
@@ -141,6 +164,9 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   add_test(NAME common COMMAND npunlock_test_common)
 
   add_executable(npunlock_test_api tests/unit/test_api.c)
+  if(WIN32)
+    add_dependencies(npunlock_test_api npunlock_movi_worker)
+  endif()
   target_link_libraries(
     npunlock_test_api PRIVATE shavecc ir2blob patchblob npunlock_common npunlock_warnings
   )
@@ -150,9 +176,47 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   target_include_directories(npunlock_test_elf32 PRIVATE src/common)
   target_link_libraries(npunlock_test_elf32 PRIVATE npunlock_common npunlock_warnings)
   add_test(NAME shave_elf_parser COMMAND npunlock_test_elf32)
+
+  if(NPUNLOCK_ENABLE_MOVITOOLS_TESTS)
+    if(NOT WIN32)
+      message(FATAL_ERROR "MoviTools integration tests require Windows")
+    endif()
+    foreach(required_path
+        NPUNLOCK_MOVITOOLS_DIR
+        NPUNLOCK_MOVITOOLS_TEST_SOURCE
+        NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT
+        NPUNLOCK_MOVITOOLS_TEST_EXPECTED_ELF)
+      if(NOT IS_ABSOLUTE "${${required_path}}" OR NOT EXISTS "${${required_path}}")
+        message(FATAL_ERROR "${required_path} must name an existing absolute path")
+      endif()
+    endforeach()
+    foreach(required_dll moviCompile64.dll moviAsm64.dll moviLLD64.dll)
+      if(NOT EXISTS "${NPUNLOCK_MOVITOOLS_DIR}/${required_dll}")
+        message(FATAL_ERROR "missing ${required_dll} under NPUNLOCK_MOVITOOLS_DIR")
+      endif()
+    endforeach()
+    add_executable(npunlock_test_shavecc_integration tests/integration/test_shavecc.c)
+    target_link_libraries(
+      npunlock_test_shavecc_integration PRIVATE shavecc npunlock_common npunlock_warnings
+    )
+    add_dependencies(npunlock_test_shavecc_integration npunlock_movi_worker)
+    add_test(
+      NAME movitools_add1
+      COMMAND npunlock_test_shavecc_integration
+        "${NPUNLOCK_MOVITOOLS_DIR}"
+        "${NPUNLOCK_MOVITOOLS_TEST_SOURCE}"
+        "${NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT}"
+        "${NPUNLOCK_MOVITOOLS_TEST_EXPECTED_ELF}"
+    )
+    set_tests_properties(movitools_add1 PROPERTIES TIMEOUT 30)
+  endif()
 endif()
 
-install(TARGETS npunlock_common shavecc ir2blob patchblob npurun
+set(NPUNLOCK_INSTALL_TARGETS npunlock_common shavecc ir2blob patchblob npurun)
+if(WIN32)
+  list(APPEND NPUNLOCK_INSTALL_TARGETS npunlock_movi_worker)
+endif()
+install(TARGETS ${NPUNLOCK_INSTALL_TARGETS}
   EXPORT npunlockTargets
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

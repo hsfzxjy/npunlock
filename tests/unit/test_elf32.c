@@ -97,9 +97,6 @@ int main(void) {
   CHECK(diagnostic.json.data == NULL);
 
   for (length = 0; length < sizeof(elf); ++length) {
-    if (length == 351) {
-      continue;
-    }
     CHECK(npunlock_parse_shave_elf((npunlock_view){elf, length}, &image, &diagnostic) !=
           NPUNLOCK_STATUS_OK);
     npunlock_diagnostic_release(&diagnostic);
@@ -113,6 +110,20 @@ int main(void) {
 
   memcpy(damaged, elf, sizeof(elf));
   put32(damaged, 192 + 40 + 20, 4);
+  CHECK(npunlock_parse_shave_elf((npunlock_view){damaged, sizeof(damaged)}, &image, &diagnostic) ==
+        NPUNLOCK_STATUS_UNSUPPORTED);
+  npunlock_diagnostic_release(&diagnostic);
+
+  memcpy(damaged, elf, sizeof(elf));
+  put32(damaged, 56, 0);
+  put32(damaged, 68, 4);
+  CHECK(npunlock_parse_shave_elf((npunlock_view){damaged, sizeof(damaged)}, &image, &diagnostic) ==
+        NPUNLOCK_STATUS_UNSUPPORTED);
+  npunlock_diagnostic_release(&diagnostic);
+
+  memcpy(damaged, elf, sizeof(elf));
+  put32(damaged, 60, 0);
+  put32(damaged, 72, 4);
   CHECK(npunlock_parse_shave_elf((npunlock_view){damaged, sizeof(damaged)}, &image, &diagnostic) ==
         NPUNLOCK_STATUS_UNSUPPORTED);
   npunlock_diagnostic_release(&diagnostic);

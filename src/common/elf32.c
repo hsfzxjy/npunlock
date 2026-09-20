@@ -109,12 +109,14 @@ static npunlock_status validate_symbols(npunlock_view elf, size_t section_table,
     return fail(diagnostic, NPUNLOCK_STATUS_MALFORMED_INPUT, "invalid ELF32 symbol table metadata");
   }
   for (index = 1; index < symbols->size / ELF32_SYMBOL_SIZE; ++index) {
+    size_t relative;
     size_t offset;
     const uint8_t *symbol;
     uint32_t name;
     uint16_t section_index;
     const char *symbol_name;
-    if (!npunlock_checked_add_size(symbols->offset, index * ELF32_SYMBOL_SIZE, &offset) ||
+    if (!npunlock_checked_mul_size(index, ELF32_SYMBOL_SIZE, &relative) ||
+        !npunlock_checked_add_size(symbols->offset, relative, &offset) ||
         !range_is_valid(elf.size, offset, ELF32_SYMBOL_SIZE)) {
       return fail(diagnostic, NPUNLOCK_STATUS_MALFORMED_INPUT,
                   "ELF32 symbol lies outside the file");
@@ -255,6 +257,8 @@ npunlock_status npunlock_parse_shave_elf(npunlock_view elf, npunlock_shave_image
     uint32_t file_size;
     uint32_t memory_size;
     uint32_t flags;
+    size_t text_file_relative;
+    size_t text_memory_relative;
     if (!npunlock_checked_add_size(program_table, (size_t)index * program_entry_size, &offset) ||
         !range_is_valid(elf.size, offset, ELF32_PROGRAM_SIZE)) {
       return fail(diagnostic, NPUNLOCK_STATUS_MALFORMED_INPUT,
@@ -270,9 +274,13 @@ npunlock_status npunlock_parse_shave_elf(npunlock_view elf, npunlock_shave_image
       return fail(diagnostic, NPUNLOCK_STATUS_MALFORMED_INPUT, "ELF32 program extent is invalid");
     }
     if (load_u32(program) == ELF_PROGRAM_LOAD && (flags & 5) == 5 && text.offset >= file_offset &&
-        text.size <= file_size - (text.offset - file_offset) && text.address >= virtual_address &&
-        text.size <= memory_size - (text.address - virtual_address)) {
-      text_is_loadable = true;
+        text.address >= virtual_address) {
+      text_file_relative = (size_t)text.offset - file_offset;
+      text_memory_relative = (size_t)text.address - virtual_address;
+      if (range_is_valid(file_size, text_file_relative, text.size) &&
+          range_is_valid(memory_size, text_memory_relative, text.size)) {
+        text_is_loadable = true;
+      }
     }
   }
   if (!text_is_loadable) {

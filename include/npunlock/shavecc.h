@@ -13,9 +13,11 @@ extern "C" {
 typedef struct shavecc_options {
   uint32_t struct_size;
   npunlock_view movi_dll_directory_utf8;
+  npunlock_view worker_executable_utf8;
   npunlock_view target_cpu;
   npunlock_view entry_symbol;
-  npunlock_view compiler_flags;
+  const npunlock_view *compiler_definitions;
+  size_t compiler_definition_count;
   npunlock_view linker_script;
   uint32_t timeout_ms;
 } shavecc_options;

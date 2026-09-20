@@ -21,7 +21,7 @@ static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *s
 
 int main(void) {
   static const uint8_t source[] = "void controlled_act(unsigned p) {(void)p;}";
-  static const uint8_t path[] = "C:\\MoviTools";
+  static const uint8_t path[] = "C:\\npunlock-tests\\missing-movitools";
   static const uint8_t cpu[] = "3720xx";
   static const uint8_t entry[] = "controlled_act";
   static const uint8_t script[] = "SECTIONS {}";
@@ -42,8 +42,8 @@ int main(void) {
   shave_options.linker_script = (npunlock_view){script, sizeof(script) - 1};
   shave_options.timeout_ms = 1000;
   CHECK(shavecc_compile(&shave_options, (npunlock_view){source, sizeof(source) - 1},
-                        &shave_result) == NPUNLOCK_STATUS_NOT_IMPLEMENTED);
-  CHECK(check_diagnostic(&shave_result.diagnostic, "not_implemented"));
+                        &shave_result) == NPUNLOCK_STATUS_NOT_FOUND);
+  CHECK(check_diagnostic(&shave_result.diagnostic, "not_found"));
   shavecc_result_release(&shave_result);
   shavecc_result_release(&shave_result);
 
