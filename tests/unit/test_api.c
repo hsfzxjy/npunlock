@@ -73,8 +73,8 @@ int main(void) {
                                    PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
   CHECK(patchblob_patch(&patch_options, (npunlock_view){blob, sizeof(blob)},
                         (npunlock_view){blob, sizeof(blob)}, &target, 1,
-                        &patch_result) == NPUNLOCK_STATUS_NOT_IMPLEMENTED);
-  CHECK(check_diagnostic(&patch_result.diagnostic, "not_implemented"));
+                        &patch_result) == NPUNLOCK_STATUS_MALFORMED_INPUT);
+  CHECK(check_diagnostic(&patch_result.diagnostic, "malformed_input"));
   patchblob_result_release(&patch_result);
 
   CHECK(shavecc_compile(NULL, (npunlock_view){source, sizeof(source) - 1}, &shave_result) ==

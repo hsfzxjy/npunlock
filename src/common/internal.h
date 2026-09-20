@@ -18,5 +18,6 @@ NPUNLOCK_COMMON_API npunlock_status npunlock_buffer_adopt_malloc(uint8_t *data, 
 NPUNLOCK_COMMON_API npunlock_status npunlock_set_diagnostic(npunlock_diagnostic *diagnostic,
                                                             npunlock_status status,
                                                             const char *stage, const char *message);
+NPUNLOCK_COMMON_API void npunlock_sha256(npunlock_view source, uint8_t digest[32]);
 
 #endif

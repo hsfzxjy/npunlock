@@ -9,6 +9,7 @@ include(CMakePackageConfigHelpers)
 option(NPUNLOCK_BUILD_TESTS "Build offline unit tests" ON)
 option(NPUNLOCK_ENABLE_NPU_TESTS "Enable tests that require an Intel NPU" OFF)
 option(NPUNLOCK_ENABLE_MOVITOOLS_TESTS "Enable tests that invoke caller-supplied MoviTools" OFF)
+option(NPUNLOCK_ENABLE_PATCHBLOB_TESTS "Enable tests using caller-supplied retained graph fixtures" OFF)
 set(NPUNLOCK_MOVITOOLS_DIR "" CACHE PATH "Directory containing the three MoviTools DLLs")
 set(NPUNLOCK_MOVITOOLS_TEST_SOURCE "" CACHE FILEPATH "C source for the MoviTools integration test")
 set(NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT "" CACHE FILEPATH
@@ -19,6 +20,10 @@ set(NPUNLOCK_NPU_TEST_IR_XML "" CACHE FILEPATH "IR XML for the NPU integration t
 set(NPUNLOCK_NPU_TEST_WEIGHTS "" CACHE FILEPATH "Weights for the NPU integration test")
 set(NPUNLOCK_NPU_TEST_EXPECTED_BLOB "" CACHE FILEPATH
     "Expected repeatable native blob for the NPU integration test")
+set(NPUNLOCK_PATCHBLOB_TEST_CARRIER "" CACHE FILEPATH "ACT carrier graph for patchblob testing")
+set(NPUNLOCK_PATCHBLOB_TEST_ELF "" CACHE FILEPATH "Linked SHAVE ELF for patchblob testing")
+set(NPUNLOCK_PATCHBLOB_TEST_EXPECTED_BLOB "" CACHE FILEPATH
+    "Expected patched graph for patchblob testing")
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -37,6 +42,7 @@ add_library(npunlock_common
   src/common/checked.c
   src/common/diagnostic.c
   src/common/elf32.c
+  src/common/sha256.c
   src/common/status.c
 )
 add_library(npunlock::common ALIAS npunlock_common)
@@ -82,13 +88,13 @@ target_include_directories(ir2blob PRIVATE src/common)
 target_include_directories(ir2blob PRIVATE src src/ir2blob)
 target_link_libraries(ir2blob PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
 
-add_library(patchblob src/patchblob/patchblob.c)
+add_library(patchblob src/patchblob/graph_blob.c src/patchblob/patchblob.c)
 add_library(npunlock::patchblob ALIAS patchblob)
 target_include_directories(patchblob PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_include_directories(patchblob PRIVATE src/common)
+target_include_directories(patchblob PRIVATE src/common src/patchblob)
 target_link_libraries(patchblob PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
 
 target_compile_definitions(npunlock_common PRIVATE NPUNLOCK_COMMON_BUILDING)
@@ -120,6 +126,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/common/elf32.c
   src/common/elf32.h
   src/common/internal.h
+  src/common/sha256.c
   src/common/status.c
   src/ir2blob/ir2blob.c
   src/ir2blob/ir_worker.h
@@ -127,6 +134,8 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/ir2blob/ir_worker_win32.c
   src/npurun/main.c
   src/patchblob/patchblob.c
+  src/patchblob/graph_blob.c
+  src/patchblob/graph_blob.h
   src/shavecc/shavecc.c
   src/shavecc/movi_stage.h
   src/shavecc/movi_stage_stub.c
@@ -139,9 +148,11 @@ set(NPUNLOCK_FORMAT_SOURCES
   tests/package/smoke.c
   tests/integration/test_shavecc.c
   tests/integration/test_ir2blob.c
+  tests/integration/test_patchblob.c
   tests/unit/test_api.c
   tests/unit/test_common.c
   tests/unit/test_elf32.c
+  tests/unit/test_graph_blob.c
 )
 
 find_program(CLANG_FORMAT_EXECUTABLE
@@ -193,6 +204,35 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   target_include_directories(npunlock_test_elf32 PRIVATE src/common)
   target_link_libraries(npunlock_test_elf32 PRIVATE npunlock_common npunlock_warnings)
   add_test(NAME shave_elf_parser COMMAND npunlock_test_elf32)
+
+  add_executable(npunlock_test_graph_blob tests/unit/test_graph_blob.c)
+  target_include_directories(npunlock_test_graph_blob PRIVATE src/patchblob)
+  target_link_libraries(
+    npunlock_test_graph_blob PRIVATE patchblob npunlock_common npunlock_warnings
+  )
+  add_test(NAME graph_blob_rejection COMMAND npunlock_test_graph_blob)
+
+  if(NPUNLOCK_ENABLE_PATCHBLOB_TESTS)
+    foreach(required_file
+        NPUNLOCK_PATCHBLOB_TEST_CARRIER
+        NPUNLOCK_PATCHBLOB_TEST_ELF
+        NPUNLOCK_PATCHBLOB_TEST_EXPECTED_BLOB)
+      if(NOT IS_ABSOLUTE "${${required_file}}" OR NOT EXISTS "${${required_file}}")
+        message(FATAL_ERROR "${required_file} must name an existing absolute file")
+      endif()
+    endforeach()
+    add_executable(npunlock_test_patchblob_integration tests/integration/test_patchblob.c)
+    target_link_libraries(
+      npunlock_test_patchblob_integration PRIVATE patchblob npunlock_common npunlock_warnings
+    )
+    add_test(
+      NAME patchblob_shared_add1
+      COMMAND npunlock_test_patchblob_integration
+        "${NPUNLOCK_PATCHBLOB_TEST_CARRIER}"
+        "${NPUNLOCK_PATCHBLOB_TEST_ELF}"
+        "${NPUNLOCK_PATCHBLOB_TEST_EXPECTED_BLOB}"
+    )
+  endif()
 
   if(NPUNLOCK_ENABLE_MOVITOOLS_TESTS)
     if(NOT WIN32)
