@@ -108,6 +108,7 @@ foreach(target npunlock_common shavecc ir2blob patchblob)
 endforeach()
 
 add_executable(npurun src/npurun/main.c)
+target_include_directories(npurun PRIVATE src/common)
 target_link_libraries(npurun
   PRIVATE shavecc ir2blob patchblob npunlock_common $<BUILD_INTERFACE:npunlock_warnings>
 )
@@ -205,12 +206,19 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   target_link_libraries(npunlock_test_elf32 PRIVATE npunlock_common npunlock_warnings)
   add_test(NAME shave_elf_parser COMMAND npunlock_test_elf32)
 
-  add_executable(npunlock_test_graph_blob tests/unit/test_graph_blob.c)
-  target_include_directories(npunlock_test_graph_blob PRIVATE src/patchblob)
+  add_executable(
+    npunlock_test_graph_blob tests/unit/test_graph_blob.c src/patchblob/graph_blob.c
+  )
+  target_include_directories(npunlock_test_graph_blob PRIVATE src/common src/patchblob)
   target_link_libraries(
-    npunlock_test_graph_blob PRIVATE patchblob npunlock_common npunlock_warnings
+    npunlock_test_graph_blob PRIVATE npunlock_common npunlock_warnings
   )
   add_test(NAME graph_blob_rejection COMMAND npunlock_test_graph_blob)
+
+  add_test(NAME cli_version COMMAND npurun --version)
+  set_tests_properties(cli_version PROPERTIES PASS_REGULAR_EXPRESSION "npunlock 0.1.0")
+  add_test(NAME cli_help COMMAND npurun --help)
+  set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "npurun.*build")
 
   if(NPUNLOCK_ENABLE_PATCHBLOB_TESTS)
     foreach(required_file

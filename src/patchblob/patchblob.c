@@ -118,7 +118,7 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
     return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR, "patchblob.report",
                                    "patch report buffer was too small");
   }
-  return npunlock_buffer_adopt_malloc((uint8_t *)writer.data, writer.size + 1u, report);
+  return npunlock_buffer_adopt_malloc((uint8_t *)writer.data, writer.size, report);
 }
 
 npunlock_status patchblob_patch(const patchblob_options *options, npunlock_view graph_blob,

@@ -397,3 +397,29 @@ Its initial objective is narrower:
 > provide a reproducible path from user-written C to executable ACT-SHAVE code inside a valid Intel NPU graph, while relying on Intel's existing driver and firmware for graph compilation and execution.
 
 The project deliberately exposes only the contracts that have been observed and validated. Unsupported graph structures, kernel layouts, or ABI assumptions should be rejected rather than handled speculatively.
+
+## Current MVP command
+
+`npurun build` is the file-oriented boundary over the three C libraries. It
+compiles an OpenVINO-format IR through the NPU driver, compiles the supplied C
+through caller-selected MoviTools DLLs, validates and patches explicit ACT
+invocation/range pairs, then writes the graph and provenance manifest:
+
+```powershell
+npurun build `
+  --ir model.xml `
+  --weights model.bin `
+  --shave-source kernel.c `
+  --movi-dll-dir D:\path\containing\MoviTools\DLLs `
+  --linker-script shave_kernel.ld `
+  --patch-invocation 0 --patch-range 0 `
+  --input-count 1 --element-count 16 --span-bytes 32 `
+  --output patched.blob `
+  --manifest patched.json
+```
+
+Repeat both patch-selection options in matching order when the carrier uses
+multiple compatible ACT invocations. The caller must supply the observed
+arity, per-invocation element count, and byte span; `npurun` does not guess a
+source-node mapping. Hardware/OEM calls have finite worker deadlines. MoviTools
+binaries remain caller-supplied and are not bundled with this project.
