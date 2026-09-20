@@ -230,6 +230,20 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   add_test(NAME cli_help COMMAND npurun --help)
   set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "npurun.*build")
 
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    execute_process(
+      COMMAND ${Python3_EXECUTABLE} -c "import numpy"
+      RESULT_VARIABLE NPUNLOCK_NUMPY_IMPORT_RESULT
+    )
+    if(NPUNLOCK_NUMPY_IMPORT_RESULT EQUAL 0)
+      add_test(
+        NAME python_api
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_python_api.py
+      )
+    endif()
+  endif()
+
   if(NPUNLOCK_ENABLE_PATCHBLOB_TESTS)
     foreach(required_file
         NPUNLOCK_PATCHBLOB_TEST_CARRIER

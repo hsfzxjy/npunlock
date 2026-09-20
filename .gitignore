@@ -6,3 +6,6 @@
 *.VC.opendb
 /docs/progress*
 /docs/cmake-style.md
+__pycache__/
+*.py[cod]
+*.egg-info/

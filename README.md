@@ -438,3 +438,25 @@ npurun build `
 
 This execution option is intentionally operator-specific. It is not a general
 graph runner and does not infer computation correctness from driver acceptance.
+
+## Python frontend
+
+The `python/npunlock` package provides the initial symbolic frontend described
+in `docs/PYTHON_API.md`. Operators are dynamic rather than registered:
+
+```python
+import npunlock as npu
+
+x = npu.input("x", shape=(1, 32), dtype="f16")
+y = npu.Abs(x, _shape=x.shape, _dtype=x.dtype)
+graph = npu.Graph([x], [y])
+serialized = npu.serialize_ir(graph)
+xml, weights = serialized.xml, serialized.weights
+```
+
+The package serializes OpenVINO-format IR without importing OpenVINO and binds
+the three public C libraries directly through `ctypes`. Custom nodes lower to
+caller-selected carrier operators and still require explicit advanced
+`PatchTarget` values, preserving the C MVP's validated selector boundary.
+General NumPy-backed `Program.run()` is not exposed yet because the public C
+ABI does not yet accept caller-supplied execution buffers.
