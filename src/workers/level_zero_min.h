@@ -16,6 +16,11 @@
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_DRIVER_PROPERTIES 0x1
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES 0x3
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_CONTEXT_DESC 0xd
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_COMMAND_QUEUE_GROUP_PROPERTIES 0x6
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC 0xe
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_COMMAND_LIST_DESC 0xf
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_FENCE_DESC 0x12
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC 0x16
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_INIT_DRIVER_TYPE_DESC 0x00020021
 #define NPUNLOCK_ZE_INIT_DRIVER_TYPE_FLAG_NPU 0x2
 #define NPUNLOCK_ZE_DEVICE_TYPE_VPU 5
@@ -23,6 +28,8 @@
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_DEVICE_GRAPH_PROPERTIES 0x1
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_DEVICE_GRAPH_PROPERTIES_2 0xf
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_GRAPH_DESC_2 0xe
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_GRAPH_PROPERTIES_3 0x11
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_GRAPH_ARGUMENT_PROPERTIES_3 0xd
 #define NPUNLOCK_ZE_GRAPH_FORMAT_NATIVE 0x1
 #define NPUNLOCK_ZE_GRAPH_FORMAT_NGRAPH_LITE 0x2
 #define NPUNLOCK_ZE_GRAPH_DDI_CREATE2 16
@@ -31,11 +38,29 @@
 #define NPUNLOCK_ZE_GRAPH_DDI_DEVICE_PROPERTIES 8
 #define NPUNLOCK_ZE_GRAPH_DDI_DEVICE_PROPERTIES2 19
 #define NPUNLOCK_ZE_GRAPH_DDI_GET_NATIVE2 20
+#define NPUNLOCK_ZE_GRAPH_DDI_GET_PROPERTIES3 26
+#define NPUNLOCK_ZE_GRAPH_DDI_GET_ARGUMENT_PROPERTIES3 11
+#define NPUNLOCK_ZE_GRAPH_DDI_SET_ARGUMENT 4
+#define NPUNLOCK_ZE_GRAPH_DDI_APPEND_INITIALIZE 5
+#define NPUNLOCK_ZE_GRAPH_DDI_APPEND_EXECUTE 6
+#define NPUNLOCK_ZE_GRAPH_DDI_INITIALIZE 22
+#define NPUNLOCK_ZE_GRAPH_STAGE_COMMAND_LIST_INITIALIZE 0x1
+#define NPUNLOCK_ZE_GRAPH_STAGE_INITIALIZE 0x2
+#define NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT 0
+#define NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT 1
+#define NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16 0x2
+#define NPUNLOCK_ZE_COMMAND_QUEUE_GROUP_COMPUTE 0x1
+#define NPUNLOCK_ZE_HOST_MEM_ALLOC_WRITE_COMBINED 0x4
 
 typedef struct npunlock_ze_driver_handle *npunlock_ze_driver_handle;
 typedef struct npunlock_ze_device_handle *npunlock_ze_device_handle;
 typedef struct npunlock_ze_context_handle *npunlock_ze_context_handle;
 typedef struct npunlock_ze_graph_handle *npunlock_ze_graph_handle;
+typedef struct npunlock_ze_command_queue_handle *npunlock_ze_command_queue_handle;
+typedef struct npunlock_ze_command_list_handle *npunlock_ze_command_list_handle;
+typedef struct npunlock_ze_fence_handle *npunlock_ze_fence_handle;
+typedef struct npunlock_ze_event_handle *npunlock_ze_event_handle;
+typedef struct npunlock_ze_graph_profiling_query_handle *npunlock_ze_graph_profiling_query_handle;
 
 typedef struct npunlock_ze_init_driver_type_desc {
   uint32_t stype;
@@ -138,8 +163,71 @@ typedef struct npunlock_ze_graph_desc_2 {
   uint32_t flags;
 } npunlock_ze_graph_desc_2;
 
+typedef struct npunlock_ze_graph_properties_3 {
+  uint32_t stype;
+  void *pNext;
+  uint32_t numGraphArgs;
+  uint32_t initStageRequired;
+  uint32_t flags;
+} npunlock_ze_graph_properties_3;
+
+typedef struct npunlock_ze_graph_argument_properties_3 {
+  uint32_t stype;
+  void *pNext;
+  char name[256];
+  uint32_t type;
+  uint32_t dims[5];
+  uint32_t networkPrecision;
+  uint32_t networkLayout;
+  uint32_t devicePrecision;
+  uint32_t deviceLayout;
+  float quantReverseScale;
+  uint8_t quantZeroPoint;
+  uint32_t dims_count;
+  char debug_friendly_name[256];
+  char associated_tensor_names[32][256];
+  uint32_t associated_tensor_names_count;
+} npunlock_ze_graph_argument_properties_3;
+
+typedef struct npunlock_ze_command_queue_group_properties {
+  uint32_t stype;
+  void *pNext;
+  uint32_t flags;
+  size_t maxMemoryFillPatternSize;
+  uint32_t numQueues;
+} npunlock_ze_command_queue_group_properties;
+
+typedef struct npunlock_ze_command_queue_desc {
+  uint32_t stype;
+  const void *pNext;
+  uint32_t ordinal;
+  uint32_t index;
+  uint32_t flags;
+  uint32_t mode;
+  uint32_t priority;
+} npunlock_ze_command_queue_desc;
+
+typedef struct npunlock_ze_command_list_desc {
+  uint32_t stype;
+  const void *pNext;
+  uint32_t commandQueueGroupOrdinal;
+  uint32_t flags;
+} npunlock_ze_command_list_desc;
+
+typedef struct npunlock_ze_fence_desc {
+  uint32_t stype;
+  const void *pNext;
+  uint32_t flags;
+} npunlock_ze_fence_desc;
+
+typedef struct npunlock_ze_host_mem_alloc_desc {
+  uint32_t stype;
+  const void *pNext;
+  uint32_t flags;
+} npunlock_ze_host_mem_alloc_desc;
+
 typedef struct npunlock_ze_graph_ddi_prefix {
-  void *slots[21];
+  void *slots[30];
 } npunlock_ze_graph_ddi_prefix;
 
 typedef uint32_t(__cdecl *npunlock_ze_init_drivers_fn)(uint32_t *, npunlock_ze_driver_handle *,
@@ -158,6 +246,31 @@ typedef uint32_t(__cdecl *npunlock_ze_context_create_fn)(npunlock_ze_driver_hand
                                                          const npunlock_ze_context_desc *,
                                                          npunlock_ze_context_handle *);
 typedef uint32_t(__cdecl *npunlock_ze_context_destroy_fn)(npunlock_ze_context_handle);
+typedef uint32_t(__cdecl *npunlock_ze_device_get_queue_groups_fn)(
+    npunlock_ze_device_handle, uint32_t *, npunlock_ze_command_queue_group_properties *);
+typedef uint32_t(__cdecl *npunlock_ze_mem_alloc_host_fn)(npunlock_ze_context_handle,
+                                                         const npunlock_ze_host_mem_alloc_desc *,
+                                                         size_t, size_t, void **);
+typedef uint32_t(__cdecl *npunlock_ze_mem_free_fn)(npunlock_ze_context_handle, void *);
+typedef uint32_t(__cdecl *npunlock_ze_command_queue_create_fn)(
+    npunlock_ze_context_handle, npunlock_ze_device_handle, const npunlock_ze_command_queue_desc *,
+    npunlock_ze_command_queue_handle *);
+typedef uint32_t(__cdecl *npunlock_ze_command_queue_destroy_fn)(npunlock_ze_command_queue_handle);
+typedef uint32_t(__cdecl *npunlock_ze_command_queue_execute_fn)(npunlock_ze_command_queue_handle,
+                                                                uint32_t,
+                                                                npunlock_ze_command_list_handle *,
+                                                                npunlock_ze_fence_handle);
+typedef uint32_t(__cdecl *npunlock_ze_command_list_create_fn)(npunlock_ze_context_handle,
+                                                              npunlock_ze_device_handle,
+                                                              const npunlock_ze_command_list_desc *,
+                                                              npunlock_ze_command_list_handle *);
+typedef uint32_t(__cdecl *npunlock_ze_command_list_close_fn)(npunlock_ze_command_list_handle);
+typedef uint32_t(__cdecl *npunlock_ze_command_list_destroy_fn)(npunlock_ze_command_list_handle);
+typedef uint32_t(__cdecl *npunlock_ze_fence_create_fn)(npunlock_ze_command_queue_handle,
+                                                       const npunlock_ze_fence_desc *,
+                                                       npunlock_ze_fence_handle *);
+typedef uint32_t(__cdecl *npunlock_ze_fence_destroy_fn)(npunlock_ze_fence_handle);
+typedef uint32_t(__cdecl *npunlock_ze_fence_synchronize_fn)(npunlock_ze_fence_handle, uint64_t);
 typedef uint32_t(__cdecl *npunlock_ze_npu_get_extension_fn)(npunlock_ze_driver_handle,
                                                             npunlock_ze_driver_extension_npu *);
 typedef uint32_t(__cdecl *npunlock_ze_graph_device_properties_fn)(
@@ -173,5 +286,20 @@ typedef uint32_t(__cdecl *npunlock_ze_graph_get_native_fn)(npunlock_ze_graph_han
                                                            uint8_t *);
 typedef uint32_t(__cdecl *npunlock_ze_graph_get_native2_fn)(npunlock_ze_graph_handle, size_t *,
                                                             const uint8_t **);
+typedef uint32_t(__cdecl *npunlock_ze_graph_get_properties3_fn)(npunlock_ze_graph_handle,
+                                                                npunlock_ze_graph_properties_3 *);
+typedef uint32_t(__cdecl *npunlock_ze_graph_get_argument_properties3_fn)(
+    npunlock_ze_graph_handle, uint32_t, npunlock_ze_graph_argument_properties_3 *);
+typedef uint32_t(__cdecl *npunlock_ze_graph_set_argument_fn)(npunlock_ze_graph_handle, uint32_t,
+                                                             const void *);
+typedef uint32_t(__cdecl *npunlock_ze_graph_initialize_fn)(npunlock_ze_graph_handle);
+typedef uint32_t(__cdecl *npunlock_ze_graph_append_initialize_fn)(
+    npunlock_ze_command_list_handle, npunlock_ze_graph_handle,
+    npunlock_ze_graph_profiling_query_handle, npunlock_ze_event_handle, uint32_t,
+    npunlock_ze_event_handle *);
+typedef uint32_t(__cdecl *npunlock_ze_graph_append_execute_fn)(
+    npunlock_ze_command_list_handle, npunlock_ze_graph_handle,
+    npunlock_ze_graph_profiling_query_handle, npunlock_ze_event_handle, uint32_t,
+    npunlock_ze_event_handle *);
 
 #endif
