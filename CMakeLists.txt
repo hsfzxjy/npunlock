@@ -57,15 +57,20 @@ target_link_libraries(npunlock_common PRIVATE $<BUILD_INTERFACE:npunlock_warning
 if(WIN32)
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_win32.c)
   set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_win32.c)
+  set(NPUNLOCK_RUN_WORKER_SOURCE src/npurun/run_worker_win32.c)
   add_executable(npunlock_movi_worker src/workers/movi_worker.c)
   target_include_directories(npunlock_movi_worker PRIVATE src/workers)
   target_link_libraries(npunlock_movi_worker PRIVATE npunlock_warnings)
   add_executable(npunlock_ir_worker src/workers/ir_worker.c)
   target_include_directories(npunlock_ir_worker PRIVATE src/workers)
   target_link_libraries(npunlock_ir_worker PRIVATE npunlock_warnings)
+  add_executable(npunlock_run_worker src/workers/run_worker.c)
+  target_include_directories(npunlock_run_worker PRIVATE src/workers)
+  target_link_libraries(npunlock_run_worker PRIVATE npunlock_warnings)
 else()
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_stub.c)
   set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_stub.c)
+  set(NPUNLOCK_RUN_WORKER_SOURCE src/npurun/run_worker_stub.c)
 endif()
 
 add_library(shavecc src/shavecc/shavecc.c ${NPUNLOCK_MOVI_STAGE_SOURCE})
@@ -107,8 +112,8 @@ foreach(target npunlock_common shavecc ir2blob patchblob)
   endif()
 endforeach()
 
-add_executable(npurun src/npurun/main.c)
-target_include_directories(npurun PRIVATE src/common)
+add_executable(npurun src/npurun/main.c ${NPUNLOCK_RUN_WORKER_SOURCE})
+target_include_directories(npurun PRIVATE src src/common src/npurun)
 target_link_libraries(npurun
   PRIVATE shavecc ir2blob patchblob npunlock_common $<BUILD_INTERFACE:npunlock_warnings>
 )
@@ -134,6 +139,9 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/ir2blob/ir_worker_stub.c
   src/ir2blob/ir_worker_win32.c
   src/npurun/main.c
+  src/npurun/run_worker.h
+  src/npurun/run_worker_stub.c
+  src/npurun/run_worker_win32.c
   src/patchblob/patchblob.c
   src/patchblob/graph_blob.c
   src/patchblob/graph_blob.h
@@ -146,6 +154,8 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/workers/ir_protocol.h
   src/workers/ir_worker.c
   src/workers/level_zero_min.h
+  src/workers/run_protocol.h
+  src/workers/run_worker.c
   tests/package/smoke.c
   tests/integration/test_shavecc.c
   tests/integration/test_ir2blob.c
@@ -194,7 +204,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
 
   add_executable(npunlock_test_api tests/unit/test_api.c)
   if(WIN32)
-    add_dependencies(npunlock_test_api npunlock_movi_worker npunlock_ir_worker)
+    add_dependencies(npunlock_test_api npunlock_movi_worker npunlock_ir_worker npunlock_run_worker)
   endif()
   target_link_libraries(
     npunlock_test_api PRIVATE shavecc ir2blob patchblob npunlock_common npunlock_warnings
@@ -306,7 +316,7 @@ endif()
 
 set(NPUNLOCK_INSTALL_TARGETS npunlock_common shavecc ir2blob patchblob npurun)
 if(WIN32)
-  list(APPEND NPUNLOCK_INSTALL_TARGETS npunlock_movi_worker npunlock_ir_worker)
+  list(APPEND NPUNLOCK_INSTALL_TARGETS npunlock_movi_worker npunlock_ir_worker npunlock_run_worker)
 endif()
 install(TARGETS ${NPUNLOCK_INSTALL_TARGETS}
   EXPORT npunlockTargets

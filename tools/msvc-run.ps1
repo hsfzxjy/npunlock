@@ -1,9 +1,9 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [string] $Command,
+    [string] $MsvcRunExecutable,
 
     [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]] $CommandArgs
+    [string[]] $MsvcRunArguments
 )
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -33,5 +33,5 @@ if ($LASTEXITCODE) {
     exit $LASTEXITCODE
 }
 
-& $Command @CommandArgs
+& $MsvcRunExecutable @MsvcRunArguments
 exit $LASTEXITCODE

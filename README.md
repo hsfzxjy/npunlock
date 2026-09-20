@@ -423,3 +423,18 @@ multiple compatible ACT invocations. The caller must supply the observed
 arity, per-invocation element count, and byte span; `npurun` does not guess a
 source-node mapping. Hardware/OEM calls have finite worker deadlines. MoviTools
 binaries remain caller-supplied and are not bundled with this project.
+
+For the narrow validated unary add-one demonstration, `npurun` can also load
+and execute the patched graph in a bounded private process, save the raw FP16
+output, and require exact agreement with its host oracle before writing any
+artifacts:
+
+```powershell
+npurun build `
+  # the same build and explicit patch options shown above `
+  --run-add1 `
+  --run-output output.fp16
+```
+
+This execution option is intentionally operator-specific. It is not a general
+graph runner and does not infer computation correctness from driver acceptance.

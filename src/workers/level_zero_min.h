@@ -293,10 +293,11 @@ typedef uint32_t(__cdecl *npunlock_ze_graph_get_argument_properties3_fn)(
 typedef uint32_t(__cdecl *npunlock_ze_graph_set_argument_fn)(npunlock_ze_graph_handle, uint32_t,
                                                              const void *);
 typedef uint32_t(__cdecl *npunlock_ze_graph_initialize_fn)(npunlock_ze_graph_handle);
-typedef uint32_t(__cdecl *npunlock_ze_graph_append_initialize_fn)(
-    npunlock_ze_command_list_handle, npunlock_ze_graph_handle,
-    npunlock_ze_graph_profiling_query_handle, npunlock_ze_event_handle, uint32_t,
-    npunlock_ze_event_handle *);
+typedef uint32_t(__cdecl *npunlock_ze_graph_append_initialize_fn)(npunlock_ze_command_list_handle,
+                                                                  npunlock_ze_graph_handle,
+                                                                  npunlock_ze_event_handle,
+                                                                  uint32_t,
+                                                                  npunlock_ze_event_handle *);
 typedef uint32_t(__cdecl *npunlock_ze_graph_append_execute_fn)(
     npunlock_ze_command_list_handle, npunlock_ze_graph_handle,
     npunlock_ze_graph_profiling_query_handle, npunlock_ze_event_handle, uint32_t,

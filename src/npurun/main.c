@@ -11,6 +11,7 @@
 #include "npunlock/version.h"
 
 #include "internal.h"
+#include "run_worker.h"
 
 #define MAX_TARGETS 32u
 #define MAX_DEFINITIONS 32u
@@ -31,6 +32,8 @@ typedef struct build_arguments {
   const char *build_flags;
   const char *movi_worker_path;
   const char *ir_worker_path;
+  const char *run_worker_path;
+  const char *run_output_path;
   const char *definitions[MAX_DEFINITIONS];
   size_t definition_count;
   uint32_t invocations[MAX_TARGETS];
@@ -43,6 +46,7 @@ typedef struct build_arguments {
   uint32_t timeout_ms;
   uint32_t image_alignment;
   uint32_t tail_padding;
+  int run_add1;
 } build_arguments;
 
 typedef struct build_provenance {
@@ -64,6 +68,7 @@ static void print_usage(const char *program) {
   printf("         --output GRAPH.blob --manifest BUILD.json [options]\n");
   printf("options: --build-flags TEXT --timeout-ms N --compiler-definition NAME=VALUE\n");
   printf("         --image-alignment N --tail-padding N --movi-worker FILE --ir-worker FILE\n");
+  printf("         --run-add1 --run-output FILE [--run-worker FILE]\n");
 }
 
 static int parse_u32(const char *text, uint32_t *result) {
@@ -129,8 +134,12 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     STRING_OPTION("--build-flags", build_flags)
     STRING_OPTION("--movi-worker", movi_worker_path)
     STRING_OPTION("--ir-worker", ir_worker_path)
+    STRING_OPTION("--run-worker", run_worker_path)
+    STRING_OPTION("--run-output", run_output_path)
 #undef STRING_OPTION
-    if (strcmp(option, "--patch-invocation") == 0) {
+    if (strcmp(option, "--run-add1") == 0) {
+      build->run_add1 = 1;
+    } else if (strcmp(option, "--patch-invocation") == 0) {
       if (build->invocation_count == MAX_TARGETS ||
           !option_value(argument_count, arguments, &index, &value) ||
           !parse_u32(value, &build->invocations[build->invocation_count])) {
@@ -196,6 +205,11 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     fprintf(stderr, "missing or inconsistent required build options\n");
     return 0;
   }
+  if ((build->run_add1 && build->run_output_path == NULL) ||
+      (!build->run_add1 && build->run_output_path != NULL)) {
+    fprintf(stderr, "--run-add1 and --run-output must be specified together\n");
+    return 0;
+  }
   if (strcmp(build->output_path, build->manifest_path) == 0 ||
       strcmp(build->output_path, build->ir_path) == 0 ||
       strcmp(build->output_path, build->source_path) == 0 ||
@@ -204,7 +218,15 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
       strcmp(build->manifest_path, build->ir_path) == 0 ||
       strcmp(build->manifest_path, build->source_path) == 0 ||
       strcmp(build->manifest_path, build->linker_script_path) == 0 ||
-      (build->weights_path != NULL && strcmp(build->manifest_path, build->weights_path) == 0)) {
+      (build->weights_path != NULL && strcmp(build->manifest_path, build->weights_path) == 0) ||
+      (build->run_output_path != NULL &&
+       (strcmp(build->run_output_path, build->output_path) == 0 ||
+        strcmp(build->run_output_path, build->manifest_path) == 0 ||
+        strcmp(build->run_output_path, build->ir_path) == 0 ||
+        strcmp(build->run_output_path, build->source_path) == 0 ||
+        strcmp(build->run_output_path, build->linker_script_path) == 0 ||
+        (build->weights_path != NULL &&
+         strcmp(build->run_output_path, build->weights_path) == 0)))) {
     fprintf(stderr, "output and manifest paths must not name an input or each other\n");
     return 0;
   }
@@ -336,8 +358,8 @@ static int write_json_string(FILE *stream, const char *value) {
 
 static int write_manifest(const char *path, const build_arguments *build,
                           const ir2blob_result *ir_result, const shavecc_result *shave_result,
-                          const patchblob_result *patch_result,
-                          const build_provenance *provenance) {
+                          const patchblob_result *patch_result, const build_provenance *provenance,
+                          const npunlock_run_worker_result *run_result) {
   FILE *stream = NULL;
   size_t index;
 #ifdef _WIN32
@@ -395,7 +417,139 @@ static int write_manifest(const char *path, const build_arguments *build,
   if (fprintf(stream, "],\n  \"patch\": ") < 0 ||
       fwrite(patch_result->report_json.data, 1, patch_result->report_json.size, stream) !=
           patch_result->report_json.size ||
-      fprintf(stream, "}\n") < 0 || fclose(stream) != 0) {
+      fprintf(stream, ",\n  \"execution\": ") < 0) {
+    fclose(stream);
+    return 0;
+  }
+  if (run_result == NULL) {
+    if (fprintf(stream, "null\n}\n") < 0) {
+      fclose(stream);
+      return 0;
+    }
+  } else if (fprintf(stream,
+                     "{\"oracle\": \"fp16_add1_exact\", \"driver_index\": %u, "
+                     "\"device_index\": %u, \"driver_version\": %u, "
+                     "\"device_vendor_id\": %u, \"device_id\": %u, "
+                     "\"element_count\": %" PRIu64 ", \"mismatch_count\": 0}\n}\n",
+                     run_result->selected_driver_index, run_result->selected_device_index,
+                     run_result->driver_version, run_result->device_vendor_id,
+                     run_result->device_id, run_result->element_count) < 0) {
+    fclose(stream);
+    return 0;
+  }
+  if (fclose(stream) != 0) {
+    return 0;
+  }
+  return 1;
+}
+
+static uint16_t float_to_fp16(float value) {
+  uint32_t bits;
+  uint16_t sign;
+  uint32_t exponent_bits;
+  uint32_t mantissa;
+  int exponent;
+  memcpy(&bits, &value, sizeof(bits));
+  sign = (uint16_t)((bits >> 16) & 0x8000u);
+  exponent_bits = (bits >> 23) & 0xffu;
+  mantissa = bits & 0x7fffffu;
+  if (exponent_bits == 0xffu) {
+    uint16_t payload = (uint16_t)(mantissa >> 13);
+    return mantissa == 0 ? (uint16_t)(sign | 0x7c00u)
+                         : (uint16_t)(sign | 0x7c00u | (payload == 0 ? 1 : payload));
+  }
+  exponent = (int)exponent_bits - 127 + 15;
+  if (exponent >= 31) {
+    return (uint16_t)(sign | 0x7c00u);
+  }
+  if (exponent <= 0) {
+    uint32_t rounded;
+    uint32_t remainder;
+    uint32_t halfway;
+    unsigned shift;
+    if (exponent < -10) {
+      return sign;
+    }
+    mantissa |= 0x800000u;
+    shift = (unsigned)(14 - exponent);
+    rounded = mantissa >> shift;
+    remainder = mantissa & ((1u << shift) - 1u);
+    halfway = 1u << (shift - 1u);
+    if (remainder > halfway || (remainder == halfway && (rounded & 1u) != 0)) {
+      ++rounded;
+    }
+    return (uint16_t)(sign | rounded);
+  }
+  {
+    uint32_t rounded = mantissa >> 13;
+    uint32_t remainder = mantissa & 0x1fffu;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (rounded & 1u) != 0)) {
+      ++rounded;
+      if (rounded == 0x400u) {
+        rounded = 0;
+        ++exponent;
+        if (exponent >= 31) {
+          return (uint16_t)(sign | 0x7c00u);
+        }
+      }
+    }
+    return (uint16_t)(sign | ((uint16_t)exponent << 10) | rounded);
+  }
+}
+
+static float fp16_to_float(uint16_t value) {
+  uint32_t sign = (uint32_t)(value & 0x8000u) << 16;
+  uint32_t exponent = (value >> 10) & 0x1fu;
+  uint32_t mantissa = value & 0x03ffu;
+  uint32_t bits;
+  float result;
+  if (exponent == 0) {
+    if (mantissa == 0) {
+      bits = sign;
+    } else {
+      int unbiased = -14;
+      while ((mantissa & 0x0400u) == 0) {
+        mantissa <<= 1;
+        --unbiased;
+      }
+      mantissa &= 0x03ffu;
+      bits = sign | ((uint32_t)(unbiased + 127) << 23) | (mantissa << 13);
+    }
+  } else if (exponent == 0x1fu) {
+    bits = sign | 0x7f800000u | (mantissa << 13);
+  } else {
+    bits = sign | ((exponent - 15u + 127u) << 23) | (mantissa << 13);
+  }
+  memcpy(&result, &bits, sizeof(result));
+  return result;
+}
+
+static int validate_add1_output(const build_arguments *build,
+                                const npunlock_run_worker_result *result) {
+  const uint16_t *actual = (const uint16_t *)result->output.data;
+  uint64_t index;
+  uint64_t mismatches = 0;
+  (void)build;
+  if (result->element_count > SIZE_MAX / sizeof(uint16_t) ||
+      result->output.size != (size_t)result->element_count * sizeof(uint16_t)) {
+    fprintf(stderr, "execution output shape does not match the requested ACT contract\n");
+    return 0;
+  }
+  for (index = 0; index < result->element_count; ++index) {
+    float step = result->element_count > 1 ? 3.75f / (float)(result->element_count - 1) : 0.0f;
+    uint16_t input = float_to_fp16(-2.0f + (float)index * step);
+    uint16_t expected = float_to_fp16(fp16_to_float(input) + 1.0f);
+    if (actual[index] != expected) {
+      if (mismatches < 8) {
+        fprintf(stderr, "add1 mismatch at %" PRIu64 ": expected 0x%04x, got 0x%04x\n", index,
+                expected, actual[index]);
+      }
+      ++mismatches;
+    }
+  }
+  if (mismatches != 0) {
+    fprintf(stderr, "add1 oracle failed: %" PRIu64 "/%" PRIu64 " mismatches\n", mismatches,
+            result->element_count);
     return 0;
   }
   return 1;
@@ -416,6 +570,7 @@ static int run_build(const build_arguments *build) {
   ir2blob_result ir_result = {0};
   shavecc_result shave_result = {0};
   patchblob_result patch_result = {0};
+  npunlock_run_worker_result run_result = {0};
   build_provenance provenance = {0};
   npunlock_status status;
   size_t index;
@@ -504,16 +659,41 @@ static int run_build(const build_arguments *build) {
     print_diagnostic(&patch_result.diagnostic);
     goto cleanup;
   }
+  if (build->run_add1) {
+    npunlock_view worker = {(const uint8_t *)build->run_worker_path,
+                            build->run_worker_path == NULL ? 0 : strlen(build->run_worker_path)};
+    status = npunlock_run_native_worker(
+        worker, (npunlock_view){patch_result.graph_blob.data, patch_result.graph_blob.size},
+        build->timeout_ms, &run_result);
+    if (status != NPUNLOCK_STATUS_OK) {
+      if (run_result.diagnostic.data != NULL) {
+        fwrite(run_result.diagnostic.data, 1, run_result.diagnostic.size, stderr);
+        fputc('\n', stderr);
+      }
+      goto cleanup;
+    }
+    if (!validate_add1_output(build, &run_result)) {
+      goto cleanup;
+    }
+  }
   if (!write_file(build->output_path, patch_result.graph_blob.data, patch_result.graph_blob.size) ||
       !write_manifest(build->manifest_path, build, &ir_result, &shave_result, &patch_result,
-                      &provenance)) {
+                      &provenance, build->run_add1 ? &run_result : NULL) ||
+      (build->run_add1 &&
+       !write_file(build->run_output_path, run_result.output.data, run_result.output.size))) {
     goto cleanup;
   }
   printf("wrote %zu-byte patched graph to %s\n", patch_result.graph_blob.size, build->output_path);
   printf("wrote build manifest to %s\n", build->manifest_path);
+  if (build->run_add1) {
+    printf("verified exact FP16 add1 semantics for %" PRIu64 " elements\n",
+           run_result.element_count);
+    printf("wrote %zu-byte raw output to %s\n", run_result.output.size, build->run_output_path);
+  }
   success = 1;
 
 cleanup:
+  npunlock_run_worker_result_release(&run_result);
   patchblob_result_release(&patch_result);
   shavecc_result_release(&shave_result);
   ir2blob_result_release(&ir_result);
