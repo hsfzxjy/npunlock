@@ -17,11 +17,27 @@ typedef struct ir2blob_options {
   uint32_t driver_index;
   uint32_t device_index;
   uint32_t timeout_ms;
+  npunlock_view worker_executable_utf8;
   npunlock_view build_flags;
 } ir2blob_options;
 
 typedef struct ir2blob_result {
   uint32_t struct_size;
+  uint32_t selected_driver_index;
+  uint32_t selected_device_index;
+  uint32_t graph_extension_version;
+  uint16_t compiler_version_major;
+  uint16_t compiler_version_minor;
+  uint32_t max_opset_version;
+  uint32_t driver_version;
+  uint32_t device_vendor_id;
+  uint32_t device_id;
+  uint32_t elf_version_major;
+  uint32_t elf_version_minor;
+  uint32_t elf_version_patch;
+  uint32_t runtime_version_major;
+  uint32_t runtime_version_minor;
+  uint32_t runtime_version_patch;
   npunlock_buffer graph_blob;
   npunlock_diagnostic diagnostic;
 } ir2blob_result;

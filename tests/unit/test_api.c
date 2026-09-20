@@ -22,6 +22,7 @@ static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *s
 int main(void) {
   static const uint8_t source[] = "void controlled_act(unsigned p) {(void)p;}";
   static const uint8_t path[] = "C:\\npunlock-tests\\missing-movitools";
+  static const uint8_t missing_ir_worker[] = "C:\\npunlock-tests\\missing-ir-worker.exe";
   static const uint8_t cpu[] = "3720xx";
   static const uint8_t entry[] = "controlled_act";
   static const uint8_t script[] = "SECTIONS {}";
@@ -51,9 +52,11 @@ int main(void) {
   ir_options.driver_index = IR2BLOB_AUTO_INDEX;
   ir_options.device_index = IR2BLOB_AUTO_INDEX;
   ir_options.timeout_ms = 1000;
+  ir_options.worker_executable_utf8 =
+      (npunlock_view){missing_ir_worker, sizeof(missing_ir_worker) - 1};
   CHECK(ir2blob_compile(&ir_options, (npunlock_view){xml, sizeof(xml) - 1},
-                        (npunlock_view){NULL, 0}, &ir_result) == NPUNLOCK_STATUS_NOT_IMPLEMENTED);
-  CHECK(check_diagnostic(&ir_result.diagnostic, "not_implemented"));
+                        (npunlock_view){NULL, 0}, &ir_result) == NPUNLOCK_STATUS_NOT_FOUND);
+  CHECK(check_diagnostic(&ir_result.diagnostic, "not_found"));
   ir2blob_result_release(&ir_result);
 
   patch_options.struct_size = sizeof(patch_options);

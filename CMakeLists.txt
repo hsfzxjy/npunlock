@@ -15,6 +15,10 @@ set(NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT "" CACHE FILEPATH
     "Linker script for the MoviTools integration test")
 set(NPUNLOCK_MOVITOOLS_TEST_EXPECTED_ELF "" CACHE FILEPATH
     "Expected repeatable ELF for the MoviTools integration test")
+set(NPUNLOCK_NPU_TEST_IR_XML "" CACHE FILEPATH "IR XML for the NPU integration test")
+set(NPUNLOCK_NPU_TEST_WEIGHTS "" CACHE FILEPATH "Weights for the NPU integration test")
+set(NPUNLOCK_NPU_TEST_EXPECTED_BLOB "" CACHE FILEPATH
+    "Expected repeatable native blob for the NPU integration test")
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -46,11 +50,16 @@ target_link_libraries(npunlock_common PRIVATE $<BUILD_INTERFACE:npunlock_warning
 
 if(WIN32)
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_win32.c)
+  set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_win32.c)
   add_executable(npunlock_movi_worker src/workers/movi_worker.c)
   target_include_directories(npunlock_movi_worker PRIVATE src/workers)
   target_link_libraries(npunlock_movi_worker PRIVATE npunlock_warnings)
+  add_executable(npunlock_ir_worker src/workers/ir_worker.c)
+  target_include_directories(npunlock_ir_worker PRIVATE src/workers)
+  target_link_libraries(npunlock_ir_worker PRIVATE npunlock_warnings)
 else()
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_stub.c)
+  set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_stub.c)
 endif()
 
 add_library(shavecc src/shavecc/shavecc.c ${NPUNLOCK_MOVI_STAGE_SOURCE})
@@ -63,13 +72,14 @@ target_include_directories(shavecc PRIVATE src/common)
 target_include_directories(shavecc PRIVATE src src/shavecc)
 target_link_libraries(shavecc PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
 
-add_library(ir2blob src/ir2blob/ir2blob.c)
+add_library(ir2blob src/ir2blob/ir2blob.c ${NPUNLOCK_IR_WORKER_SOURCE})
 add_library(npunlock::ir2blob ALIAS ir2blob)
 target_include_directories(ir2blob PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_include_directories(ir2blob PRIVATE src/common)
+target_include_directories(ir2blob PRIVATE src src/ir2blob)
 target_link_libraries(ir2blob PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
 
 add_library(patchblob src/patchblob/patchblob.c)
@@ -112,6 +122,9 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/common/internal.h
   src/common/status.c
   src/ir2blob/ir2blob.c
+  src/ir2blob/ir_worker.h
+  src/ir2blob/ir_worker_stub.c
+  src/ir2blob/ir_worker_win32.c
   src/npurun/main.c
   src/patchblob/patchblob.c
   src/shavecc/shavecc.c
@@ -120,8 +133,12 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/shavecc/movi_stage_win32.c
   src/workers/movi_protocol.h
   src/workers/movi_worker.c
+  src/workers/ir_protocol.h
+  src/workers/ir_worker.c
+  src/workers/level_zero_min.h
   tests/package/smoke.c
   tests/integration/test_shavecc.c
+  tests/integration/test_ir2blob.c
   tests/unit/test_api.c
   tests/unit/test_common.c
   tests/unit/test_elf32.c
@@ -165,7 +182,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
 
   add_executable(npunlock_test_api tests/unit/test_api.c)
   if(WIN32)
-    add_dependencies(npunlock_test_api npunlock_movi_worker)
+    add_dependencies(npunlock_test_api npunlock_movi_worker npunlock_ir_worker)
   endif()
   target_link_libraries(
     npunlock_test_api PRIVATE shavecc ir2blob patchblob npunlock_common npunlock_warnings
@@ -210,11 +227,38 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     )
     set_tests_properties(movitools_add1 PROPERTIES TIMEOUT 30)
   endif()
+
+  if(NPUNLOCK_ENABLE_NPU_TESTS)
+    if(NOT WIN32)
+      message(FATAL_ERROR "NPU integration tests require Windows")
+    endif()
+    foreach(required_file
+        NPUNLOCK_NPU_TEST_IR_XML
+        NPUNLOCK_NPU_TEST_WEIGHTS
+        NPUNLOCK_NPU_TEST_EXPECTED_BLOB)
+      if(NOT IS_ABSOLUTE "${${required_file}}" OR NOT EXISTS "${${required_file}}")
+        message(FATAL_ERROR "${required_file} must name an existing absolute file")
+      endif()
+    endforeach()
+    add_executable(npunlock_test_ir2blob_integration tests/integration/test_ir2blob.c)
+    target_link_libraries(
+      npunlock_test_ir2blob_integration PRIVATE ir2blob npunlock_common npunlock_warnings
+    )
+    add_dependencies(npunlock_test_ir2blob_integration npunlock_ir_worker)
+    add_test(
+      NAME npu_ir2blob_abs
+      COMMAND npunlock_test_ir2blob_integration
+        "${NPUNLOCK_NPU_TEST_IR_XML}"
+        "${NPUNLOCK_NPU_TEST_WEIGHTS}"
+        "${NPUNLOCK_NPU_TEST_EXPECTED_BLOB}"
+    )
+    set_tests_properties(npu_ir2blob_abs PROPERTIES TIMEOUT 30)
+  endif()
 endif()
 
 set(NPUNLOCK_INSTALL_TARGETS npunlock_common shavecc ir2blob patchblob npurun)
 if(WIN32)
-  list(APPEND NPUNLOCK_INSTALL_TARGETS npunlock_movi_worker)
+  list(APPEND NPUNLOCK_INSTALL_TARGETS npunlock_movi_worker npunlock_ir_worker)
 endif()
 install(TARGETS ${NPUNLOCK_INSTALL_TARGETS}
   EXPORT npunlockTargets
