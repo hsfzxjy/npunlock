@@ -398,6 +398,36 @@ Its initial objective is narrower:
 
 The project deliberately exposes only the contracts that have been observed and validated. Unsupported graph structures, kernel layouts, or ABI assumptions should be rejected rather than handled speculatively.
 
+## Build and offline verification
+
+The supported host build uses Visual Studio 2022 Build Tools. Run every
+MSVC-dependent command through the repository wrapper so the developer
+environment is normalized consistently:
+
+```powershell
+python -m pip install .
+tools\msvc-run.ps1 cmake --preset windows-vs2022
+tools\msvc-run.ps1 cmake --build --preset windows-debug
+tools\msvc-run.ps1 ctest --preset windows-debug
+tools\msvc-run.ps1 cmake --build build\vs2022 --config Debug --target format-check
+```
+
+The default configuration is offline and does not invoke MoviTools, OpenVINO,
+the Intel NPU driver, or NPU hardware. Python installation is needed only for
+the Python frontend test; CMake skips that test when Python or NumPy is absent.
+Hardware and OEM integration suites remain separately gated and require
+explicit caller-supplied paths.
+
+Install the C libraries, public headers, CLI, workers, and CMake package with:
+
+```powershell
+tools\msvc-run.ps1 cmake --install build\vs2022 --config Debug --prefix build\stage
+```
+
+See [`docs/C_API.md`](docs/C_API.md) for C ownership, linking, deployment, and
+per-library usage contracts. See [`docs/PYTHON_API.md`](docs/PYTHON_API.md) for
+the symbolic Python frontend.
+
 ## Current MVP command
 
 `npurun build` is the file-oriented boundary over the four C libraries. It
