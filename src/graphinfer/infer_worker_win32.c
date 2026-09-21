@@ -321,7 +321,9 @@ static npunlock_status parse_response(const uint8_t *response, size_t response_s
     uint64_t payload_offset = load_u64(descriptor + 48);
     size_t dimension;
     if (load_u32(descriptor + 36) != 0 || load_u64(descriptor + 56) != 0 || dims_count == 0 ||
-        dims_count > GRAPHINFER_MAX_DIMS || load_u32(descriptor + 4) != GRAPHINFER_PRECISION_FP16 ||
+        dims_count > GRAPHINFER_MAX_DIMS ||
+        (load_u32(descriptor + 4) != GRAPHINFER_PRECISION_FP16 &&
+         load_u32(descriptor + 4) != GRAPHINFER_PRECISION_FP32) ||
         payload_offset != cursor || cursor > payload_size || name_size > payload_size - cursor) {
       return NPUNLOCK_STATUS_DRIVER_FAILED;
     }

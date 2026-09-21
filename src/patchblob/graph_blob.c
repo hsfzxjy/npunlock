@@ -1,7 +1,6 @@
 #include "graph_blob.h"
 
 #include <limits.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -61,6 +60,7 @@ typedef struct graph_relocation {
 typedef struct memref_contract {
   uint64_t element_count;
   uint64_t span_bytes;
+  uint32_t dtype_kind;
   uint32_t data_symbol;
   int64_t data_addend;
 } memref_contract;
@@ -378,12 +378,13 @@ enum npunlock_dtype_kind {
 };
 
 struct npunlock_dtype_info {
-  size_t size;
+  uint32_t stride_bits;
+  uint32_t size_bytes;
 };
 
 static const struct npunlock_dtype_info dtype_table[NPUNLOCK_DTYPE_MAX] = {
-    [NPUNLOCK_DTYPE_F32] = {.size = 32},
-    [NPUNLOCK_DTYPE_F16] = {.size = 16},
+    [NPUNLOCK_DTYPE_F32] = {.stride_bits = 32, .size_bytes = 4},
+    [NPUNLOCK_DTYPE_F16] = {.stride_bits = 16, .size_bytes = 2},
 };
 
 static npunlock_status validate_memref(const graph_layout *layout, uint64_t record_offset,
@@ -407,11 +408,11 @@ static npunlock_status validate_memref(const graph_layout *layout, uint64_t reco
   }
   record = layout->blob.data + params->offset + (size_t)record_offset;
   uint32_t type_kind = read_u32(record + 0x18);
-  if (read_u32(record + 8) != 1u || dtype_table[type_kind].size == 0 ||
-      read_u32(record + 0x24) != 2u) {
-    return unsupported(diagnostic, "selected invocation is not static FP16 CMX");
+  if (read_u32(record + 8) != 1u || type_kind >= NPUNLOCK_DTYPE_MAX ||
+      dtype_table[type_kind].stride_bits == 0 || read_u32(record + 0x24) != 2u) {
+    return unsupported(diagnostic, "selected invocation is not static FP16/FP32 CMX");
   }
-  expected_stride = dtype_table[type_kind].size;
+  expected_stride = dtype_table[type_kind].stride_bits;
   rank = read_u32(record + 0x0c);
   if (rank == 0 || rank > 15) {
     return unsupported(diagnostic, "selected invocation uses an unsupported tensor rank");
@@ -463,15 +464,16 @@ static npunlock_status validate_memref(const graph_layout *layout, uint64_t reco
     expected_stride *= (uint64_t)(uint32_t)dimension_values[selected];
     used[selected] = true;
   }
-  if (count > UINT64_MAX / 2u) {
+  if (count > UINT64_MAX / dtype_table[type_kind].size_bytes) {
     return unsupported(diagnostic, "tensor byte span overflows");
   }
-  span = count * 2u;
+  span = count * dtype_table[type_kind].size_bytes;
   if (data.addend < 0) {
     return unsupported(diagnostic, "tensor data address is negative");
   }
   contract->element_count = count;
   contract->span_bytes = span;
+  contract->dtype_kind = type_kind;
   contract->data_symbol = data.symbol;
   contract->data_addend = data.addend;
   return NPUNLOCK_STATUS_OK;
@@ -546,17 +548,22 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
   memref_contract inputs[8];
   memref_contract output;
   size_t index;
-  uint32_t supported_flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE |
-                             PATCHBLOB_CONTRACT_FP16 | PATCHBLOB_CONTRACT_CMX |
-                             PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
+  uint32_t base_flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE |
+                        PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
+  uint32_t precision_flags =
+      target->required_contract_flags & (PATCHBLOB_CONTRACT_FP16 | PATCHBLOB_CONTRACT_FP32);
+  uint32_t expected_dtype;
   if (target->invocation_index >= invocation_count ||
       target->range_index >= ranges->size / ACT_RANGE_SIZE || target->expected_input_count > 8u) {
     return unsupported(diagnostic, "selected invocation or range index is outside the ACT carrier");
   }
-  if (target->required_contract_flags != supported_flags) {
+  if ((precision_flags != PATCHBLOB_CONTRACT_FP16 && precision_flags != PATCHBLOB_CONTRACT_FP32) ||
+      target->required_contract_flags != (base_flags | precision_flags)) {
     return unsupported(diagnostic,
-                       "MVP requires the complete static dense FP16 CMX disjoint contract");
+                       "MVP requires a complete static dense FP16 or FP32 CMX disjoint contract");
   }
+  expected_dtype =
+      precision_flags == PATCHBLOB_CONTRACT_FP16 ? NPUNLOCK_DTYPE_F16 : NPUNLOCK_DTYPE_F32;
   invocation_offset = invocations->offset + (size_t)target->invocation_index * ACT_INVOCATION_SIZE;
   if (read_u32(layout->blob.data + invocation_offset) != target->range_index) {
     return unsupported(diagnostic, "selected invocation does not reference the selected range");
@@ -595,7 +602,8 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
       return status;
     }
     if (inputs[index].element_count != target->expected_element_count ||
-        inputs[index].span_bytes != target->expected_span_bytes) {
+        inputs[index].span_bytes != target->expected_span_bytes ||
+        inputs[index].dtype_kind != expected_dtype) {
       return unsupported(diagnostic, "input tensor does not match the expected element contract");
     }
   }
@@ -607,7 +615,7 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
     }
   }
   if (output.element_count != target->expected_element_count ||
-      output.span_bytes != target->expected_span_bytes) {
+      output.span_bytes != target->expected_span_bytes || output.dtype_kind != expected_dtype) {
     return unsupported(diagnostic, "output tensor does not match the expected element contract");
   }
   for (index = 0; index < target->expected_input_count; ++index) {
@@ -755,9 +763,11 @@ npunlock_status npunlock_discover_graph_targets(npunlock_view graph_blob,
     target->expected_input_count = (uint32_t)(record_count - 1u);
     target->expected_element_count = first_input.element_count;
     target->expected_span_bytes = first_input.span_bytes;
-    target->required_contract_flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE |
-                                      PATCHBLOB_CONTRACT_FP16 | PATCHBLOB_CONTRACT_CMX |
-                                      PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
+    target->required_contract_flags =
+        PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_CMX |
+        PATCHBLOB_CONTRACT_DISJOINT_OUTPUT |
+        (first_input.dtype_kind == NPUNLOCK_DTYPE_F16 ? PATCHBLOB_CONTRACT_FP16
+                                                      : PATCHBLOB_CONTRACT_FP32);
     status =
         validate_target(&layout, parameter_bases, invocation_count, target, &detail, diagnostic);
     if (status != NPUNLOCK_STATUS_OK) {
@@ -791,7 +801,8 @@ npunlock_status npunlock_discover_graph_targets(npunlock_view graph_blob,
       const patchblob_target *previous = &discovered[index - 1u].target;
       if (previous->expected_input_count != target->expected_input_count ||
           previous->expected_element_count != target->expected_element_count ||
-          previous->expected_span_bytes != target->expected_span_bytes) {
+          previous->expected_span_bytes != target->expected_span_bytes ||
+          previous->required_contract_flags != target->required_contract_flags) {
         status = unsupported(diagnostic, "ACT group contains inconsistent tensor contracts");
         goto fail;
       }

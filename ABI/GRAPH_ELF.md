@@ -180,18 +180,30 @@ The useful effective layout is:
 | `+0x0c` | `u32` rank |
 | `+0x10` | relocation-selected pointer to `rank` signed 32-bit dimensions |
 | `+0x14` | relocation-selected pointer to `rank` signed 64-bit bit-strides |
-| `+0x18` | raw value 2 in the accepted FP16 carriers |
+| `+0x18` | raw value 2 in FP16 carriers and 1 in the validated FP32 carrier |
 | `+0x24` | raw value 2 in the accepted CMX carriers |
 
 The formal enum names of the raw values at `+0x08`, `+0x18`, and `+0x24` are
-not claimed. `npunlock` treats the complete observed combination as a narrow
-static/FP16/CMX contract.
+not claimed. `npunlock` treats the complete observed combinations as narrow
+static FP16/FP32 CMX contracts.
 
 For dense FP16 validation, non-singleton dimensions sorted by increasing
 stride must have bit strides `16`, then `16 * prior_dimension`, and so on.
 Singleton-dimension strides differed between valid compiler records and are
 not used to reject density. The tensor element count is the product of the
 positive dimensions and its byte span is `count * 2`.
+
+**Confirmed on compiler 8.3:** a plain FP32 `[1,2048]` Abs carrier is lowered
+to three ACT groups: FP32-to-FP16 conversion, four FP16 Abs invocations, and
+FP16-to-FP32 conversion. Patching the middle group therefore cannot preserve
+FP32 precision. Serializing `DisablePrecisionConversion` with value
+`dynamic:f16` on the Abs layer and compiling with
+`EXECUTION_MODE_HINT="ACCURACY"` instead produces one four-invocation FP32 ACT
+group. Each invocation advertises 1024 elements, 32-bit initial dense stride,
+and a 4096-byte input/output span. A replacement FP32 GELU kernel executed
+through that carrier with maximum absolute error `2.38419e-07` against the
+host FP32 reference. This is a validated unary carrier observation, not a
+general FP32 graph contract.
 
 Confirmed descriptor roles:
 

@@ -98,6 +98,17 @@ def serialize_ir(graph: Graph) -> SerializedIR:
             )
         elif node.attrs:
             ET.SubElement(layer, "data", {key: _attribute_text(value) for key, value in node.attrs.items()})
+        if node.op == "Custom" and any(output.dtype == "f32" for output in node.outputs):
+            rt_info = ET.SubElement(layer, "rt_info")
+            ET.SubElement(
+                rt_info,
+                "attribute",
+                {
+                    "name": "DisablePrecisionConversion",
+                    "version": "0",
+                    "value": "dynamic:f16",
+                },
+            )
         if node.inputs:
             input_element = ET.SubElement(layer, "input")
             for index, tensor in enumerate(node.inputs):

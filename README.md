@@ -381,14 +381,14 @@ The initial scope is intentionally narrow:
 Host             Windows x64
 NPU              Meteor Lake / NPU3720
 SHAVE target     3720xx
-Tensor scope     static dense FP16
+Tensor scope     static dense FP16; validated unary FP32 ACT in accuracy mode
 Kernel image     one compiled SHAVE image
 Patch selection  validated positional ACT groups; explicit range override
 ```
 
 These constraints describe the contracts that have been established so far. They are not intended to imply limitations of the underlying hardware.
 
-Dynamic shapes, arbitrary tensor layouts and data types, arbitrary node-name
+Dynamic shapes, arbitrary tensor layouts and other data types, arbitrary node-name
 mapping, and additional NPU generations remain outside the initial MVP.
 
 ## Project scope
@@ -503,8 +503,9 @@ The CLI oracle remains intentionally operator-specific. General caller-provided
 native graph and tensor execution is available through the public `graphinfer`
 C library. `graphinfer` selects inputs by explicit graph-argument index or exact
 name, requires the caller to cover every graph input, and returns all output
-metadata and buffers through library-owned allocations. Its current contract is
-bounded static dense FP16 tensors; driver calls execute in a finite-lived worker.
+metadata and buffers through library-owned allocations. Its current graph-I/O
+contract is bounded static dense FP16 or FP32 tensors; driver calls execute in
+a finite-lived worker.
 
 ## Python frontend
 
@@ -542,6 +543,14 @@ the process-local `configure()` value overrides the environment.
 The directory contains the three MoviTools DLLs. Math functions are resolved
 from the same distribution's sibling `..\lib\mlibm.a`; `npunlock` does not
 redistribute that proprietary archive.
-`Program.run()` validates named NumPy FP16 inputs against the symbolic graph,
+`Program.run()` validates named NumPy FP16/FP32 inputs against the symbolic graph,
 calls `graphinfer`, and returns copied NumPy outputs without implementing a
 second Level Zero execution path in Python.
+
+FP32 custom nodes are marked with OpenVINO's serialized
+`DisablePrecisionConversion` runtime attribute. `npu.compile()` also selects
+the compiler's `EXECUTION_MODE_HINT="ACCURACY"` when no build flags were
+provided. Together these retain a single FP32 ACT group instead of silently
+lowering the carrier through FP32-to-FP16-to-FP32 conversion. Caller-provided
+build flags for an FP32 custom graph must explicitly contain the same accuracy
+hint.

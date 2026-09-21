@@ -18,7 +18,8 @@ typedef enum patchblob_contract_flags {
   PATCHBLOB_CONTRACT_DENSE = 1u << 1,
   PATCHBLOB_CONTRACT_FP16 = 1u << 2,
   PATCHBLOB_CONTRACT_CMX = 1u << 3,
-  PATCHBLOB_CONTRACT_DISJOINT_OUTPUT = 1u << 4
+  PATCHBLOB_CONTRACT_DISJOINT_OUTPUT = 1u << 4,
+  PATCHBLOB_CONTRACT_FP32 = 1u << 5
 } patchblob_contract_flags;
 
 typedef struct patchblob_target {

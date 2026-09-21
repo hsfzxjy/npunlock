@@ -14,7 +14,10 @@ extern "C" {
 #define GRAPHINFER_AUTO_INDEX UINT32_MAX
 #define GRAPHINFER_MAX_DIMS 5u
 
-typedef enum graphinfer_precision { GRAPHINFER_PRECISION_FP16 = 2 } graphinfer_precision;
+typedef enum graphinfer_precision {
+  GRAPHINFER_PRECISION_FP32 = 1,
+  GRAPHINFER_PRECISION_FP16 = 2
+} graphinfer_precision;
 
 typedef struct graphinfer_options {
   uint32_t struct_size;

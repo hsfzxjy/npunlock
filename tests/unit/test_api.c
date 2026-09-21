@@ -15,6 +15,10 @@
     }                                                                                              \
   } while (0)
 
+_Static_assert(GRAPHINFER_PRECISION_FP32 == 1, "FP32 precision ABI changed");
+_Static_assert(GRAPHINFER_PRECISION_FP16 == 2, "FP16 precision ABI changed");
+_Static_assert(PATCHBLOB_CONTRACT_FP32 == (1u << 5), "FP32 contract flag ABI changed");
+
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&
          diagnostic->json.size != 0 && strstr((const char *)diagnostic->json.data, status) != NULL;

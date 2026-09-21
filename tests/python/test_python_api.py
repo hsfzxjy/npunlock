@@ -105,6 +105,31 @@ class SerializationTests(unittest.TestCase):
         self.assertIsNone(root.find("./layers/layer[@type='Custom']"))
         self.assertEqual(serialized.custom_nodes, (y.producer,))
 
+    def test_f32_custom_marks_carrier_precision_sensitive(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f32")
+        y = npu.custom(
+            x,
+            source=b"void controlled_act(void) {}",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+            _name="custom_f32",
+        )
+        serialized = npu.serialize_ir(npu.Graph([x], [y]))
+        root = ET.fromstring(serialized.xml)
+        attribute = root.find(
+            "./layers/layer[@name='custom_f32']/rt_info/attribute"
+        )
+        self.assertIsNotNone(attribute)
+        self.assertEqual(
+            attribute.attrib,
+            {
+                "name": "DisablePrecisionConversion",
+                "version": "0",
+                "value": "dynamic:f16",
+            },
+        )
+
 
 class NativeLayoutTests(unittest.TestCase):
     def test_native_directory_precedence(self) -> None:
@@ -149,10 +174,12 @@ class FakeNative:
         self.weights = b""
         self.patch_calls: list[tuple[bytes, bytes, tuple[npu.PatchTarget, ...]]] = []
         self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 8, 16),),)
+        self.infer_dtype = "f16"
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.xml = xml
         self.weights = weights
+        self.compile_ir_kwargs = kwargs
         return npu.IrCompileResult(b"native", 0, 0, 1, 0x8086, 0x7D1D, 0x10012, (8, 3))
 
     def compile_shave(self, source: bytes, **kwargs: object) -> bytes:
@@ -172,10 +199,11 @@ class FakeNative:
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
         self.infer_args = (graph_blob, values, kwargs)
-        source = np.frombuffer(values[0].data, dtype=np.float16)
-        output = (source + np.float16(1)).astype(np.float16).tobytes()
+        dtype = np.dtype({"f16": "float16", "f32": "float32"}[self.infer_dtype])
+        source = np.frombuffer(values[0].data, dtype=dtype)
+        output = (source + dtype.type(1)).astype(dtype).tobytes()
         return npu.InferenceResult(
-            (npu.InferenceOutput(1, "Result_0", (1, 32), "f16", output),),
+            (npu.InferenceOutput(1, "Result_0", (1, 32), self.infer_dtype, output),),
             0,
             0,
             1,
@@ -233,6 +261,34 @@ class CompilationFlowTests(unittest.TestCase):
         )
         self.assertEqual(fake.discovery_blob, b"native")
         self.assertEqual(fake.patch_args[2], (npu.PatchTarget(0, 0, 1, 8, 16),))
+        self.assertEqual(program.graph_blob, b"patched")
+
+    def test_f32_custom_enables_accuracy_mode_and_runs_f32(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f32")
+        y = npu.custom(
+            x,
+            source=b"kernel",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+        )
+        fake = FakeNative()
+        fake.discovery_groups = ((npu.PatchTarget(0, 0, 1, 32, 128, 0x3B),),)
+        fake.infer_dtype = "f32"
+        program = npu.compile(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            movi_dll_dir="movi",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(
+            fake.compile_ir_kwargs["build_flags"],
+            '--config EXECUTION_MODE_HINT="ACCURACY"',
+        )
+        value = np.linspace(-1, 1, 32, dtype=np.float32).reshape(1, 32)
+        result = program.run({"x": value})
+        np.testing.assert_array_equal(result["Result_0"], value + np.float32(1))
+        self.assertEqual(fake.patch_args[2], fake.discovery_groups[0])
         self.assertEqual(program.graph_blob, b"patched")
 
     def test_mixed_act_graph_maps_custom_node_position(self) -> None:

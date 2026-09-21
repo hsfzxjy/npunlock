@@ -60,6 +60,7 @@ typedef struct infer_result {
 typedef struct graph_argument {
   uint32_t index;
   uint32_t type;
+  uint32_t precision;
   uint32_t dims_count;
   uint32_t dims[5];
   uint8_t name[256];
@@ -510,9 +511,16 @@ static bool get_graph_functions(const ze_functions *ze, npunlock_ze_driver_handl
 static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *properties,
                                size_t *data_size) {
   size_t elements = 1;
+  size_t element_size;
   uint32_t index;
-  if (properties->dims_count == 0 || properties->dims_count > 5 ||
-      properties->devicePrecision != NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16) {
+  if (properties->dims_count == 0 || properties->dims_count > 5) {
+    return false;
+  }
+  if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16) {
+    element_size = sizeof(uint16_t);
+  } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP32) {
+    element_size = sizeof(uint32_t);
+  } else {
     return false;
   }
   for (index = 0; index < properties->dims_count; ++index) {
@@ -521,7 +529,7 @@ static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *pr
       return false;
     }
   }
-  return checked_mul(elements, sizeof(uint16_t), data_size) && *data_size != 0 &&
+  return checked_mul(elements, element_size, data_size) && *data_size != 0 &&
          *data_size <= 64u * 1024u * 1024u;
 }
 
@@ -576,7 +584,8 @@ static bool query_arguments(const infer_request *request, const graph_functions 
          metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT) ||
         !argument_data_size(&metadata, &argument->data_size)) {
       result->status = NPUNLOCK_INFER_WORKER_UNSUPPORTED;
-      set_diagnostic(result, "graphinfer supports only bounded static FP16 inputs and outputs");
+      set_diagnostic(result,
+                     "graphinfer supports only bounded static FP16/FP32 inputs and outputs");
       free(arguments);
       return false;
     }
@@ -589,6 +598,7 @@ static bool query_arguments(const infer_request *request, const graph_functions 
     }
     argument->index = index;
     argument->type = metadata.type;
+    argument->precision = metadata.devicePrecision;
     argument->dims_count = metadata.dims_count;
     memcpy(argument->dims, metadata.dims, sizeof(argument->dims));
     argument->name_size = (size_t)(name_end - metadata.name);
@@ -858,10 +868,15 @@ static void execute_graph(const infer_request *request, infer_result *result) {
     if (argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
       const infer_request_input *input = &request->inputs[argument->request_input_index];
       memcpy(argument->allocation, input->data, input->data_size);
-    } else {
+    } else if (argument->precision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16) {
       size_t element;
       for (element = 0; element < argument->data_size / sizeof(uint16_t); ++element) {
         ((uint16_t *)argument->allocation)[element] = 0x7e00u;
+      }
+    } else {
+      size_t element;
+      for (element = 0; element < argument->data_size / sizeof(uint32_t); ++element) {
+        ((uint32_t *)argument->allocation)[element] = 0x7fc00000u;
       }
     }
   }
@@ -912,7 +927,7 @@ static void execute_graph(const infer_request *request, infer_result *result) {
     }
     output = &result->outputs[result->output_count++];
     output->argument_index = argument->index;
-    output->precision = NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16;
+    output->precision = argument->precision;
     output->dims_count = argument->dims_count;
     memcpy(output->dims, argument->dims, sizeof(output->dims));
     output->name_size = argument->name_size;

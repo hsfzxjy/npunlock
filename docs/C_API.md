@@ -134,6 +134,10 @@ span, and required observed contract flags. The library extracts executable
 bytes from the validated SHAVE ELF, applies only the confirmed append/rebase
 mutation, and returns a new blob plus a JSON preservation report.
 
+Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
+required. FP32 support is limited to the validated precision-preserved unary
+carrier; it does not make mixed-precision conversion groups patch-compatible.
+
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release
 the result with `patchblob_discovery_result_release()`. Discovery is based on a
@@ -147,9 +151,10 @@ ambiguous graph structures fail closed.
 ## `graphinfer`
 
 `graphinfer_infer()` executes a caller-provided native graph in a bounded
-worker. Its current contract is static FP16 graph inputs and outputs with at
-most five dimensions. The caller must provide exactly one descriptor for every
-graph input, selected either by argument index or by exact UTF-8 name.
+worker. Its current contract is static FP16 or FP32 graph inputs and outputs
+with at most five dimensions. The caller must provide exactly one descriptor
+for every graph input, selected either by argument index or by exact UTF-8
+name.
 
 ```c
 graphinfer_options options = {0};
@@ -190,6 +195,7 @@ processes and do not share mutable execution state. `patchblob` operates on
 caller and result buffers without global mutable parser state. Each caller is
 responsible for setting a finite timeout on worker-backed operations.
 
-The initial public contract remains Windows x64, Meteor Lake/NPU3720, target
-`3720xx`, and static dense FP16 tensors. Other devices, dtypes, layouts,
-dynamic shapes, and arbitrary source-node mapping are not implied.
+The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
+target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
+unary FP32 accuracy-mode carrier. Other devices, dtypes, layouts, dynamic
+shapes, and arbitrary source-node mapping are not implied.

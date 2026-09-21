@@ -102,6 +102,10 @@ class Program:
     def run(self, inputs: Mapping[str, object]) -> Mapping[str, object]:
         import numpy as np
 
+        numpy_dtypes = {
+            "f16": np.dtype("float16"),
+            "f32": np.dtype("float32"),
+        }
         if not isinstance(inputs, Mapping):
             raise TypeError("Program.run() inputs must be a mapping")
         expected_names = tuple(value.name for value in self.graph.inputs)
@@ -114,12 +118,13 @@ class Program:
         native_inputs: list[InferenceInput] = []
         for tensor, name in zip(self.graph.inputs, expected_names):
             assert name is not None
-            if tensor.dtype != "f16":
-                raise ValueError("graphinfer currently supports only static FP16 tensors")
+            expected_dtype = numpy_dtypes.get(tensor.dtype)
+            if expected_dtype is None:
+                raise ValueError("graphinfer currently supports only static FP16/FP32 tensors")
             array = np.asarray(inputs[name])
-            if array.dtype != np.dtype("float16") or tuple(array.shape) != tensor.shape:
+            if array.dtype != expected_dtype or tuple(array.shape) != tensor.shape:
                 raise ValueError(
-                    f"input {name!r} requires shape {tensor.shape!r} and dtype float16"
+                    f"input {name!r} requires shape {tensor.shape!r} and dtype {expected_dtype}"
                 )
             if not array.flags.c_contiguous:
                 array = np.ascontiguousarray(array)
@@ -137,16 +142,21 @@ class Program:
         values: dict[str, object] = {}
         for index, (tensor, output) in enumerate(zip(self.graph.outputs, inferred.outputs)):
             name = tensor.name or f"Result_{index}"
-            if output.dtype != "f16" or output.shape != tensor.shape:
+            expected_dtype = numpy_dtypes.get(tensor.dtype)
+            if expected_dtype is None:
+                raise RuntimeError(
+                    f"output {name!r} uses unsupported symbolic dtype {tensor.dtype!r}"
+                )
+            if output.dtype != tensor.dtype or output.shape != tensor.shape:
                 raise RuntimeError(
                     f"output {name!r} returned shape {output.shape!r} and dtype {output.dtype}"
                 )
-            expected_size = int(np.prod(tensor.shape, dtype=np.int64)) * np.dtype("float16").itemsize
+            expected_size = int(np.prod(tensor.shape, dtype=np.int64)) * expected_dtype.itemsize
             if len(output.data) != expected_size:
                 raise RuntimeError(
                     f"output {name!r} returned {len(output.data)} bytes; expected {expected_size}"
                 )
-            values[name] = np.frombuffer(output.data, dtype=np.float16).copy().reshape(tensor.shape)
+            values[name] = np.frombuffer(output.data, dtype=expected_dtype).copy().reshape(tensor.shape)
         return values
 
 
@@ -175,6 +185,19 @@ def compile(
     if not isinstance(graph, Graph):
         raise TypeError("compile() requires a Graph")
     serialized = serialize_ir(graph)
+    preserves_fp32_custom = any(
+        any(output.dtype == "f32" for output in node.outputs)
+        for node in serialized.custom_nodes
+    )
+    if preserves_fp32_custom:
+        accuracy_flag = 'EXECUTION_MODE_HINT="ACCURACY"'
+        if not build_flags:
+            build_flags = f"--config {accuracy_flag}"
+        elif accuracy_flag not in build_flags:
+            raise ValueError(
+                "FP32 custom kernels require build_flags containing "
+                "EXECUTION_MODE_HINT=\"ACCURACY\" to prevent FP16 lowering"
+            )
     resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
     explicit_target_groups: tuple[tuple[PatchTarget, ...], ...] | None = None
     if serialized.custom_nodes:
