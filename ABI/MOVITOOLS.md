@@ -39,7 +39,7 @@ details and must be validated separately.
 ## Supplying the tool directory
 
 MoviTools is proprietary and is not distributed with `npunlock`. The caller
-must supply the directory containing these files:
+must supply the `MVC_DEPEND` root. Its `bin` directory contains:
 
 ```text
 moviCompile64.dll
@@ -47,7 +47,7 @@ moviAsm64.dll
 moviLLD64.dll
 ```
 
-The linker also uses `mlibm.a` from the sibling `..\lib` directory when a
+The linker also uses `mlibm.a` from the root's `lib` directory when a
 kernel references supported math functions.
 
 The public interfaces accept this directory through:
@@ -58,7 +58,8 @@ The public interfaces accept this directory through:
   environment variable.
 
 There is no built-in machine path. The implementation constructs only the
-three fixed DLL names beneath the supplied directory. It does not search the
+three fixed `bin` paths and the required `lib\mlibm.a` path beneath the
+supplied root. Passing `bin` itself is not supported. It does not search the
 current directory, driver installation, or arbitrary system locations.
 
 ## Exported entry points
@@ -252,8 +253,8 @@ still constrained, and callers should use only trusted MoviTools installations.
 
 ## DLL loading
 
-The supplied directory is converted to an absolute UTF-16 path. The worker
-adds only that directory to its DLL search path and uses constrained
+The selected DLL path is converted to an absolute UTF-16 path. The worker adds
+only its `bin` directory to the DLL search path and uses constrained
 `LoadLibraryExW` flags. Relative dependency names are resolved within that
 controlled search configuration rather than against the working directory.
 

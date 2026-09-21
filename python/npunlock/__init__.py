@@ -47,7 +47,7 @@ _configured_movi_dll_dir: str | None = None
 
 
 def configure(*, movi_dll_dir: str | Path | None) -> None:
-    """Set the process-local MoviTools directory used by custom compilation.
+    """Set the process-local MVC_DEPEND root used by custom compilation.
 
     Passing ``None`` clears the process-local override so that
     ``NPUNLOCK_MOVITOOLS_DIR`` is consulted again.
@@ -203,7 +203,7 @@ def compile(
     if serialized.custom_nodes:
         if resolved_movi_dll_dir is None:
             raise ValueError(
-                "custom kernels require a MoviTools directory from movi_dll_dir, "
+                "custom kernels require an MVC_DEPEND root from movi_dll_dir, "
                 "configure(), or NPUNLOCK_MOVITOOLS_DIR"
             )
         supplied = tuple(node.metadata.get("_patch_targets") for node in serialized.custom_nodes)

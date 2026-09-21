@@ -96,7 +96,7 @@ if (result.diagnostic.json.data != NULL) {
 ## `shavecc`
 
 `shavecc_compile()` accepts source bytes, an absolute caller-supplied
-MoviTools directory, target `3720xx`, entry symbol
+`MVC_DEPEND` root, target `3720xx`, entry symbol
 `controlled_act`, optional `NAME=DECIMAL` compiler definitions, and a finite
 timeout. Its three unsafe stages run in separate bounded invocations of the
 unified worker. The returned ELF has already passed the project's narrow SHAVE
@@ -110,10 +110,11 @@ not release or modify it.
 
 The MoviTools binaries are proprietary caller dependencies. They are not
 searched for globally or distributed with `npunlock`.
-The supplied directory must contain the three MoviTools DLLs. For C sources
-that reference math functions, `shavecc` also resolves the distribution's
-`..\lib\mlibm.a` sibling archive and links it with section garbage collection;
-the resulting ELF is still rejected unless its `.arg.data` is empty.
+The root contains the three MoviTools DLLs under `bin` and the archives under
+`lib`. Passing `bin` itself is not supported. For C sources that reference math
+functions, `shavecc` also resolves `lib\mlibm.a` and links it with section
+garbage collection; the resulting ELF is still rejected unless its `.arg.data`
+is empty.
 
 ## `ir2blob`
 

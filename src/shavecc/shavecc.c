@@ -213,15 +213,15 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
           "compiler definitions must use the confirmed uppercase NAME=DECIMAL form");
     }
   }
-  status = make_path(options->movi_dll_directory_utf8, "moviCompile64.dll", &compiler_path);
+  status = make_path(options->movi_dll_directory_utf8, "bin\\moviCompile64.dll", &compiler_path);
   if (status == NPUNLOCK_STATUS_OK) {
-    status = make_path(options->movi_dll_directory_utf8, "moviAsm64.dll", &assembler_path);
+    status = make_path(options->movi_dll_directory_utf8, "bin\\moviAsm64.dll", &assembler_path);
   }
   if (status == NPUNLOCK_STATUS_OK) {
-    status = make_path(options->movi_dll_directory_utf8, "moviLLD64.dll", &linker_path);
+    status = make_path(options->movi_dll_directory_utf8, "bin\\moviLLD64.dll", &linker_path);
   }
   if (status == NPUNLOCK_STATUS_OK) {
-    status = make_path(options->movi_dll_directory_utf8, "..\\lib\\mlibm.a", &math_library_path);
+    status = make_path(options->movi_dll_directory_utf8, "lib\\mlibm.a", &math_library_path);
   }
   if (status != NPUNLOCK_STATUS_OK) {
     npunlock_set_diagnostic(&result->diagnostic, status, "shavecc.validate",

@@ -71,7 +71,7 @@ int main(void) {
       movi_dll_directory_size <= 1 || !read_file(FIXTURE_ROOT "add1-fp16.c", &source) ||
       !read_file(LINKER_SCRIPT_PATH, &script) ||
       !read_file(FIXTURE_ROOT "add1-fp16.elf", &expected)) {
-    fprintf(stderr, "NPUNLOCK_MOVITOOLS_DIR must name the MoviTools DLL directory\n");
+    fprintf(stderr, "NPUNLOCK_MOVITOOLS_DIR must name the MVC_DEPEND root\n");
     goto done;
   }
   options.struct_size = sizeof(options);

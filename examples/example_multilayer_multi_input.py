@@ -56,7 +56,7 @@ def reference(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 def main() -> None:
     # npu.compile() reads NPUNLOCK_MOVITOOLS_DIR automatically. Alternatively:
-    # npu.configure(movi_dll_dir=r"D:\path\containing\MoviTools\DLLs")
+    # npu.configure(movi_dll_dir=r"C:\path\to\MVC_DEPEND")
     shape = (1, 32)
     x = npu.input("x", shape=shape, dtype="f16")
     y = npu.input("y", shape=shape, dtype="f16")

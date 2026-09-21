@@ -53,7 +53,7 @@ def gelu_reference(value: np.ndarray) -> np.ndarray:
 def main() -> None:
     # npu.compile() reads NPUNLOCK_MOVITOOLS_DIR automatically. Alternatively,
     # configure the same directory in Python before compiling:
-    # npu.configure(movi_dll_dir=r"D:\path\containing\MoviTools\DLLs")
+    # npu.configure(movi_dll_dir=r"C:\path\to\MVC_DEPEND")
     N = 2048
     x = npu.input("x", shape=(1, N), dtype="f16")
     y = npu.custom(

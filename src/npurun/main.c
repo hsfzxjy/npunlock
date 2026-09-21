@@ -67,7 +67,8 @@ typedef struct build_provenance {
 static void print_usage(const char *program) {
   printf("usage: %s --version\n", program);
   printf("       %s build --ir MODEL.xml [--weights MODEL.bin] \\\n", program);
-  printf("         --shave-source KERNEL.c [--movi-dll-dir DIR] [--linker-script FILE] \\\n");
+  printf("         --shave-source KERNEL.c [--movi-dll-dir MVC_DEPEND] \\\n");
+  printf("         [--linker-script FILE] \\\n");
   printf("         --patch-position N \\\n");
   printf("         --output GRAPH.blob --manifest BUILD.json [options]\n");
   printf("options: --build-flags TEXT --timeout-ms N --compiler-definition NAME=VALUE\n");
@@ -76,7 +77,8 @@ static void print_usage(const char *program) {
   printf("         --input-count N --element-count N --span-bytes N\n");
   printf("         --run-add1 --run-input FILE --run-output FILE [--run-input-index N]\n");
   printf("         [--run-worker FILE]\n");
-  printf("environment: %s supplies DIR when --movi-dll-dir is omitted\n", MOVITOOLS_DIRECTORY_ENV);
+  printf("environment: %s supplies the MVC_DEPEND root when --movi-dll-dir is omitted\n",
+         MOVITOOLS_DIRECTORY_ENV);
 }
 
 static char *copy_environment_value(const char *name) {
@@ -251,7 +253,8 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     build->movi_directory = build->owned_movi_directory;
   }
   if (build->movi_directory == NULL) {
-    fprintf(stderr, "--movi-dll-dir or %s is required\n", MOVITOOLS_DIRECTORY_ENV);
+    fprintf(stderr, "--movi-dll-dir or %s must supply the MVC_DEPEND root\n",
+            MOVITOOLS_DIRECTORY_ENV);
     return 0;
   }
   if (build->ir_path == NULL || build->source_path == NULL || build->output_path == NULL ||
@@ -393,7 +396,7 @@ static void hash_view(npunlock_view view, char text[65]) {
 
 static int hash_movi_dll(const char *directory, const char *name, char hash[65]) {
   char path[4096];
-  int length = snprintf(path, sizeof(path), "%s\\%s", directory, name);
+  int length = snprintf(path, sizeof(path), "%s\\bin\\%s", directory, name);
   file_buffer file;
   if (length < 0 || (size_t)length >= sizeof(path)) {
     fprintf(stderr, "MoviTools DLL path is too long\n");

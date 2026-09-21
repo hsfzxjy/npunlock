@@ -12,8 +12,7 @@ extern "C" {
 
 typedef struct shavecc_options {
   uint32_t struct_size;
-  /* Directory containing the three MoviTools DLLs. The current 3720xx math
-   * runtime is resolved at the fixed sibling path ..\lib\mlibm.a. */
+  /* MVC_DEPEND root containing the required bin/ and lib/ directories. */
   npunlock_view movi_dll_directory_utf8;
   /* Empty selects the installed sibling npunlock_worker executable. */
   npunlock_view worker_executable_utf8;
