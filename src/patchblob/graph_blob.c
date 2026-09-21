@@ -1,6 +1,7 @@
 #include "graph_blob.h"
 
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -370,6 +371,21 @@ static npunlock_status invocation_parameter_bases(const graph_layout *layout, ui
   return NPUNLOCK_STATUS_OK;
 }
 
+enum npunlock_dtype_kind {
+  NPUNLOCK_DTYPE_F32 = 1,
+  NPUNLOCK_DTYPE_F16 = 2,
+  NPUNLOCK_DTYPE_MAX,
+};
+
+struct npunlock_dtype_info {
+  size_t size;
+};
+
+static const struct npunlock_dtype_info dtype_table[NPUNLOCK_DTYPE_MAX] = {
+    [NPUNLOCK_DTYPE_F32] = {.size = 32},
+    [NPUNLOCK_DTYPE_F16] = {.size = 16},
+};
+
 static npunlock_status validate_memref(const graph_layout *layout, uint64_t record_offset,
                                        memref_contract *contract, npunlock_diagnostic *diagnostic) {
   const graph_section *params = &layout->sections[layout->params_index];
@@ -382,7 +398,7 @@ static npunlock_status validate_memref(const graph_layout *layout, uint64_t reco
   int64_t stride_values[15];
   bool used[15] = {false};
   uint64_t count = 1;
-  uint64_t expected_stride = 16;
+  uint64_t expected_stride;
   uint64_t span;
   size_t index;
   if (record_offset > SIZE_MAX ||
@@ -390,10 +406,12 @@ static npunlock_status validate_memref(const graph_layout *layout, uint64_t reco
     return unsupported(diagnostic, "MemRefData record is outside KernelParams");
   }
   record = layout->blob.data + params->offset + (size_t)record_offset;
-  if (read_u32(record + 8) != 1u || read_u32(record + 0x18) != 2u ||
+  uint32_t type_kind = read_u32(record + 0x18);
+  if (read_u32(record + 8) != 1u || dtype_table[type_kind].size == 0 ||
       read_u32(record + 0x24) != 2u) {
     return unsupported(diagnostic, "selected invocation is not static FP16 CMX");
   }
+  expected_stride = dtype_table[type_kind].size;
   rank = read_u32(record + 0x0c);
   if (rank == 0 || rank > 15) {
     return unsupported(diagnostic, "selected invocation uses an unsupported tensor rank");
