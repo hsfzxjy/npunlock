@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(npunlock VERSION 0.1.0 LANGUAGES C)
 
+set(BUILD_SHARED_LIBS ON)
+
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
