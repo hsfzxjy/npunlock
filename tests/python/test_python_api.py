@@ -314,6 +314,35 @@ class CompilationFlowTests(unittest.TestCase):
         )
         self.assertEqual(fake.patch_args[2], custom_group)
 
+    def test_multilayer_binary_custom_maps_two_input_group(self) -> None:
+        shape = (1, 32)
+        x = npu.input("x", shape=shape, dtype="f16")
+        y = npu.input("y", shape=shape, dtype="f16")
+        abs_x = npu.Abs(x, _shape=shape, _dtype="f16")
+        abs_y = npu.Abs(y, _shape=shape, _dtype="f16")
+        mixed = npu.custom(
+            abs_x,
+            abs_y,
+            source=b"kernel",
+            carrier="Maximum",
+            _shape=shape,
+            _dtype="f16",
+        )
+        output = npu.Sqrt(mixed, _shape=shape, _dtype="f16")
+        unary_zero = (npu.PatchTarget(0, 0, 1, 16, 32),)
+        unary_one = (npu.PatchTarget(1, 1, 1, 16, 32),)
+        binary = (npu.PatchTarget(2, 2, 2, 8, 16),)
+        unary_three = (npu.PatchTarget(3, 3, 1, 8, 16),)
+        fake = FakeNative()
+        fake.discovery_groups = (unary_zero, unary_one, binary, unary_three)
+        npu.compile(
+            npu.Graph([x, y], [output]),
+            native_dir="unused",
+            movi_dll_dir="movi",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(fake.patch_args[2], binary)
+
     def test_ambiguous_positional_group_count_is_rejected(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         ordinary = npu.Exp(x, _shape=x.shape, _dtype=x.dtype)

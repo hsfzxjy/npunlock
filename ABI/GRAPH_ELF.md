@@ -211,9 +211,15 @@ Confirmed descriptor roles:
 - tested binary carrier: input A at `+0x00`, input B at `+0x28`, output at
   `+0x50`.
 
-The binary observation is for internal ACT operands produced from one
-host-bound graph input. It does not establish independently bound host inputs,
-broadcasting, unequal shapes, or arbitrary descriptor counts.
+The original binary observation used internal ACT operands produced from one
+host-bound graph input. A subsequent compiler-8.3 graph with independent FP16
+`[1,32]` host inputs, separate Abs branches, a Maximum binary carrier, and a
+final Sqrt produced four positional ACT groups for its four computational
+nodes. The binary group had four invocations, each with two eight-element,
+16-byte inputs and the same descriptor roles above. A substituted weighted-mix
+kernel followed by the retained Sqrt matched all output elements exactly.
+This confirms independent host inputs only for that static dense graph; it does
+not establish broadcasting, unequal shapes, or arbitrary descriptor counts.
 
 Observed `[1,16]`, one-tile records used rank 4, dimensions `[8,1,1,1]`, bit
 strides `[16,256,256,256]`, and raw order `0x2431`. Larger carriers advertised

@@ -527,8 +527,11 @@ the four public C APIs from the bundled `npunlock.dll` directly through
 `ctypes`. Its wheel also bundles `npunlock_worker.exe`, and that package-local
 directory is the default `native_dir`. An explicit `native_dir=` or
 `NPUNLOCK_NATIVE_DIR` remains available for development overrides. Custom
-nodes lower to caller-selected carrier operators and still require explicit
-advanced `PatchTarget` values, preserving the C MVP's validated selector boundary.
+nodes lower to caller-selected carrier operators. Automatic patch selection is
+used only when the complete topological computational-node sequence maps
+one-to-one to the validated positional ACT groups and the selected custom
+groups have matching arity. Explicit advanced `PatchTarget` values remain the
+escape hatch for other validated graph layouts.
 Configure MoviTools for custom compilation either in Python or through the
 runtime environment:
 
@@ -554,3 +557,10 @@ provided. Together these retain a single FP32 ACT group instead of silently
 lowering the carrier through FP32-to-FP16-to-FP32 conversion. Caller-provided
 build flags for an FP32 custom graph must explicitly contain the same accuracy
 hint.
+
+[`examples/example_multilayer_multi_input.py`](examples/example_multilayer_multi_input.py)
+demonstrates two independently bound FP16 inputs, separate unary preprocessing
+branches, a two-input custom kernel, and an ordinary postprocessing layer. The
+exact `(1, 32)` graph is intentionally retained because its compiler-8.3 ACT
+group sequence and binary parameter layout have been validated; the example
+does not imply broadcasting or arbitrary binary layouts.
