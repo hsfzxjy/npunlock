@@ -51,10 +51,12 @@ static npunlock_buffer read_file(const char *path) {
 
 int main(void) {
   npunlock_buffer carrier;
+  npunlock_buffer two_operation_carrier;
   npunlock_buffer elf;
   npunlock_buffer expected;
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
+  patchblob_discovery_result discovery = {0};
   patchblob_result result = {0};
   uint32_t flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
                    PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
@@ -62,9 +64,44 @@ int main(void) {
   npunlock_status status;
 
   carrier = read_file(FIXTURE_ROOT "abs-add-1x16-tile1.blob");
+  two_operation_carrier = read_file(FIXTURE_ROOT "abs-abs-1x32.blob");
   elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
   expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
-  CHECK(carrier.data != NULL && elf.data != NULL && expected.data != NULL);
+  CHECK(carrier.data != NULL && two_operation_carrier.data != NULL && elf.data != NULL &&
+        expected.data != NULL);
+  status = patchblob_discover_targets((npunlock_view){carrier.data, carrier.size}, &discovery);
+  if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery.group_count == 1);
+  CHECK(discovery.target_count == 2);
+  for (index = 0; index < discovery.target_count; ++index) {
+    CHECK(discovery.targets[index].group_index == 0);
+    CHECK(discovery.targets[index].target.invocation_index == index);
+    CHECK(discovery.targets[index].target.range_index == index);
+    CHECK(discovery.targets[index].target.expected_input_count == 1);
+    CHECK(discovery.targets[index].target.expected_element_count == 8);
+    CHECK(discovery.targets[index].target.expected_span_bytes == 16);
+  }
+  patchblob_discovery_result_release(&discovery);
+  status = patchblob_discover_targets(
+      (npunlock_view){two_operation_carrier.data, two_operation_carrier.size}, &discovery);
+  if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery.group_count == 2);
+  CHECK(discovery.target_count == 8);
+  for (index = 0; index < discovery.target_count; ++index) {
+    CHECK(discovery.targets[index].group_index == index / 4u);
+    CHECK(discovery.targets[index].target.invocation_index == index);
+    CHECK(discovery.targets[index].target.range_index == index);
+    CHECK(discovery.targets[index].target.expected_input_count == 1);
+    CHECK(discovery.targets[index].target.expected_element_count == 16);
+    CHECK(discovery.targets[index].target.expected_span_bytes == 32);
+  }
+  patchblob_discovery_result_release(&discovery);
   options.struct_size = sizeof(options);
   options.image_alignment = 0x400;
   options.tail_padding = 0x80;
@@ -91,6 +128,7 @@ int main(void) {
   patchblob_result_release(&result);
   free(expected.data);
   free(elf.data);
+  free(two_operation_carrier.data);
   free(carrier.data);
   return 0;
 }

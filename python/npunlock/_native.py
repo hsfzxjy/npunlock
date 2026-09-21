@@ -114,6 +114,24 @@ class _PatchTarget(ctypes.Structure):
     ]
 
 
+class _PatchDiscoveredTarget(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("group_index", ctypes.c_uint32),
+        ("target", _PatchTarget),
+    ]
+
+
+class _PatchDiscoveryResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("targets", ctypes.POINTER(_PatchDiscoveredTarget)),
+        ("target_count", ctypes.c_size_t),
+        ("group_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _PatchResult(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -297,6 +315,14 @@ class NativeLibraries:
         ]
         self.patch.patchblob_patch.restype = ctypes.c_int
         self.patch.patchblob_result_release.argtypes = [ctypes.POINTER(_PatchResult)]
+        self.patch.patchblob_discover_targets.argtypes = [
+            _View,
+            ctypes.POINTER(_PatchDiscoveryResult),
+        ]
+        self.patch.patchblob_discover_targets.restype = ctypes.c_int
+        self.patch.patchblob_discovery_result_release.argtypes = [
+            ctypes.POINTER(_PatchDiscoveryResult)
+        ]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -440,6 +466,37 @@ class NativeLibraries:
             return PatchResult(_buffer_bytes(result.graph_blob), _buffer_bytes(result.report_json))
         finally:
             self.patch.patchblob_result_release(ctypes.byref(result))
+
+    def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[PatchTarget, ...], ...]:
+        graph_view, graph_owner = _owned_view(graph_blob)
+        _ = graph_owner
+        result = _PatchDiscoveryResult()
+        result.struct_size = ctypes.sizeof(_PatchDiscoveryResult)
+        status = self.patch.patchblob_discover_targets(graph_view, ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise("patchblob discovery", status, result.diagnostic)
+            groups: list[list[PatchTarget]] = [[] for _ in range(result.group_count)]
+            for index in range(result.target_count):
+                discovered = result.targets[index]
+                if discovered.group_index >= result.group_count:
+                    raise RuntimeError("patchblob returned an invalid discovered group index")
+                target = discovered.target
+                groups[discovered.group_index].append(
+                    PatchTarget(
+                        target.invocation_index,
+                        target.range_index,
+                        target.expected_input_count,
+                        target.expected_element_count,
+                        target.expected_span_bytes,
+                        target.required_contract_flags,
+                    )
+                )
+            if any(not group for group in groups):
+                raise RuntimeError("patchblob returned an empty discovered target group")
+            return tuple(tuple(group) for group in groups)
+        finally:
+            self.patch.patchblob_discovery_result_release(ctypes.byref(result))
 
     def infer_graph(
         self,

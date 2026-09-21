@@ -115,6 +115,29 @@ layout, compiler partitioning, and `NPU_TILES` all affected it. For example,
 an FP16 `[1,16]` graph configured for one NPU tile still had two invocations,
 each covering eight elements.
 
+### Observed positional invocation groups
+
+Controlled graph-compiler 8.3 comparisons of `[1,32]` unary chains
+`Abs -> Abs`, `Exp -> Abs`, and `Abs -> Exp` established a narrow positional
+grouping rule for that graph family. Each source operation produced four
+contiguous invocation/range records. Bytes `+0x0c..+0x2f` and
+`+0x3c..+0x3f` were invariant within one operation and changed at the source
+operation boundary. The range index at `+0x00`, relocation slots at `+0x04`
+and `+0x08`, and per-invocation/tile-like fields at `+0x30`, `+0x34`, and
+`+0x38` are excluded from this identity.
+
+The two adjacent `Abs` operations shared the same `KernelText` image but still
+had different invocation identities. Therefore code relocation alone is not a
+valid operation-group selector.
+
+`patchblob` uses the invariant slices only to discover contiguous positional
+groups, then validates every invocation's range relocation and complete tensor
+contract. A high-level caller may correlate these groups with topologically
+ordered source operations only when it independently knows the entire
+computational graph is represented by those ACT groups and the counts and
+arities agree. This observation does not establish arbitrary node-name
+mapping, mixed ACT/DPU graph mapping, or stability across compiler families.
+
 ### `ActKernelRange`
 
 **Confirmed for the studied graph family:** records are 0x18 bytes. The
@@ -195,8 +218,9 @@ Clamp implementation, lower and upper FP32 values were at parameter-base
 
 The supported mutation is intentionally small:
 
-1. Validate the graph ELF, required sections, relocations, explicit invocation
-   and range indices, and the caller's expected tensor contract.
+1. Validate the graph ELF, required sections, relocations, explicit or
+   positionally discovered invocation/range indices, and the expected tensor
+   contract.
 2. Extract the linked kernel ELF's executable `.text` image; never append the
    complete ELF container.
 3. Grow `.text.KernelText`, preserving its original bytes as a prefix.

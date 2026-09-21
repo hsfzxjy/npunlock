@@ -118,6 +118,8 @@ class NativeLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(_native._IrResult), 136)
         self.assertEqual(ctypes.sizeof(_native._PatchOptions), 12)
         self.assertEqual(ctypes.sizeof(_native._PatchTarget), 40)
+        self.assertEqual(ctypes.sizeof(_native._PatchDiscoveredTarget), 48)
+        self.assertEqual(ctypes.sizeof(_native._PatchDiscoveryResult), 72)
         self.assertEqual(ctypes.sizeof(_native._PatchResult), 112)
         self.assertEqual(ctypes.sizeof(_native._InferOptions), 32)
         self.assertEqual(ctypes.sizeof(_native._InferInput), 40)
@@ -133,6 +135,8 @@ class FakeNative:
     def __init__(self) -> None:
         self.xml = b""
         self.weights = b""
+        self.patch_calls: list[tuple[bytes, bytes, tuple[npu.PatchTarget, ...]]] = []
+        self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 8, 16),),)
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.xml = xml
@@ -145,7 +149,13 @@ class FakeNative:
 
     def patch_graph(self, graph_blob: bytes, shave_elf: bytes, targets: object) -> npu.PatchResult:
         self.patch_args = (graph_blob, shave_elf, tuple(targets))
-        return npu.PatchResult(b"patched", b"{}")
+        self.patch_calls.append(self.patch_args)
+        graph = b"patched" if len(self.patch_calls) == 1 else b"patched" + str(len(self.patch_calls)).encode()
+        return npu.PatchResult(graph, b"{}")
+
+    def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+        self.discovery_blob = graph_blob
+        return self.discovery_groups
 
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
@@ -191,6 +201,102 @@ class CompilationFlowTests(unittest.TestCase):
         result = program.run({"x": np.zeros((1, 32), dtype=np.float16)})
         np.testing.assert_array_equal(result["Result_0"], np.ones((1, 32), dtype=np.float16))
         self.assertEqual(fake.infer_args[1][0].selector, "x")
+
+    def test_custom_only_graph_infers_targets_by_position(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(
+            x,
+            source=b"kernel",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+        )
+        fake = FakeNative()
+        program = npu.compile(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            movi_dll_dir="movi",
+            linker_script=b"script",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(fake.discovery_blob, b"native")
+        self.assertEqual(fake.patch_args[2], (npu.PatchTarget(0, 0, 1, 8, 16),))
+        self.assertEqual(program.graph_blob, b"patched")
+
+    def test_mixed_act_graph_maps_custom_node_position(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        ordinary = npu.Exp(x, _shape=x.shape, _dtype=x.dtype)
+        y = npu.custom(
+            ordinary,
+            source=b"kernel",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+        )
+        ordinary_group = (npu.PatchTarget(0, 0, 1, 16, 32),)
+        custom_group = (npu.PatchTarget(1, 1, 1, 16, 32),)
+        fake = FakeNative()
+        fake.discovery_groups = (ordinary_group, custom_group)
+        npu.compile(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            movi_dll_dir="movi",
+            linker_script=b"script",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(fake.patch_args[2], custom_group)
+
+    def test_ambiguous_positional_group_count_is_rejected(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        ordinary = npu.Exp(x, _shape=x.shape, _dtype=x.dtype)
+        y = npu.custom(
+            ordinary,
+            source=b"kernel",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+        )
+        with self.assertRaisesRegex(ValueError, "one-to-one positional mapping"):
+            npu.compile(
+                npu.Graph([x], [y]),
+                native_dir="unused",
+                movi_dll_dir="movi",
+                linker_script=b"script",
+                libraries=FakeNative(),  # type: ignore[arg-type]
+            )
+
+    def test_custom_chain_maps_topological_positions_to_act_groups(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        first = npu.custom(
+            x,
+            source=b"first",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+            _name="first",
+        )
+        second = npu.custom(
+            first,
+            source=b"second",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+            _name="second",
+        )
+        group_zero = (npu.PatchTarget(0, 0, 1, 16, 32),)
+        group_one = (npu.PatchTarget(1, 1, 1, 16, 32),)
+        fake = FakeNative()
+        fake.discovery_groups = (group_zero, group_one)
+        program = npu.compile(
+            npu.Graph([x], [second]),
+            native_dir="unused",
+            movi_dll_dir="movi",
+            linker_script=b"script",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(fake.patch_calls[0], (b"native", b"elf", group_zero))
+        self.assertEqual(fake.patch_calls[1], (b"patched", b"elf", group_one))
+        self.assertEqual(program.graph_blob, b"patched2")
 
     def test_movitools_directory_from_environment(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

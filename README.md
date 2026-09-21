@@ -257,7 +257,9 @@ Intel's graph compiler never sees this C source and does not need to understand 
 
 ### 4. Replace the carrier kernel
 
-`npunlock` locates the explicitly selected, compatible ACT-SHAVE invocation in the compiled native graph.
+`npunlock` locates the compatible ACT-SHAVE invocation group at the custom
+operation's validated position in the compiled native graph. Explicit
+invocation/range selection remains available as an advanced override.
 
 It extracts the executable image from the custom SHAVE ELF, adds it to the graph blob, and updates the selected ACT kernel metadata and code relocations so that the existing invocation executes the new code.
 
@@ -329,7 +331,13 @@ This division is central to `npunlock`.
 
 Intel's compiler remains responsible for constructing the native graph, scheduling tasks, arranging memory, and defining the ACT invocation environment. MoviTools provides the missing path from user C to ACT-SHAVE machine code. `npunlock` connects the two by replacing the code of a compatible compiler-generated ACT kernel while preserving its surrounding execution contract.
 
-The current MVP therefore does **not** assume that an arbitrary graph node can be replaced automatically. It operates on explicitly selected ACT invocations whose observed argument and memory contracts are compatible with the custom kernel. Automatic mapping from an arbitrary source-level node to a native ACT invocation remains outside the initial scope.
+The positional mapping is intentionally narrow. Automatic Python selection is
+enabled only when the native ACT group count matches the complete topological
+computational-node count and every selected custom group has a compatible
+observed tensor contract. DPU-containing, fused, optimized-away, or otherwise
+count/arity-mismatched graphs fail closed and require explicit patch targets.
+This does not claim a general mapping from arbitrary source node names to
+native ACT invocations.
 
 ## What custom kernels enable
 
@@ -375,12 +383,13 @@ NPU              Meteor Lake / NPU3720
 SHAVE target     3720xx
 Tensor scope     static dense FP16
 Kernel image     one compiled SHAVE image
-Patch selection  explicit compatible ACT ranges
+Patch selection  validated positional ACT groups; explicit range override
 ```
 
 These constraints describe the contracts that have been established so far. They are not intended to imply limitations of the underlying hardware.
 
-Dynamic shapes, arbitrary tensor layouts and data types, automatic model-node mapping, additional NPU generations, and a higher-level custom-operator interface remain outside the initial MVP.
+Dynamic shapes, arbitrary tensor layouts and data types, arbitrary node-name
+mapping, and additional NPU generations remain outside the initial MVP.
 
 ## Project scope
 
@@ -451,8 +460,8 @@ behavior from inference and open questions.
 
 `npurun build` is the file-oriented boundary over the four C libraries. It
 compiles an OpenVINO-format IR through the NPU driver, compiles the supplied C
-through caller-selected MoviTools DLLs, validates and patches explicit ACT
-invocation/range pairs, then writes the graph and provenance manifest:
+through caller-selected MoviTools DLLs, discovers and validates the selected
+positional ACT group, then writes the graph and provenance manifest:
 
 ```powershell
 npurun build `
@@ -461,17 +470,17 @@ npurun build `
   --shave-source kernel.c `
   --movi-dll-dir D:\path\containing\MoviTools\DLLs `
   --linker-script shave_kernel.ld `
-  --patch-invocation 0 --patch-range 0 `
-  --input-count 1 --element-count 16 --span-bytes 32 `
+  --patch-position 0 `
   --output patched.blob `
   --manifest patched.json
 ```
 
-Repeat both patch-selection options in matching order when the carrier uses
-multiple compatible ACT invocations. The caller must supply the observed
-arity, per-invocation element count, and byte span; `npurun` does not guess a
-source-node mapping. Hardware/OEM calls have finite worker deadlines. MoviTools
-binaries remain caller-supplied and are not bundled with this project.
+`--patch-position` is a zero-based ACT operation-group position, not a source
+node name. Discovery derives all compatible invocations and their observed
+arity/span contract. The explicit `--patch-invocation`, `--patch-range`,
+`--input-count`, `--element-count`, and `--span-bytes` options remain available
+for advanced overrides. Hardware/OEM calls have finite worker deadlines.
+MoviTools binaries remain caller-supplied and are not bundled with this project.
 When `--movi-dll-dir` is omitted, `npurun` reads
 `NPUNLOCK_MOVITOOLS_DIR`; the CLI argument takes precedence when both are set.
 

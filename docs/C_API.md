@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `shavecc` | C source and caller-selected MoviTools configuration | validated linked SHAVE ELF |
 | `ir2blob` | OpenVINO-format IR XML and weights | native Intel NPU graph blob |
-| `patchblob` | native graph, SHAVE ELF, explicit ACT targets | patched native graph and JSON report |
+| `patchblob` | native graph, SHAVE ELF, validated ACT targets | discovered targets or patched native graph and JSON report |
 | `graphinfer` | native graph and caller tensor buffers | graph output metadata and buffers |
 
 They share `npunlock_view`, `npunlock_buffer`, `npunlock_status`, and
@@ -112,6 +112,13 @@ span, and required observed contract flags. The library extracts executable
 bytes from the validated SHAVE ELF, applies only the confirmed append/rebase
 mutation, and returns a new blob plus a JSON preservation report.
 
+`patchblob_discover_targets()` validates the graph's supported ACT carriers and
+returns owned targets grouped by zero-based positional ACT operation. Release
+the result with `patchblob_discovery_result_release()`. Discovery is based on a
+narrow observed NPU3720/compiler-8.3 invocation identity and tensor contract;
+callers must correlate the group count and order with their own graph before
+patching.
+
 Do not use source-level graph node names as patch selectors. Unsupported or
 ambiguous graph structures fail closed.
 
@@ -163,4 +170,4 @@ responsible for setting a finite timeout on worker-backed operations.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, target
 `3720xx`, and static dense FP16 tensors. Other devices, dtypes, layouts,
-dynamic shapes, and automatic source-node mapping are not implied.
+dynamic shapes, and arbitrary source-node mapping are not implied.

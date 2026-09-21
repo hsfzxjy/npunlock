@@ -37,6 +37,20 @@ typedef struct patchblob_options {
   uint32_t tail_padding;
 } patchblob_options;
 
+typedef struct patchblob_discovered_target {
+  uint32_t struct_size;
+  uint32_t group_index;
+  patchblob_target target;
+} patchblob_discovered_target;
+
+typedef struct patchblob_discovery_result {
+  uint32_t struct_size;
+  patchblob_discovered_target *targets;
+  size_t target_count;
+  size_t group_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_discovery_result;
+
 typedef struct patchblob_result {
   uint32_t struct_size;
   npunlock_buffer graph_blob;
@@ -48,6 +62,9 @@ NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
 NPUNLOCK_PATCHBLOB_API void patchblob_result_release(patchblob_result *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status
+patchblob_discover_targets(npunlock_view graph_blob, patchblob_discovery_result *result);
+NPUNLOCK_PATCHBLOB_API void patchblob_discovery_result_release(patchblob_discovery_result *result);
 
 #ifdef __cplusplus
 }

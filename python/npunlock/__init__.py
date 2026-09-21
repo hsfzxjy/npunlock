@@ -176,20 +176,30 @@ def compile(
         raise TypeError("compile() requires a Graph")
     serialized = serialize_ir(graph)
     resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
+    explicit_target_groups: tuple[tuple[PatchTarget, ...], ...] | None = None
     if serialized.custom_nodes:
         if resolved_movi_dll_dir is None or linker_script is None:
             raise ValueError(
                 "custom kernels require a MoviTools directory from movi_dll_dir, "
                 "configure(), or NPUNLOCK_MOVITOOLS_DIR, plus linker_script"
             )
-        for node in serialized.custom_nodes:
-            target_values = node.metadata.get("_patch_targets")
-            if not isinstance(target_values, tuple) or not target_values or not all(
-                isinstance(target, PatchTarget) for target in target_values
+        supplied = tuple(node.metadata.get("_patch_targets") for node in serialized.custom_nodes)
+        if any(value is not None for value in supplied):
+            if not all(
+                isinstance(value, tuple)
+                and value
+                and all(isinstance(target, PatchTarget) for target in value)
+                for value in supplied
             ):
                 raise ValueError(
-                    f"custom node {node.name or '<unnamed>'!r} requires explicit "
-                    "_patch_targets made of PatchTarget values"
+                    "either omit _patch_targets for every custom node or provide a non-empty "
+                    "PatchTarget sequence for every custom node"
+                )
+            explicit_target_groups = supplied  # type: ignore[assignment]
+        else:
+            if any(len(node.outputs) != 1 for node in serialized.custom_nodes):
+                raise ValueError(
+                    "automatic patch selection currently requires one output per custom node"
                 )
     if libraries is None and native_dir is None:
         raise ValueError("native_dir is required when libraries is not supplied")
@@ -206,9 +216,28 @@ def compile(
     if serialized.custom_nodes:
         assert resolved_movi_dll_dir is not None and linker_script is not None
         script = linker_script if isinstance(linker_script, bytes) else Path(linker_script).read_bytes()
-        for node in serialized.custom_nodes:
-            target_values = node.metadata.get("_patch_targets")
-            assert isinstance(target_values, tuple)
+        target_groups = explicit_target_groups
+        if target_groups is None:
+            discovered_groups = native.discover_patch_targets(blob)
+            computational_nodes = tuple(
+                node for node in graph.nodes if node.op not in {"Parameter", "Const"}
+            )
+            if len(discovered_groups) != len(computational_nodes):
+                raise ValueError(
+                    f"native graph has {len(discovered_groups)} positional ACT groups for "
+                    f"{len(computational_nodes)} computational nodes; automatic selection "
+                    "requires a one-to-one positional mapping, otherwise provide explicit "
+                    "_patch_targets"
+                )
+            node_groups = dict(zip(computational_nodes, discovered_groups))
+            target_groups = tuple(node_groups[node] for node in serialized.custom_nodes)
+            for node, targets in zip(serialized.custom_nodes, target_groups):
+                if any(target.input_count != len(node.inputs) for target in targets):
+                    raise ValueError(
+                        f"discovered ACT group for custom node {node.name or '<unnamed>'!r} "
+                        "does not match its input arity"
+                    )
+        for node, target_values in zip(serialized.custom_nodes, target_groups):
             elf = native.compile_shave(
                 _kernel_source(node.metadata.get("_kernel")),
                 movi_dll_dir=resolved_movi_dll_dir,

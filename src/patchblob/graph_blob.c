@@ -470,6 +470,48 @@ static bool spans_overlap(uint64_t left, uint64_t left_size, uint64_t right, uin
   return left < right_end && right < left_end;
 }
 
+static uint64_t invocation_parameter_limit(const uint64_t *parameter_bases, size_t invocation_count,
+                                           uint64_t base, size_t parameter_size) {
+  uint64_t limit = parameter_size;
+  size_t index;
+  for (index = 0; index < invocation_count; ++index) {
+    if (parameter_bases[index] > base && parameter_bases[index] < limit) {
+      limit = parameter_bases[index];
+    }
+  }
+  return limit;
+}
+
+static npunlock_status count_data_pointer_relocations(const graph_layout *layout, uint64_t base,
+                                                      uint64_t limit, size_t *count,
+                                                      npunlock_diagnostic *diagnostic) {
+  size_t special_count = 0;
+  size_t section_index;
+  for (section_index = 0; section_index < layout->section_count; ++section_index) {
+    const graph_section *section = &layout->sections[section_index];
+    size_t relocation_index;
+    if (section->type != SHT_RELA || section->info != layout->params_index ||
+        section->entry_size != ELF64_RELA_SIZE || section->size % ELF64_RELA_SIZE != 0) {
+      continue;
+    }
+    for (relocation_index = 0; relocation_index < section->size / ELF64_RELA_SIZE;
+         ++relocation_index) {
+      graph_relocation relocation;
+      npunlock_status status =
+          resolve_relocation(layout, section_index, relocation_index, &relocation, diagnostic);
+      if (status != NPUNLOCK_STATUS_OK) {
+        return status;
+      }
+      if (relocation.special_source && relocation.type == R_VPU_64 &&
+          relocation.target_offset >= base && relocation.target_offset < limit) {
+        ++special_count;
+      }
+    }
+  }
+  *count = special_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 static npunlock_status validate_target(const graph_layout *layout, const uint64_t *parameter_bases,
                                        size_t invocation_count, const patchblob_target *target,
                                        npunlock_patch_detail *detail,
@@ -502,12 +544,7 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
     return unsupported(diagnostic, "selected invocation does not reference the selected range");
   }
   base = parameter_bases[target->invocation_index];
-  limit = params->size;
-  for (index = 0; index < invocation_count; ++index) {
-    if (parameter_bases[index] > base && parameter_bases[index] < limit) {
-      limit = parameter_bases[index];
-    }
-  }
+  limit = invocation_parameter_limit(parameter_bases, invocation_count, base, params->size);
   block_size = limit - base;
   expected_records = (size_t)target->expected_input_count + 1u;
   if (block_size < expected_records * MEMREF_SIZE) {
@@ -522,28 +559,11 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
     }
   }
   {
-    size_t special_count = 0;
-    size_t section_index;
-    for (section_index = 0; section_index < layout->section_count; ++section_index) {
-      const graph_section *section = &layout->sections[section_index];
-      size_t relocation_index;
-      if (section->type != SHT_RELA || section->info != layout->params_index ||
-          section->entry_size != ELF64_RELA_SIZE || section->size % ELF64_RELA_SIZE != 0) {
-        continue;
-      }
-      for (relocation_index = 0; relocation_index < section->size / ELF64_RELA_SIZE;
-           ++relocation_index) {
-        graph_relocation relocation;
-        npunlock_status status =
-            resolve_relocation(layout, section_index, relocation_index, &relocation, diagnostic);
-        if (status != NPUNLOCK_STATUS_OK) {
-          return status;
-        }
-        if (relocation.special_source && relocation.type == R_VPU_64 &&
-            relocation.target_offset >= base && relocation.target_offset < limit) {
-          ++special_count;
-        }
-      }
+    size_t special_count;
+    npunlock_status status =
+        count_data_pointer_relocations(layout, base, limit, &special_count, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      return status;
     }
     if (special_count != expected_records) {
       return unsupported(
@@ -627,6 +647,152 @@ static npunlock_status find_range_relocation(const graph_layout *layout, uint32_
     return unsupported(diagnostic, "selected range code relocation is missing or ambiguous");
   }
   return NPUNLOCK_STATUS_OK;
+}
+
+static bool invocation_group_identity_equal(const graph_layout *layout, size_t left_index,
+                                            size_t right_index) {
+  const graph_section *invocations = &layout->sections[layout->invocations_index];
+  const uint8_t *left = layout->blob.data + invocations->offset + left_index * ACT_INVOCATION_SIZE;
+  const uint8_t *right =
+      layout->blob.data + invocations->offset + right_index * ACT_INVOCATION_SIZE;
+
+  /*
+   * Compiler 8.3 unary-chain observations identify one source operation by the
+   * invariant, non-relocated slices below. Range, parameter, profiling, tile,
+   * and per-invocation indices are deliberately excluded. Callers still check
+   * the discovered group count against their symbolic graph, so an unfamiliar
+   * layout fails closed instead of becoming a guessed source-node mapping.
+   */
+  return memcmp(left + 0x0cu, right + 0x0cu, 0x24u) == 0 &&
+         memcmp(left + 0x3cu, right + 0x3cu, 4u) == 0;
+}
+
+npunlock_status npunlock_discover_graph_targets(npunlock_view graph_blob,
+                                                patchblob_discovered_target **targets,
+                                                size_t *target_count, size_t *group_count,
+                                                npunlock_diagnostic *diagnostic) {
+  graph_layout layout;
+  uint64_t *parameter_bases = NULL;
+  patchblob_discovered_target *discovered = NULL;
+  size_t invocation_count = 0;
+  size_t discovered_group_count = 0;
+  size_t index;
+  npunlock_status status;
+
+  *targets = NULL;
+  *target_count = 0;
+  *group_count = 0;
+  memset(&layout, 0, sizeof(layout));
+  status = parse_graph(graph_blob, &layout, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
+  }
+  status = invocation_parameter_bases(&layout, &parameter_bases, &invocation_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    graph_layout_release(&layout);
+    return status;
+  }
+  if (invocation_count == 0 || invocation_count > UINT32_MAX ||
+      layout.sections[layout.ranges_index].size / ACT_RANGE_SIZE > UINT32_MAX) {
+    status = unsupported(diagnostic, "ACT carrier has no discoverable invocation sequence");
+    goto fail;
+  }
+  discovered = (patchblob_discovered_target *)calloc(invocation_count, sizeof(*discovered));
+  if (discovered == NULL) {
+    status = npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.discover", "could not allocate target metadata");
+    goto fail;
+  }
+  for (index = 0; index < invocation_count; ++index) {
+    const graph_section *invocations = &layout.sections[layout.invocations_index];
+    const graph_section *params = &layout.sections[layout.params_index];
+    const uint8_t *record = layout.blob.data + invocations->offset + index * ACT_INVOCATION_SIZE;
+    patchblob_target *target = &discovered[index].target;
+    npunlock_patch_detail detail;
+    graph_relocation range_relocation;
+    memref_contract first_input;
+    uint64_t base = parameter_bases[index];
+    uint64_t limit =
+        invocation_parameter_limit(parameter_bases, invocation_count, base, params->size);
+    size_t record_count;
+    size_t other;
+
+    status = count_data_pointer_relocations(&layout, base, limit, &record_count, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    if (record_count < 2u || record_count > 9u || limit - base < record_count * MEMREF_SIZE) {
+      status = unsupported(diagnostic,
+                           "ACT invocation does not have a discoverable input/output contract");
+      goto fail;
+    }
+    status = validate_memref(&layout, base, &first_input, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    discovered[index].struct_size = (uint32_t)sizeof(discovered[index]);
+    target->struct_size = (uint32_t)sizeof(*target);
+    target->invocation_index = (uint32_t)index;
+    target->range_index = read_u32(record);
+    target->expected_input_count = (uint32_t)(record_count - 1u);
+    target->expected_element_count = first_input.element_count;
+    target->expected_span_bytes = first_input.span_bytes;
+    target->required_contract_flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE |
+                                      PATCHBLOB_CONTRACT_FP16 | PATCHBLOB_CONTRACT_CMX |
+                                      PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
+    status =
+        validate_target(&layout, parameter_bases, invocation_count, target, &detail, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    status = find_range_relocation(&layout, target->range_index, &range_relocation, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    for (other = 0; other < index; ++other) {
+      if (discovered[other].target.range_index == target->range_index) {
+        status = unsupported(diagnostic, "ACT discovery found a range used more than once");
+        goto fail;
+      }
+    }
+
+    if (index == 0 || !invocation_group_identity_equal(&layout, index - 1u, index)) {
+      for (other = 0; other < index; ++other) {
+        if ((other == 0 || discovered[other - 1u].group_index != discovered[other].group_index) &&
+            invocation_group_identity_equal(&layout, other, index)) {
+          status = unsupported(diagnostic, "ACT group identity is non-contiguous and ambiguous");
+          goto fail;
+        }
+      }
+      if (discovered_group_count == UINT32_MAX) {
+        status = unsupported(diagnostic, "ACT group count exceeds the supported index range");
+        goto fail;
+      }
+      ++discovered_group_count;
+    } else {
+      const patchblob_target *previous = &discovered[index - 1u].target;
+      if (previous->expected_input_count != target->expected_input_count ||
+          previous->expected_element_count != target->expected_element_count ||
+          previous->expected_span_bytes != target->expected_span_bytes) {
+        status = unsupported(diagnostic, "ACT group contains inconsistent tensor contracts");
+        goto fail;
+      }
+    }
+    discovered[index].group_index = (uint32_t)(discovered_group_count - 1u);
+  }
+
+  free(parameter_bases);
+  graph_layout_release(&layout);
+  *targets = discovered;
+  *target_count = invocation_count;
+  *group_count = discovered_group_count;
+  return NPUNLOCK_STATUS_OK;
+
+fail:
+  free(discovered);
+  free(parameter_bases);
+  graph_layout_release(&layout);
+  return status;
 }
 
 static bool old_byte_may_change(const graph_layout *layout, const npunlock_patch_summary *summary,

@@ -38,6 +38,7 @@ int main(void) {
   patchblob_options patch_options = {0};
   patchblob_target target = {0};
   patchblob_result patch_result = {0};
+  patchblob_discovery_result discovery_result = {0};
   graphinfer_options infer_options = {0};
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
@@ -82,6 +83,12 @@ int main(void) {
                         &patch_result) == NPUNLOCK_STATUS_MALFORMED_INPUT);
   CHECK(check_diagnostic(&patch_result.diagnostic, "malformed_input"));
   patchblob_result_release(&patch_result);
+
+  CHECK(patchblob_discover_targets((npunlock_view){blob, sizeof(blob)}, &discovery_result) ==
+        NPUNLOCK_STATUS_MALFORMED_INPUT);
+  CHECK(check_diagnostic(&discovery_result.diagnostic, "malformed_input"));
+  patchblob_discovery_result_release(&discovery_result);
+  patchblob_discovery_result_release(&discovery_result);
 
   infer_options.struct_size = sizeof(infer_options);
   infer_options.driver_index = GRAPHINFER_AUTO_INDEX;

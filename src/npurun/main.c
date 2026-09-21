@@ -43,6 +43,7 @@ typedef struct build_arguments {
   size_t invocation_count;
   uint32_t ranges[MAX_TARGETS];
   size_t range_count;
+  uint32_t patch_position;
   uint32_t input_count;
   uint64_t element_count;
   uint64_t span_bytes;
@@ -67,11 +68,12 @@ static void print_usage(const char *program) {
   printf("usage: %s --version\n", program);
   printf("       %s build --ir MODEL.xml [--weights MODEL.bin] \\\n", program);
   printf("         --shave-source KERNEL.c [--movi-dll-dir DIR] --linker-script FILE \\\n");
-  printf("         --patch-invocation N --patch-range N [repeat both options] \\\n");
-  printf("         --input-count N --element-count N --span-bytes N \\\n");
+  printf("         --patch-position N \\\n");
   printf("         --output GRAPH.blob --manifest BUILD.json [options]\n");
   printf("options: --build-flags TEXT --timeout-ms N --compiler-definition NAME=VALUE\n");
   printf("         --image-alignment N --tail-padding N --movi-worker FILE --ir-worker FILE\n");
+  printf("         explicit override: --patch-invocation N --patch-range N [repeat both]\n");
+  printf("         --input-count N --element-count N --span-bytes N\n");
   printf("         --run-add1 --run-input FILE --run-output FILE [--run-input-index N]\n");
   printf("         [--run-worker FILE]\n");
   printf("environment: %s supplies DIR when --movi-dll-dir is omitted\n", MOVITOOLS_DIRECTORY_ENV);
@@ -140,6 +142,7 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
   int index;
   memset(build, 0, sizeof(*build));
   build->build_flags = "";
+  build->patch_position = PATCHBLOB_UNUSED_INDEX;
   build->input_count = 1;
   build->timeout_ms = 20000;
   build->image_alignment = 0x400;
@@ -172,6 +175,14 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
 #undef STRING_OPTION
     if (strcmp(option, "--run-add1") == 0) {
       build->run_add1 = 1;
+    } else if (strcmp(option, "--patch-position") == 0) {
+      if (build->patch_position != PATCHBLOB_UNUSED_INDEX ||
+          !option_value(argument_count, arguments, &index, &value) ||
+          !parse_u32(value, &build->patch_position) ||
+          build->patch_position == PATCHBLOB_UNUSED_INDEX) {
+        fprintf(stderr, "invalid --patch-position\n");
+        return 0;
+      }
     } else if (strcmp(option, "--patch-invocation") == 0) {
       if (build->invocation_count == MAX_TARGETS ||
           !option_value(argument_count, arguments, &index, &value) ||
@@ -244,10 +255,18 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     return 0;
   }
   if (build->ir_path == NULL || build->source_path == NULL || build->linker_script_path == NULL ||
-      build->output_path == NULL || build->manifest_path == NULL || build->invocation_count == 0 ||
-      build->invocation_count != build->range_count || build->input_count == 0 ||
-      build->element_count == 0 || build->span_bytes == 0 || build->timeout_ms == 0) {
+      build->output_path == NULL || build->manifest_path == NULL || build->timeout_ms == 0) {
     fprintf(stderr, "missing or inconsistent required build options\n");
+    return 0;
+  }
+  if (build->patch_position != PATCHBLOB_UNUSED_INDEX) {
+    if (build->invocation_count != 0 || build->range_count != 0) {
+      fprintf(stderr, "--patch-position cannot be combined with explicit patch indices\n");
+      return 0;
+    }
+  } else if (build->invocation_count == 0 || build->invocation_count != build->range_count ||
+             build->input_count == 0 || build->element_count == 0 || build->span_bytes == 0) {
+    fprintf(stderr, "explicit patch selection requires indices and a tensor contract\n");
     return 0;
   }
   if ((build->run_add1 && (build->run_input_path == NULL || build->run_output_path == NULL)) ||
@@ -630,10 +649,12 @@ static int run_build(const build_arguments *build) {
   ir2blob_result ir_result = {0};
   shavecc_result shave_result = {0};
   patchblob_result patch_result = {0};
+  patchblob_discovery_result discovery_result = {0};
   graphinfer_result run_result = {0};
   build_provenance provenance = {0};
   npunlock_status status;
   size_t index;
+  size_t selected_target_count = 0;
   int success = 0;
 
   ir = read_file(build->ir_path, 0);
@@ -703,16 +724,40 @@ static int run_build(const build_arguments *build) {
     print_diagnostic(&shave_result.diagnostic);
     goto cleanup;
   }
-  for (index = 0; index < build->invocation_count; ++index) {
-    targets[index].struct_size = sizeof(targets[index]);
-    targets[index].invocation_index = build->invocations[index];
-    targets[index].range_index = build->ranges[index];
-    targets[index].expected_input_count = build->input_count;
-    targets[index].expected_element_count = build->element_count;
-    targets[index].expected_span_bytes = build->span_bytes;
-    targets[index].required_contract_flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE |
-                                             PATCHBLOB_CONTRACT_FP16 | PATCHBLOB_CONTRACT_CMX |
-                                             PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
+  if (build->patch_position != PATCHBLOB_UNUSED_INDEX) {
+    status = patchblob_discover_targets(
+        (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size}, &discovery_result);
+    if (status != NPUNLOCK_STATUS_OK) {
+      print_diagnostic(&discovery_result.diagnostic);
+      goto cleanup;
+    }
+    if (build->patch_position >= discovery_result.group_count) {
+      fprintf(stderr, "--patch-position %u is outside the %zu discovered ACT groups\n",
+              build->patch_position, discovery_result.group_count);
+      goto cleanup;
+    }
+    for (index = 0; index < discovery_result.target_count; ++index) {
+      if (discovery_result.targets[index].group_index == build->patch_position) {
+        if (selected_target_count == MAX_TARGETS) {
+          fprintf(stderr, "selected ACT group exceeds the CLI target limit\n");
+          goto cleanup;
+        }
+        targets[selected_target_count++] = discovery_result.targets[index].target;
+      }
+    }
+  } else {
+    selected_target_count = build->invocation_count;
+    for (index = 0; index < selected_target_count; ++index) {
+      targets[index].struct_size = sizeof(targets[index]);
+      targets[index].invocation_index = build->invocations[index];
+      targets[index].range_index = build->ranges[index];
+      targets[index].expected_input_count = build->input_count;
+      targets[index].expected_element_count = build->element_count;
+      targets[index].expected_span_bytes = build->span_bytes;
+      targets[index].required_contract_flags =
+          PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
+          PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
+    }
   }
   patch_options.struct_size = sizeof(patch_options);
   patch_options.image_alignment = build->image_alignment;
@@ -720,7 +765,7 @@ static int run_build(const build_arguments *build) {
   status = patchblob_patch(&patch_options,
                            (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
                            (npunlock_view){shave_result.elf.data, shave_result.elf.size}, targets,
-                           build->invocation_count, &patch_result);
+                           selected_target_count, &patch_result);
   if (status != NPUNLOCK_STATUS_OK) {
     print_diagnostic(&patch_result.diagnostic);
     goto cleanup;
@@ -771,6 +816,7 @@ static int run_build(const build_arguments *build) {
 
 cleanup:
   graphinfer_result_release(&run_result);
+  patchblob_discovery_result_release(&discovery_result);
   patchblob_result_release(&patch_result);
   shavecc_result_release(&shave_result);
   ir2blob_result_release(&ir_result);

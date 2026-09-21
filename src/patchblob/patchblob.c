@@ -179,6 +179,30 @@ npunlock_status patchblob_patch(const patchblob_options *options, npunlock_view 
   return NPUNLOCK_STATUS_OK;
 }
 
+npunlock_status patchblob_discover_targets(npunlock_view graph_blob,
+                                           patchblob_discovery_result *result) {
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (!npunlock_view_is_valid(graph_blob) || graph_blob.size == 0) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.discover", "graph blob view is invalid or empty");
+  }
+  return npunlock_discover_graph_targets(graph_blob, &result->targets, &result->target_count,
+                                         &result->group_count, &result->diagnostic);
+}
+
+void patchblob_discovery_result_release(patchblob_discovery_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->targets);
+  npunlock_diagnostic_release(&result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
 void patchblob_result_release(patchblob_result *result) {
   if (result == NULL) {
     return;

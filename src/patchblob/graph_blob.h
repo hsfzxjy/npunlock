@@ -41,5 +41,9 @@ npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_vie
                                           npunlock_buffer *output, npunlock_patch_summary *summary,
                                           npunlock_diagnostic *diagnostic);
 void npunlock_patch_summary_release(npunlock_patch_summary *summary);
+npunlock_status npunlock_discover_graph_targets(npunlock_view graph_blob,
+                                                patchblob_discovered_target **targets,
+                                                size_t *target_count, size_t *group_count,
+                                                npunlock_diagnostic *diagnostic);
 
 #endif
