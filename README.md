@@ -425,8 +425,11 @@ tools\msvc-run.ps1 cmake --install build\vs2022 --config Debug --prefix build\st
 ```
 
 See [`docs/C_API.md`](docs/C_API.md) for C ownership, linking, deployment, and
-per-library usage contracts. See [`docs/PYTHON_API.md`](docs/PYTHON_API.md) for
-the symbolic Python frontend.
+per-library usage contracts. The experimentally observed binary contracts are
+documented separately in [`ABI/GRAPH_ELF.md`](ABI/GRAPH_ELF.md),
+[`ABI/KERNEL_ELF.md`](ABI/KERNEL_ELF.md), and
+[`ABI/MOVITOOLS.md`](ABI/MOVITOOLS.md); those references distinguish confirmed
+behavior from inference and open questions.
 
 ## Current MVP command
 
@@ -476,8 +479,8 @@ bounded static dense FP16 tensors; driver calls execute in a finite-lived worker
 
 ## Python frontend
 
-The `python/npunlock` package provides the initial symbolic frontend described
-in `docs/PYTHON_API.md`. Operators are dynamic rather than registered:
+The `python/npunlock` package provides the initial symbolic frontend. Operators
+are dynamic rather than registered:
 
 ```python
 import npunlock as npu

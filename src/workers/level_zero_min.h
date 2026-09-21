@@ -5,7 +5,7 @@
  * Minimal private declarations for the stable Level Zero loader ABI and the
  * Intel NPU graph-extension prefix used by this project. Values and layouts
  * follow the MIT-licensed Level Zero v1.17 and Intel NPU extension v1.20
- * headers recorded in LICENSES/PROVENANCE.md. No public npunlock ABI exposes
+ * locally reviewed MIT-licensed headers. No public npunlock ABI exposes
  * these declarations.
  */
 
