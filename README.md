@@ -28,16 +28,21 @@ Python graph + C kernel
 
 ## Why npunlock?
 
-Model compilers can run only the operations and combinations they know how to
-lower. When an operation is missing, unusually specialized, or better expressed
-as a small C routine, the usual choices are to reformulate the model or move
-that work off the NPU.
+OpenVINO exposes the Intel NPU as a graph of operations understood by Intel's
+compiler. It does not expose a public interface that says, in effect, “compile
+this C function and run it as a custom NPU kernel.” If the compiler does not
+support an operation, users normally have to rewrite the model or run that work
+somewhere else.
 
-`npunlock` provides another option: keep ordinary layers in the normal Intel
-graph pipeline while supplying C for selected programmable operations. It uses
-Intel's compiler and current driver to construct and execute the graph, so it
-does not try to replace the NPU compiler or use programmable code in place of
-the dedicated tensor engines.
+The hardware is more programmable than that public interface suggests. Alongside
+its dedicated tensor engines, the NPU contains ACT-SHAVE processors that execute
+software kernels. Intel's own compiler and driver use an undocumented NPU kernel
+interface to place such code inside graphs, but that interface is not offered as
+a normal application API.
+
+`npunlock` turns this existing capability into a narrow, validated workflow:
+write an operation in C, keep it inside the NPU graph, and run it through the
+current Intel driver.
 
 ## Quick example
 
