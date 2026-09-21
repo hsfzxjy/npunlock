@@ -23,7 +23,7 @@ typedef struct graphinfer_options {
   uint32_t device_index;
   /* Finite parent-process deadline; zero is invalid. */
   uint32_t timeout_ms;
-  /* Empty selects the installed sibling npunlock_infer_worker executable. */
+  /* Empty selects the installed sibling npunlock_worker executable. */
   npunlock_view worker_executable_utf8;
 } graphinfer_options;
 

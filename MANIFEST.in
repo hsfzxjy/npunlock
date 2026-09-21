@@ -1,0 +1,6 @@
+include CMakeLists.txt
+include LICENSE
+recursive-include cmake *.in
+recursive-include include *.h
+recursive-include src *.c *.h *.ld
+recursive-include tools *.ps1

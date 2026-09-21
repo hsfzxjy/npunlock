@@ -17,6 +17,7 @@ typedef struct ir2blob_options {
   uint32_t driver_index;
   uint32_t device_index;
   uint32_t timeout_ms;
+  /* Empty selects the installed sibling npunlock_worker executable. */
   npunlock_view worker_executable_utf8;
   npunlock_view build_flags;
 } ir2blob_options;

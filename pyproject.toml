@@ -18,3 +18,4 @@ where = ["python"]
 
 [tool.setuptools.package-data]
 npunlock = ["py.typed", "*.pyi"]
+"npunlock._bin" = ["*.dll", "*.exe"]

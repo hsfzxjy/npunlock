@@ -22,49 +22,41 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install Python package
-        run: python -m pip install --disable-pip-version-check .
+      - name: Install Python test dependency
+        run: python -m pip install --disable-pip-version-check numpy
 
-      - name: Configure static build
+      - name: Configure offline build
         shell: pwsh
         run: >-
-          tools\msvc-run.ps1 cmake -S . -B build\ci-static -G "NMake Makefiles"
-          -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF
+          tools\msvc-run.ps1 cmake -S . -B build\ci -G "NMake Makefiles"
+          -DCMAKE_BUILD_TYPE=Debug
           -DNPUNLOCK_BUILD_TESTS=ON -DNPUNLOCK_ENABLE_NPU_TESTS=OFF
           -DNPUNLOCK_ENABLE_MOVITOOLS_TESTS=OFF
           -DNPUNLOCK_ENABLE_PATCHBLOB_TESTS=OFF
           -DNPUNLOCK_ENABLE_GRAPHINFER_TESTS=OFF
 
-      - name: Build and test static configuration
+      - name: Build and test offline configuration
         shell: pwsh
         run: |
-          tools\msvc-run.ps1 cmake --build build\ci-static
-          tools\msvc-run.ps1 ctest --test-dir build\ci-static --output-on-failure
-          tools\msvc-run.ps1 cmake --build build\ci-static --target format-check
+          tools\msvc-run.ps1 cmake --build build\ci
+          tools\msvc-run.ps1 ctest --test-dir build\ci --output-on-failure
+          tools\msvc-run.ps1 cmake --build build\ci --target format-check
 
       - name: Verify installed CMake package
         shell: pwsh
         run: |
-          tools\msvc-run.ps1 cmake --install build\ci-static --prefix build\ci-stage
+          tools\msvc-run.ps1 cmake --install build\ci --prefix build\ci-stage
           tools\msvc-run.ps1 cmake -S tests\package -B build\ci-package -G "NMake Makefiles" -DCMAKE_PREFIX_PATH="$PWD\build\ci-stage"
           tools\msvc-run.ps1 cmake --build build\ci-package
-          build\ci-package\npunlock_package_smoke.exe
-
-      - name: Configure shared build
-        shell: pwsh
-        run: >-
-          tools\msvc-run.ps1 cmake -S . -B build\ci-shared -G "NMake Makefiles"
-          -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=ON
-          -DNPUNLOCK_BUILD_TESTS=ON -DNPUNLOCK_ENABLE_NPU_TESTS=OFF
-          -DNPUNLOCK_ENABLE_MOVITOOLS_TESTS=OFF
-          -DNPUNLOCK_ENABLE_PATCHBLOB_TESTS=OFF
-          -DNPUNLOCK_ENABLE_GRAPHINFER_TESTS=OFF
-
-      - name: Build and test shared configuration
-        shell: pwsh
-        run: |
-          tools\msvc-run.ps1 cmake --build build\ci-shared
-          tools\msvc-run.ps1 ctest --test-dir build\ci-shared --output-on-failure
+          $env:Path = "$PWD\build\ci-stage\bin;$env:Path"
+          .\build\ci-package\npunlock_package_smoke.exe
 
       - name: Build Python wheel
         run: python -m pip wheel . --no-deps --wheel-dir build\python-dist
+
+      - name: Verify bundled Python runtime
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem build\python-dist\npunlock-*.whl | Select-Object -First 1).FullName
+          python -m pip install --force-reinstall --no-deps $wheel
+          python -c "from npunlock._native import NativeLibraries; NativeLibraries(); print('bundled runtime loaded')"

@@ -1,6 +1,7 @@
 # C API guide
 
-`npunlock` exposes four independent C17 libraries:
+`npunlock` exposes four independent C17 component APIs from one native runtime
+library:
 
 | Library | Input | Output |
 | --- | --- | --- |
@@ -10,7 +11,9 @@
 | `graphinfer` | native graph and caller tensor buffers | graph output metadata and buffers |
 
 They share `npunlock_view`, `npunlock_buffer`, `npunlock_status`, and
-`npunlock_diagnostic`. No library API uses files as transport.
+`npunlock_diagnostic`. No library API uses files as transport. On Windows all
+symbols are exported by `npunlock.dll`; the component separation remains in
+the source/object targets and installed CMake link targets.
 
 ## Linking
 
@@ -25,12 +28,20 @@ target_link_libraries(example PRIVATE npunlock::graphinfer)
 ```
 
 The installed targets are `npunlock::shavecc`, `npunlock::ir2blob`,
-`npunlock::patchblob`, and `npunlock::graphinfer`.
+`npunlock::patchblob`, and `npunlock::graphinfer`. Each resolves to the same
+`npunlock::native` shared runtime, so linking more than one component does not
+deploy additional DLLs.
 
-On Windows, deploy each private worker executable beside the executable or DLL
-that owns its corresponding public library code. A caller may instead provide
-an explicit worker path in the relevant options structure. The installed
-package places all workers and `npurun` in its `bin` directory.
+On Windows, deploy `npunlock_worker.exe` beside `npunlock.dll`. The executable
+dispatches private MoviTools, IR compilation, and inference modes; unsafe calls
+still receive separate finite-lived processes. A caller may instead provide an
+explicit worker path in the relevant options structure. The installed package
+places the DLL, worker, and `npurun` in its `bin` directory.
+
+The distributed DLL and worker use the static MSVC runtime. Public views remain
+borrowed and returned allocations must still be released through their owning
+API. In particular, Python copies returned bytes and calls the DLL release
+function; neither Python nor another CRT frees a native allocation.
 
 ## Views, buffers, and ownership
 
@@ -87,8 +98,9 @@ if (result.diagnostic.json.data != NULL) {
 `shavecc_compile()` accepts source bytes, an absolute caller-supplied
 MoviTools directory, target `3720xx`, entry symbol
 `controlled_act`, optional `NAME=DECIMAL` compiler definitions, and a finite
-timeout. Its three unsafe stages run in separate bounded workers. The returned
-ELF has already passed the project's narrow SHAVE validation contract.
+timeout. Its three unsafe stages run in separate bounded invocations of the
+unified worker. The returned ELF has already passed the project's narrow SHAVE
+validation contract.
 
 An empty `shavecc_options.linker_script` view selects the Apache-2.0 NPU3720
 script embedded in the library. A non-empty view is used verbatim as a caller

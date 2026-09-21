@@ -443,7 +443,8 @@ tools\msvc-run.ps1 cmake --build build\integration --config Debug
 tools\msvc-run.ps1 ctest --test-dir build\integration -C Debug --output-on-failure
 ```
 
-Install the C libraries, public headers, CLI, workers, and CMake package with:
+Install the component targets, single native DLL, public headers, CLI, unified
+worker, and CMake package with:
 
 ```powershell
 tools\msvc-run.ps1 cmake --install build\windows --config Debug --prefix build\stage
@@ -521,9 +522,12 @@ xml, weights = serialized.xml, serialized.weights
 ```
 
 The package serializes OpenVINO-format IR without importing OpenVINO and binds
-the four public C libraries directly through `ctypes`. Custom nodes lower to
-caller-selected carrier operators and still require explicit advanced
-`PatchTarget` values, preserving the C MVP's validated selector boundary.
+the four public C APIs from the bundled `npunlock.dll` directly through
+`ctypes`. Its wheel also bundles `npunlock_worker.exe`, and that package-local
+directory is the default `native_dir`. An explicit `native_dir=` or
+`NPUNLOCK_NATIVE_DIR` remains available for development overrides. Custom
+nodes lower to caller-selected carrier operators and still require explicit
+advanced `PatchTarget` values, preserving the C MVP's validated selector boundary.
 Configure MoviTools for custom compilation either in Python or through the
 runtime environment:
 

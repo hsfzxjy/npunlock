@@ -201,9 +201,7 @@ def compile(
                 raise ValueError(
                     "automatic patch selection currently requires one output per custom node"
                 )
-    if libraries is None and native_dir is None:
-        raise ValueError("native_dir is required when libraries is not supplied")
-    native = libraries or NativeLibraries(native_dir)  # type: ignore[arg-type]
+    native = libraries or NativeLibraries(native_dir)
     ir_result = native.compile_ir(
         serialized.xml,
         serialized.weights,

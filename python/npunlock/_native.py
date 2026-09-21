@@ -274,26 +274,35 @@ def _buffer_bytes(buffer: _Buffer) -> bytes:
     return ctypes.string_at(buffer.data, buffer.size) if buffer.data and buffer.size else b""
 
 
+def _native_directory(directory: str | os.PathLike[str] | None) -> Path:
+    if directory is not None:
+        return Path(directory).resolve()
+    configured = os.environ.get("NPUNLOCK_NATIVE_DIR")
+    if configured:
+        return Path(configured).resolve()
+    return Path(__file__).resolve().parent / "_bin"
+
+
 class NativeLibraries:
-    def __init__(self, directory: str | os.PathLike[str]):
-        native_dir = Path(directory).resolve()
+    def __init__(self, directory: str | os.PathLike[str] | None = None):
+        native_dir = _native_directory(directory)
         if not native_dir.is_dir():
-            raise FileNotFoundError(f"native library directory does not exist: {native_dir}")
+            raise FileNotFoundError(
+                f"native runtime directory does not exist: {native_dir}; install a Windows "
+                "wheel containing the bundled runtime or pass native_dir explicitly"
+            )
         self._dll_cookie = os.add_dll_directory(str(native_dir)) if os.name == "nt" else None
         suffix = ".dll" if os.name == "nt" else ".so"
         prefix = "" if os.name == "nt" else "lib"
-
-        def load(name: str) -> ctypes.CDLL:
-            path = native_dir / f"{prefix}{name}{suffix}"
-            if not path.is_file():
-                raise FileNotFoundError(f"native library not found: {path}")
-            return ctypes.CDLL(str(path))
-
-        self.common = load("npunlock_common")
-        self.shave = load("shavecc")
-        self.ir = load("ir2blob")
-        self.patch = load("patchblob")
-        self.infer = load("graphinfer")
+        path = native_dir / f"{prefix}npunlock{suffix}"
+        if not path.is_file():
+            raise FileNotFoundError(f"native runtime library not found: {path}")
+        self._library = ctypes.CDLL(str(path))
+        self.common = self._library
+        self.shave = self._library
+        self.ir = self._library
+        self.patch = self._library
+        self.infer = self._library
         self._bind()
 
     def _bind(self) -> None:

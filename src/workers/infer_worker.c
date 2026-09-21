@@ -10,6 +10,7 @@
 
 #include "infer_protocol.h"
 #include "level_zero_min.h"
+#include "worker_entry.h"
 
 #define INFER_AUTO_INDEX UINT32_MAX
 #define INFER_PAGE_SIZE 4096u
@@ -1009,7 +1010,7 @@ static bool send_response(HANDLE handle, const infer_result *result) {
   return write_all(handle, (const uint8_t *)result->diagnostic, diagnostic_size);
 }
 
-int main(int argc, char **argv) {
+int npunlock_infer_worker_main(int argc, char **argv) {
   char *handle_end = NULL;
   uint64_t handle_value;
   HANDLE response;

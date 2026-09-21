@@ -15,6 +15,7 @@ typedef struct shavecc_options {
   /* Directory containing the three MoviTools DLLs. The current 3720xx math
    * runtime is resolved at the fixed sibling path ..\lib\mlibm.a. */
   npunlock_view movi_dll_directory_utf8;
+  /* Empty selects the installed sibling npunlock_worker executable. */
   npunlock_view worker_executable_utf8;
   npunlock_view target_cpu;
   npunlock_view entry_symbol;

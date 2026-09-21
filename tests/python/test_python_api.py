@@ -107,6 +107,18 @@ class SerializationTests(unittest.TestCase):
 
 
 class NativeLayoutTests(unittest.TestCase):
+    def test_native_directory_precedence(self) -> None:
+        bundled = Path(_native.__file__).resolve().parent / "_bin"
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_native._native_directory(None), bundled)
+        with patch.dict("os.environ", {"NPUNLOCK_NATIVE_DIR": "environment-native"}, clear=True):
+            self.assertEqual(
+                _native._native_directory(None), Path("environment-native").resolve()
+            )
+            self.assertEqual(
+                _native._native_directory("explicit-native"), Path("explicit-native").resolve()
+            )
+
     @unittest.skipUnless(ctypes.sizeof(ctypes.c_void_p) == 8, "MVP ABI is Windows x64")
     def test_ctypes_layouts_match_c_abi(self) -> None:
         self.assertEqual(ctypes.sizeof(_native._View), 16)

@@ -48,6 +48,9 @@ class InferenceResult:
     vendor_id: int
     device_id: int
 
+class NativeLibraries:
+    def __init__(self, directory: str | PathLike[str] | None = ...) -> None: ...
+
 class Program:
     graph_blob: bytes
     def run(self, inputs: Mapping[str, object]) -> Mapping[str, object]: ...

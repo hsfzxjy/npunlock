@@ -73,7 +73,7 @@ static wchar_t *utf8_to_wide(npunlock_view value) {
 }
 
 static wchar_t *default_worker_path(void) {
-  static const wchar_t worker_name[] = L"npunlock_infer_worker.exe";
+  static const wchar_t worker_name[] = L"npunlock_worker.exe";
   HMODULE module = NULL;
   wchar_t *path;
   DWORD length;
@@ -456,13 +456,13 @@ npunlock_status npunlock_run_infer_worker(npunlock_view worker_executable_utf8,
     status = NPUNLOCK_STATUS_INTERNAL_ERROR;
     goto done;
   }
-  command_line = (wchar_t *)malloc((wcslen(worker_path) + 64) * sizeof(*command_line));
+  command_line = (wchar_t *)malloc((wcslen(worker_path) + 80) * sizeof(*command_line));
   if (command_line == NULL) {
     status = NPUNLOCK_STATUS_OUT_OF_MEMORY;
     goto done;
   }
-  swprintf_s(command_line, wcslen(worker_path) + 64, L"\"%ls\" --response-handle %llu", worker_path,
-             (unsigned long long)(uintptr_t)response_write);
+  swprintf_s(command_line, wcslen(worker_path) + 80, L"\"%ls\" infer --response-handle %llu",
+             worker_path, (unsigned long long)(uintptr_t)response_write);
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESTDHANDLES;
   startup.hStdInput = input_read;

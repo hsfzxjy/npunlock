@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "movi_protocol.h"
+#include "worker_entry.h"
 
 typedef struct movi_buffer {
   void *data;
@@ -467,7 +468,7 @@ static bool send_response(HANDLE handle, const worker_result *result) {
          write_all(handle, result->diagnostic, result->diagnostic_size);
 }
 
-int main(int argc, char **argv) {
+int npunlock_movi_worker_main(int argc, char **argv) {
   char *handle_end = NULL;
   uint64_t handle_value;
   HANDLE response;

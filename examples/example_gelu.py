@@ -1,5 +1,3 @@
-import os
-
 import numpy as np
 import npunlock as npu
 
@@ -53,19 +51,9 @@ def gelu_reference(value: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
-
-    native_dir = os.environ.get(
-        "NPUNLOCK_NATIVE_DIR", R"D:\srcs\npunlock\build\windows\Debug"
-    )
-    if not native_dir:
-        raise RuntimeError(
-            "set NPUNLOCK_NATIVE_DIR to the directory containing the built "
-            "npunlock DLLs"
-        )
-
     # npu.compile() reads NPUNLOCK_MOVITOOLS_DIR automatically. Alternatively,
     # configure the same directory in Python before compiling:
-    npu.configure(movi_dll_dir=R"D:\Drivers\NPU\MVC_DEPEND\bin")
+    # npu.configure(movi_dll_dir=r"D:\path\containing\MoviTools\DLLs")
     N = 2048
     x = npu.input("x", shape=(1, N), dtype="f16")
     y = npu.custom(
@@ -76,10 +64,7 @@ def main() -> None:
         _dtype=x.dtype,
         _name="y",
     )
-    program = npu.compile(
-        npu.Graph(inputs=[x], outputs=[y], name="gelu_example"),
-        native_dir=native_dir,
-    )
+    program = npu.compile(npu.Graph(inputs=[x], outputs=[y], name="gelu_example"))
 
     input_value = np.linspace(-4, 4, N, dtype=np.float16).reshape(1, -1)
     outputs = program.run({"x": input_value})

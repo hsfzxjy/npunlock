@@ -10,6 +10,7 @@
 
 #include "ir_protocol.h"
 #include "level_zero_min.h"
+#include "worker_entry.h"
 
 #define IR2BLOB_AUTO_INDEX UINT32_MAX
 
@@ -677,7 +678,7 @@ static bool send_response(HANDLE handle, const ir_result *result) {
          write_all(handle, (const uint8_t *)result->diagnostic, diagnostic_size);
 }
 
-int main(int argc, char **argv) {
+int npunlock_ir_worker_main(int argc, char **argv) {
   char *handle_end = NULL;
   uint64_t handle_value;
   HANDLE response;

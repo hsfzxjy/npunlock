@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
+cmake_policy(SET CMP0091 NEW)
 project(npunlock VERSION 0.1.0 LANGUAGES C)
-
-set(BUILD_SHARED_LIBS ON)
 
 include(CTest)
 include(GNUInstallDirs)
@@ -17,6 +16,9 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 add_library(npunlock_warnings INTERFACE)
 if(MSVC)
@@ -25,7 +27,7 @@ else()
   target_compile_options(npunlock_warnings INTERFACE -Wall -Wextra -Werror -Wpedantic)
 endif()
 
-add_library(npunlock_common
+add_library(npunlock_common_objects OBJECT
   src/common/buffer.c
   src/common/checked.c
   src/common/diagnostic.c
@@ -33,28 +35,21 @@ add_library(npunlock_common
   src/common/sha256.c
   src/common/status.c
 )
-add_library(npunlock::common ALIAS npunlock_common)
-target_include_directories(npunlock_common
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-  PRIVATE src/common
-)
-target_link_libraries(npunlock_common PRIVATE $<BUILD_INTERFACE:npunlock_warnings>)
+target_include_directories(npunlock_common_objects PRIVATE include src/common)
+target_link_libraries(npunlock_common_objects PRIVATE npunlock_warnings)
 
 if(WIN32)
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_win32.c)
   set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_win32.c)
   set(NPUNLOCK_INFER_WORKER_SOURCE src/graphinfer/infer_worker_win32.c)
-  add_executable(npunlock_movi_worker src/workers/movi_worker.c)
-  target_include_directories(npunlock_movi_worker PRIVATE src/workers)
-  target_link_libraries(npunlock_movi_worker PRIVATE npunlock_warnings)
-  add_executable(npunlock_ir_worker src/workers/ir_worker.c)
-  target_include_directories(npunlock_ir_worker PRIVATE src/workers)
-  target_link_libraries(npunlock_ir_worker PRIVATE npunlock_warnings)
-  add_executable(npunlock_infer_worker src/workers/infer_worker.c)
-  target_include_directories(npunlock_infer_worker PRIVATE src/workers)
-  target_link_libraries(npunlock_infer_worker PRIVATE npunlock_warnings)
+  add_executable(npunlock_worker
+    src/workers/worker.c
+    src/workers/movi_worker.c
+    src/workers/ir_worker.c
+    src/workers/infer_worker.c
+  )
+  target_include_directories(npunlock_worker PRIVATE src/workers)
+  target_link_libraries(npunlock_worker PRIVATE npunlock_warnings)
 else()
   set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_stub.c)
   set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_stub.c)
@@ -73,58 +68,76 @@ configure_file(
   @ONLY
 )
 
-add_library(shavecc
+add_library(npunlock_shavecc_objects OBJECT
   src/shavecc/shavecc.c
   ${NPUNLOCK_MOVI_STAGE_SOURCE}
   ${CMAKE_CURRENT_BINARY_DIR}/generated/default_linker_script.c
 )
-add_library(npunlock::shavecc ALIAS shavecc)
-target_include_directories(shavecc PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-)
-target_include_directories(shavecc PRIVATE src/common)
-target_include_directories(shavecc PRIVATE src src/shavecc)
-target_link_libraries(shavecc PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
+target_include_directories(npunlock_shavecc_objects PRIVATE include src/common src src/shavecc)
+target_link_libraries(npunlock_shavecc_objects PRIVATE npunlock_warnings)
 
-add_library(ir2blob src/ir2blob/ir2blob.c ${NPUNLOCK_IR_WORKER_SOURCE})
-add_library(npunlock::ir2blob ALIAS ir2blob)
-target_include_directories(ir2blob PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+add_library(npunlock_ir2blob_objects OBJECT
+  src/ir2blob/ir2blob.c
+  ${NPUNLOCK_IR_WORKER_SOURCE}
 )
-target_include_directories(ir2blob PRIVATE src/common)
-target_include_directories(ir2blob PRIVATE src src/ir2blob)
-target_link_libraries(ir2blob PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
+target_include_directories(npunlock_ir2blob_objects PRIVATE include src/common src src/ir2blob)
+target_link_libraries(npunlock_ir2blob_objects PRIVATE npunlock_warnings)
 
-add_library(patchblob src/patchblob/graph_blob.c src/patchblob/patchblob.c)
-add_library(npunlock::patchblob ALIAS patchblob)
-target_include_directories(patchblob PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+add_library(npunlock_patchblob_objects OBJECT
+  src/patchblob/graph_blob.c
+  src/patchblob/patchblob.c
 )
-target_include_directories(patchblob PRIVATE src/common src/patchblob)
-target_link_libraries(patchblob PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
+target_include_directories(npunlock_patchblob_objects PRIVATE include src/common src/patchblob)
+target_link_libraries(npunlock_patchblob_objects PRIVATE npunlock_warnings)
 
-add_library(graphinfer src/graphinfer/graphinfer.c ${NPUNLOCK_INFER_WORKER_SOURCE})
-add_library(npunlock::graphinfer ALIAS graphinfer)
-target_include_directories(graphinfer PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+add_library(npunlock_graphinfer_objects OBJECT
+  src/graphinfer/graphinfer.c
+  ${NPUNLOCK_INFER_WORKER_SOURCE}
 )
-target_include_directories(graphinfer PRIVATE src src/common src/graphinfer)
-target_link_libraries(graphinfer PRIVATE npunlock_common $<BUILD_INTERFACE:npunlock_warnings>)
+target_include_directories(npunlock_graphinfer_objects PRIVATE include src src/common src/graphinfer)
+target_link_libraries(npunlock_graphinfer_objects PRIVATE npunlock_warnings)
 
-target_compile_definitions(npunlock_common PRIVATE NPUNLOCK_COMMON_BUILDING)
-target_compile_definitions(shavecc PRIVATE NPUNLOCK_SHAVECC_BUILDING)
-target_compile_definitions(ir2blob PRIVATE NPUNLOCK_IR2BLOB_BUILDING)
-target_compile_definitions(patchblob PRIVATE NPUNLOCK_PATCHBLOB_BUILDING)
-target_compile_definitions(graphinfer PRIVATE NPUNLOCK_GRAPHINFER_BUILDING)
-foreach(target npunlock_common shavecc ir2blob patchblob graphinfer)
-  if(BUILD_SHARED_LIBS)
-    target_compile_definitions(${target} PUBLIC NPUNLOCK_SHARED)
-  endif()
+set(NPUNLOCK_OBJECT_TARGETS
+  npunlock_common_objects
+  npunlock_shavecc_objects
+  npunlock_ir2blob_objects
+  npunlock_patchblob_objects
+  npunlock_graphinfer_objects
+)
+foreach(target IN LISTS NPUNLOCK_OBJECT_TARGETS)
+  target_compile_definitions(${target} PRIVATE NPUNLOCK_BUILDING NPUNLOCK_SHARED)
+  set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endforeach()
+
+add_library(npunlock_native SHARED
+  $<TARGET_OBJECTS:npunlock_common_objects>
+  $<TARGET_OBJECTS:npunlock_shavecc_objects>
+  $<TARGET_OBJECTS:npunlock_ir2blob_objects>
+  $<TARGET_OBJECTS:npunlock_patchblob_objects>
+  $<TARGET_OBJECTS:npunlock_graphinfer_objects>
+)
+add_library(npunlock::native ALIAS npunlock_native)
+set_target_properties(npunlock_native PROPERTIES OUTPUT_NAME npunlock EXPORT_NAME native)
+target_include_directories(npunlock_native PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+target_compile_definitions(npunlock_native INTERFACE NPUNLOCK_SHARED)
+
+foreach(component npunlock_common shavecc ir2blob patchblob graphinfer)
+  add_library(${component} INTERFACE)
+  target_include_directories(${component} INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  )
+  target_link_libraries(${component} INTERFACE npunlock_native)
+endforeach()
+set_target_properties(npunlock_common PROPERTIES EXPORT_NAME common)
+add_library(npunlock::common ALIAS npunlock_common)
+add_library(npunlock::shavecc ALIAS shavecc)
+add_library(npunlock::ir2blob ALIAS ir2blob)
+add_library(npunlock::patchblob ALIAS patchblob)
+add_library(npunlock::graphinfer ALIAS graphinfer)
 
 add_executable(npurun src/npurun/main.c)
 target_include_directories(npurun PRIVATE src src/common src/npurun)
@@ -167,6 +180,8 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/shavecc/movi_stage_win32.c
   src/workers/movi_protocol.h
   src/workers/movi_worker.c
+  src/workers/worker.c
+  src/workers/worker_entry.h
   src/workers/ir_protocol.h
   src/workers/ir_worker.c
   src/workers/level_zero_min.h
@@ -221,7 +236,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
 
   add_executable(npunlock_test_api tests/unit/test_api.c)
   if(WIN32)
-    add_dependencies(npunlock_test_api npunlock_movi_worker npunlock_ir_worker npunlock_infer_worker)
+    add_dependencies(npunlock_test_api npunlock_worker)
   endif()
   target_link_libraries(
     npunlock_test_api PRIVATE shavecc ir2blob patchblob graphinfer npunlock_common npunlock_warnings
@@ -278,7 +293,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     target_link_libraries(
       npunlock_test_shavecc_integration PRIVATE shavecc npunlock_common npunlock_warnings
     )
-    add_dependencies(npunlock_test_shavecc_integration npunlock_movi_worker)
+    add_dependencies(npunlock_test_shavecc_integration npunlock_worker)
     add_test(NAME movitools_add1 COMMAND npunlock_test_shavecc_integration)
     set_tests_properties(
       movitools_add1 PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -293,7 +308,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     target_link_libraries(
       npunlock_test_ir2blob_integration PRIVATE ir2blob npunlock_common npunlock_warnings
     )
-    add_dependencies(npunlock_test_ir2blob_integration npunlock_ir_worker)
+    add_dependencies(npunlock_test_ir2blob_integration npunlock_worker)
     add_test(NAME npu_ir2blob_abs COMMAND npunlock_test_ir2blob_integration)
     set_tests_properties(
       npu_ir2blob_abs PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -308,7 +323,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     target_link_libraries(
       npunlock_test_graphinfer_integration PRIVATE graphinfer npunlock_common npunlock_warnings
     )
-    add_dependencies(npunlock_test_graphinfer_integration npunlock_infer_worker)
+    add_dependencies(npunlock_test_graphinfer_integration npunlock_worker)
     add_test(NAME npu_graphinfer COMMAND npunlock_test_graphinfer_integration)
     set_tests_properties(
       npu_graphinfer PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -316,22 +331,31 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   endif()
 endif()
 
-set(NPUNLOCK_INSTALL_TARGETS npunlock_common shavecc ir2blob patchblob graphinfer npurun)
+install(TARGETS npunlock_native
+  EXPORT npunlockTargets
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PythonRuntime
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PythonRuntime
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
+)
 if(WIN32)
-  list(APPEND NPUNLOCK_INSTALL_TARGETS
-    npunlock_movi_worker npunlock_ir_worker npunlock_infer_worker
+  install(TARGETS npunlock_worker
+    EXPORT npunlockTargets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PythonRuntime
   )
 endif()
-install(TARGETS ${NPUNLOCK_INSTALL_TARGETS}
+install(TARGETS npurun
   EXPORT npunlockTargets
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
 )
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(TARGETS npunlock_common shavecc ir2blob patchblob graphinfer
+  EXPORT npunlockTargets
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Development)
 install(EXPORT npunlockTargets
   NAMESPACE npunlock::
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/npunlock
+  COMPONENT Development
 )
 
 configure_package_config_file(
@@ -349,4 +373,5 @@ install(
     ${CMAKE_CURRENT_BINARY_DIR}/npunlockConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/npunlockConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/npunlock
+  COMPONENT Development
 )
