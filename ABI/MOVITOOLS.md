@@ -1,57 +1,87 @@
-# Observed MoviTools DLL ABI and invocation contract
+# MoviTools DLL invocation contract
 
-Status: experimental, last reconciled with the real-DLL integration result on
-2026-09-21.
+Status: experimental. Last updated 2026-09-21.
 
-This document records the effective Windows x64 interfaces used to compile,
-assemble, and link the confirmed `3720xx` ACT kernels. These exports are OEM
-tool interfaces, not a supported public SDK ABI. Exact unobserved native types,
-large-buffer behavior, reentrancy, and forward compatibility remain unknown.
+This document explains how `shavecc` calls the Windows MoviTools compiler,
+assembler, and linker DLLs. These DLL exports behave like in-memory versions
+of command-line programs; they are not documented as a stable public SDK ABI.
 
-## Provenance
+The declarations below are compatibility definitions that work with the
+tested tool versions. They should not be copied into a general-purpose wrapper
+without the same process isolation, ownership rules, and output validation.
 
-The successful tool set was selected explicitly by the caller from:
+## What MoviTools does in `npunlock`
+
+The three tools form a conventional compiler pipeline:
 
 ```text
-D:\Drivers\NPU\MVC_DEPEND\bin
+C source
+  -> moviCompile64.dll -> SHAVE assembly
+  -> moviAsm64.dll     -> relocatable ELF32 object
+  -> moviLLD64.dll     -> linked ELF32 executable
 ```
 
-That path is machine-local evidence, not a project default. `npunlock` does
-not search arbitrary driver directories and must not package, modify, or
-redistribute these binaries.
+`npunlock` exchanges every stage as a memory buffer. It does not create hidden
+source, assembly, object, linker-script, or ELF temporary files.
 
-| DLL | Version observed | Bytes | SHA-256 |
-| --- | --- | ---: | --- |
-| `moviCompile64.dll` | `00.114.11.4207` | 65,488,136 | `f5e164f0d9e02574ff94676f6bb799597640602ccdbb685724f241a8ed170c2e` |
-| `moviAsm64.dll` | `1.13.16 64-bit` | 7,488,264 | `4f29b3e3a2b9ea5bffd6748494df2efc748af6b181fd4563bbe31cfa709a4fa8` |
-| `moviLLD64.dll` | `3.0.9` | 27,904,776 | `7294c2c00727fef46f2a42c896eb409da2ed3bbf5eab89418ac52dcb749af9ef` |
+The tested versions are:
 
-The compiler reports Movidius Compiler `v00.114.11 Build 4207`, LLVM 14.0.0,
-default target `shave`. The backup INF recorded driver version
-`10/31/2023,31.0.100.1688`.
+| DLL | Reported version |
+| --- | --- |
+| `moviCompile64.dll` | `00.114.11.4207` |
+| `moviAsm64.dll` | `1.13.16 64-bit` |
+| `moviLLD64.dll` | `3.0.9` |
 
-## Exports
+The compiler identifies itself as Movidius Compiler v00.114.11 Build 4207,
+based on LLVM 14.0.0. Other releases may have different undocumented calling
+details and must be validated separately.
 
-Confirmed PE AMD64 exports:
+## Supplying the tool directory
 
-| DLL | Tool entry | Cleanup entry |
+MoviTools is proprietary and is not distributed with `npunlock`. The caller
+must supply the directory containing these files:
+
+```text
+moviCompile64.dll
+moviAsm64.dll
+moviLLD64.dll
+```
+
+The linker also uses `mlibm.a` from the sibling `..\lib` directory when a
+kernel references supported math functions.
+
+The public interfaces accept this directory through:
+
+- the C `shavecc_options` structure;
+- `npurun --movi-dll-dir` or `NPUNLOCK_MOVITOOLS_DIR`; or
+- Python `npu.configure(...)`, `npu.compile(movi_dll_dir=...)`, or the same
+  environment variable.
+
+There is no built-in machine path. The implementation constructs only the
+three fixed DLL names beneath the supplied directory. It does not search the
+current directory, driver installation, or arbitrary system locations.
+
+## Exported entry points
+
+The tested PE/AMD64 exports are:
+
+| DLL | Main entry | Result cleanup |
 | --- | --- | --- |
 | `moviCompile64.dll` | `main` | `freeResults` |
 | `moviAsm64.dll` | `process` | `freeResults` |
 | `moviLLD64.dll` | `process` | `freeResults` |
 
-The internal PE export-directory names differ (`moviCompile.dll`,
-`moviAsmDll.dll`, and `moviLLDDll.dll`), but the physical `*64.dll` filenames
-above are the files loaded.
+The physical files use the `*64.dll` names above. Their internal export-module
+names omit or vary the `64` suffix; callers should load the physical filenames
+and resolve the named exports directly.
 
-`freeResults` releases DLL-owned global result state. It is called with no
-arguments after every returned buffer has been copied. It is not equivalent
-to `free(returned_pointer)`. The DLL is intentionally left loaded until its
-private worker process exits, matching the proven lifecycle.
+`freeResults` takes no arguments and releases result state owned by the DLL.
+It is not equivalent to calling the host C runtime's `free()` on an output
+pointer.
 
-## Compiler effective call
+## Compiler call
 
-The tested storage/call arrangement is equivalent to:
+The execution-tested compiler signature is equivalent to:
 
 ```c
 typedef int (__cdecl *movi_compile_fn)(
@@ -65,12 +95,11 @@ typedef int (__cdecl *movi_compile_fn)(
     size_t *diagnostic_size);
 ```
 
-The C source is supplied in the memory buffer; the nominal `entry.c` argument
-is only the frontend input name. The first returned pointer/extent pair is the
-assembly text. The second pair carried diagnostics in tested failures. All
-argv strings, source bytes, and result slots remain alive for the call.
+The input buffer contains C source. `entry.c` is only the name presented to
+the frontend for diagnostics. The first returned pointer/size pair contains
+assembly text; the second contains diagnostic text in observed failures.
 
-The successful arguments are:
+The working arguments are:
 
 ```text
 moviCompile.dll
@@ -81,16 +110,17 @@ moviCompile.dll
 -o -
 ```
 
-`-cc1` must be the first option after `argv[0]`. `-cc1 -version` is the tested
-version query. One null-input `-cc1 --version` trial raised a native access
-violation; it does not define a useful API behavior.
+`-cc1` must be the first option after `argv[0]`. The accepted public definition
+syntax is intentionally limited to uppercase names and decimal values. All
+argument strings, source bytes, and result slots remain alive until the call
+returns.
 
-The exact declared native width of every compiler extent slot is not proven;
-the Windows x64 `size_t` storage above is an execution-tested arrangement.
+The exact vendor declaration for every size field is unavailable. Windows x64
+`size_t` storage is the tested arrangement.
 
-## Assembler effective call
+## Assembler call
 
-The tested arrangement is:
+The execution-tested assembler signature is equivalent to:
 
 ```c
 typedef int (__cdecl *movi_assemble_fn)(
@@ -104,23 +134,22 @@ typedef int (__cdecl *movi_assemble_fn)(
     size_t *diagnostic_size);
 ```
 
-Static call evidence and the working wrapper agree that the input extent
-crosses the exported assembler wrapper as 32 bits. Assembly bytes are supplied
-in memory. Working arguments are:
+Unlike the compiler wrapper, the assembler input length is passed as a 32-bit
+value. The input buffer contains assembly text. The first result is an ELF32,
+little-endian relocatable object; the second result is diagnostic text.
+
+Working arguments are:
 
 ```text
 moviAsm.dll --cv 3720xx --noSPrefixing
 ```
 
-Buffer mode requires both input and output buffers and rejects simultaneous
-input/output filenames. `--noFinalSlotCompression` was reported deprecated
-and is not part of the working recipe. The first result pair is an ELF32
-little-endian SPARC relocatable object; the second pair is treated as
-diagnostics.
+Buffer mode requires memory input and output. Input or output filenames must
+not be supplied at the same time.
 
-## Linker effective call
+## Linker call
 
-The logical data records are:
+The visible leading records look like this:
 
 ```c
 struct movi_buffer {
@@ -140,8 +169,10 @@ typedef int (__cdecl *movi_link_fn)(
     struct movi_buffer *output);
 ```
 
-However, **the leading records alone are not sufficient storage for this DLL**.
-The confirmed `npunlock` worker reserves trailing zeroed aggregate storage:
+The DLL accesses more aggregate storage than these leading fields describe.
+Supplying only the visible records caused an access violation. The tested
+compatibility layout reserves seven additional zeroed records after each
+leading value:
 
 ```c
 struct {
@@ -155,120 +186,103 @@ struct {
 } output;
 ```
 
-The tool receives pointers to the leading `value` records. Supplying only one
-pointer/count pair and one pointer/extent pair caused process exception
-`0xc0000005`; reserving this trailing storage produced the retained ELF
-byte-for-byte. The purpose and true vendor type of the extra storage are not
-known. The arrays above are an effective compatibility arrangement, not a
-recovered vendor declaration.
+The linker receives pointers to `inputs.value` and `output.value`. The purpose
+and official vendor type of the trailing storage are unknown. This is a tested
+compatibility arrangement, not a recovered vendor header.
 
-Two in-memory inputs are passed in order:
+Two input buffers are passed in order:
 
-1. the assembler-produced ELF relocatable object;
-2. the `shave_kernel.ld` bytes.
+1. the assembler-produced relocatable ELF object;
+2. the selected linker-script bytes.
 
-`shavecc` supplies the vendored script from embedded library bytes by default,
-or uses a non-empty caller-provided view verbatim. The worker protocol still
-receives the selected script entirely in memory.
-
-No input filename and no `-T` argument are used. The linker recognizes the
-script from the buffer contents. Successful arguments are:
+No input filename and no `-T` option are used. The DLL recognizes the script
+from the second buffer. Working arguments are:
 
 ```text
 moviLLD.dll -flavor gnu -EL -e <entry-symbol> -z max-page-size=0x10
-  --gc-sections <movi-dll-directory>\..\lib\mlibm.a
+  --gc-sections <MoviTools-root>\lib\mlibm.a
 ```
 
-The fixed archive path is derived from the caller-supplied DLL directory; it
-is not a machine-local project default. The archive remains an external
-MoviTools dependency and is not redistributed. `--gc-sections` is required:
-the observed `math_lite.o` groups many functions, and retaining the whole
-object pulled `shave_fenv.o` plus its writable `roundMode` symbol into
-`.arg.data`. With garbage collection, the executed tanh-GELU kernel retained
-only its reachable math closure and produced an empty `.arg.data`.
+`shavecc` embeds
+[`src/shavecc/shave_kernel.ld`](../src/shavecc/shave_kernel.ld) as its default
+script. A nonempty caller-supplied script replaces it verbatim.
 
-Linker diagnostics were emitted through captured process stdout/stderr rather
-than a separate diagnostic result pair.
+`--gc-sections` is required for the supported math-library path. Without it,
+an otherwise simple math function may retain unrelated archive members and a
+writable global in `.arg.data`. Such a kernel cannot be installed by the
+current graph patcher. Garbage collection keeps only the reachable code and
+allows validated math kernels to remain self-contained in `.text`.
 
-## Ownership and result handling
+Linker diagnostic messages are captured from the worker process's standard
+output and standard error streams.
 
-For every stage:
+## Ownership rules
 
-1. keep argv, input buffers, aggregate storage, and result slots alive;
-2. call the export in a private process;
-3. reject nonzero return or invalid/oversized extents;
-4. copy returned DLL-owned bytes into caller-owned memory;
-5. call that DLL's no-argument `freeResults`;
-6. return the copied bytes through the process boundary.
+Each stage follows the same lifecycle:
 
-Never free a returned tool pointer with the host CRT and never expose it across
-the DLL or process boundary.
+1. allocate and keep alive all arguments, input buffers, aggregate storage,
+   and result slots;
+2. invoke the DLL entry point inside an isolated worker process;
+3. reject a nonzero return code or an invalid/oversized result;
+4. copy DLL-owned result bytes into `npunlock`-owned memory;
+5. call that DLL's no-argument `freeResults`; and
+6. return only the copied bytes across the process boundary.
 
-## Process and DLL-loading requirements
+Never pass a DLL result pointer to the host CRT, and never expose that pointer
+through the public C ABI. The process exits after cleanup, which also discards
+any undocumented global state held by the tool.
 
-The entry points behave like command-line programs and may terminate, fault,
-or hang their process. Each compile, assemble, and link call therefore runs in
-a separate bounded worker with:
+## Why every stage uses an isolated worker
+
+The exports behave like command-line program entry points. Invalid input or an
+internal failure may hang, fault, or terminate the calling process. Running
+them inside the application or Python process would make those failures
+unrecoverable.
+
+Each stage therefore runs with:
 
 - a finite deadline;
-- a Windows Job Object with kill-on-close;
-- anonymous-pipe IPC carrying versioned length-delimited buffers;
-- deterministic termination of descendants;
-- no temporary source, assembly, object, script, or ELF files between stages.
+- a Windows Job Object configured to terminate descendants on close;
+- anonymous-pipe IPC with versioned, length-delimited messages;
+- bounded input and output sizes; and
+- deterministic process cleanup.
 
-The caller supplies an absolute directory. `npunlock` constructs only the
-three fixed DLL names beneath it, converts the exact paths to UTF-16, adds only
-that directory to the DLL search path, and loads with constrained
-`LoadLibraryExW` search flags. Relative Movi DLL names are never resolved
-against the current directory or a system-wide guess.
+This provides failure containment, not a security sandbox. Tool arguments are
+still constrained, and callers should use only trusted MoviTools installations.
 
-This isolation is a robustness boundary, not a security sandbox. Compiler
-arguments should still be constrained because command-style tools may accept
-filesystem paths.
+## DLL loading
 
-## Confirmed data products
+The supplied directory is converted to an absolute UTF-16 path. The worker
+adds only that directory to its DLL search path and uses constrained
+`LoadLibraryExW` flags. Relative dependency names are resolved within that
+controlled search configuration rather than against the working directory.
 
-For the retained `add1-fp16.c` fixture and linker script:
+The tool files and `mlibm.a` remain external dependencies. `npunlock` never
+modifies or redistributes them.
 
-| Stage | Output |
-| --- | --- |
-| compile | 2,399-byte assembly, FNV-1a-64 `0b075b77a88d9e73` |
-| assemble | 677-byte relocatable ELF, FNV-1a-64 `e704605fae5ddc94` |
-| link | 828-byte validated executable ELF |
+## Unsupported assumptions
 
-The complete linked ELF SHA-256 is
-`3f9d52273870c2e911000da3c3bd474c0514bd297d29539a14e935b2b01de6d5`.
-The native C worker reproduced the retained Python/ctypes result exactly.
+The tested calls do not establish:
 
-The retained linker script is 465 bytes with SHA-256
-`4b7faf5233e425c6d75a63b18d7f8ea7e06b3b023cbf3b39731de64294f975da`.
-It came from the pinned `npu_compiler` research checkout; MoviTools itself did
-not ship a linker script or headers in `MVC_DEPEND`.
+- a stable vendor-supported ABI;
+- compatibility with arbitrary MoviTools versions;
+- thread safety or reentrancy inside one process;
+- the official meaning of the linker's trailing storage;
+- exact unobserved integer widths;
+- inputs larger than `npunlock`'s worker limits;
+- general compatibility of additional compiler/linker options;
+- safe use of other runtime archives; or
+- targets other than `3720xx`.
 
-## Scope limits
+Any tool-version change should be treated as a new compatibility target and
+revalidated through the complete compile, ELF-validation, patch, and hardware
+execution path.
 
-The tested ABI does not establish thread safety, reentrancy, concurrent calls,
-inputs larger than the enforced worker bounds, exact unobserved integer widths,
-the meaning of linker trailing storage, general option compatibility, other
-DLL versions, other targets, or a stable vendor-supported API. Seven runtime
-archives exist in `MVC_DEPEND\lib`, but the confirmed MVP kernels do not use
-them; linking those archives would require separate unresolved-symbol and
-runtime-ABI validation.
+## Related public documentation
 
-## Primary evidence
-
-```text
-D:\srcs\level-zero\samples\npurun\NPU_ABI_STATUS.md (sections 16-22)
-D:\srcs\level-zero\samples\npurun\experiments\movitools-custom-kernel\
-  oem-dll-analysis\README.md
-  oem-tool-invocation\README.md
-  act-entry-trial\builds\add1-fp16\commands.json
-  act-entry-trial\builds\add1-fp16\elf.json
-```
-
-The current in-repository implementation and acceptance record are in:
-
-```text
-src\workers\movi_worker.c
-src\shavecc\shavecc.c
-```
+- [KERNEL_ELF.md](KERNEL_ELF.md) describes the ELF that the linker must return.
+- [GRAPH_ELF.md](GRAPH_ELF.md) describes how its `.text` image is installed in
+  a native graph.
+- [C API](../docs/C_API.md) documents the public `shavecc` interface.
+- [`movi_worker.c`](../src/workers/movi_worker.c) contains the compatibility
+  declarations and isolated stage implementation.

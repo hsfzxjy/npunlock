@@ -1,35 +1,59 @@
-# Observed 3720xx ACT kernel ELF ABI
+# NPU3720 ACT kernel ELF: observed ABI
 
-Status: experimental, last reconciled with retained execution evidence on
-2026-09-21.
+Status: experimental. Last updated 2026-09-21.
 
-This document describes the standalone linked kernel accepted by the current
-`npunlock` MVP and the effective entry contract exercised by custom C kernels.
-It is not a published Movidius/Intel ABI. “Confirmed,” “strong inference,” and
-“open” have the meanings defined in `GRAPH_ELF.md`.
+This document describes the standalone SHAVE executable produced by
+`shavecc`, and the C entry convention used when that code runs as an ACT
+kernel inside an NPU3720 graph.
 
-## Linked ELF container
+It is an observed compatibility contract, not a published Intel or Movidius
+ABI. Read [GRAPH_ELF.md](GRAPH_ELF.md) first for the difference between the
+standalone kernel ELF and the native graph ELF that contains it.
 
-The accepted standalone result is:
+## The two ELF files are different
 
-| Property | Confirmed value |
+`npunlock` works with two ELF formats:
+
+```text
+standalone kernel ELF (ELF32)
+  contains the custom SHAVE executable
+             |
+             | extract validated .text bytes
+             v
+native graph ELF (ELF64)
+  contains scheduling, tensor metadata, and KernelText
+```
+
+The graph never receives the complete standalone ELF. `patchblob` extracts
+the executable `.text` image and inserts only those bytes into the graph's
+`.text.KernelText` section.
+
+## Required standalone ELF structure
+
+The supported linked result has these properties:
+
+| Property | Required observed value |
 | --- | --- |
-| class | ELF32 |
+| ELF class | ELF32 |
 | byte order | little-endian |
 | type | `ET_EXEC` (2) |
-| machine | SPARC value 2, used here for SHAVE |
-| flags | 0 in retained outputs |
+| machine | 2 (SPARC value used by these SHAVE tools) |
 | entry address | `0x1d000000` |
-| executable image | `.text` at `0x1d000000` |
-| data image | `.arg.data` at `0x1e000000`, empty in supported kernels |
+| executable section | `.text` at `0x1d000000` |
+| data section | `.arg.data` at `0x1e000000`, empty |
 
-The executable `PT_LOAD` covers `.text`; the retained outputs use 16-byte
-alignment. The linked result must have bounded section/program extents, a
-unique executable image, no undefined symbols, and no remaining relocation
-sections. An entry symbol is retained at the start of `.text` in the tested
-builds.
+An executable `PT_LOAD` segment must cover `.text`. Current outputs use
+16-byte alignment. The file must contain one unambiguous executable image,
+bounded section and program tables, no undefined symbols, and no remaining
+relocation sections.
 
-The linker script used by the successful experiments performs this grouping:
+The machine value does not mean the kernel runs on a conventional SPARC CPU.
+It is the ELF identity emitted by the MoviTools SHAVE toolchain used here.
+
+## Linker layout
+
+The default linker script places data and code at the addresses expected by
+the validated graph carriers:
 
 ```ld
 . = 0x1e000000;
@@ -53,194 +77,190 @@ The linker script used by the successful experiments performs this grouping:
 }
 ```
 
-Consequently the graph-embeddable code image is the linked `.text` bytes,
-including linked read-only data and linker padding that fall in that output
-section. It is not the entire ELF file. For the upstream Abs and Exp reference
-ELFs, the complete `.text` section matched the selected graph `KernelText`
-slice byte-for-byte and its size matched the range extent.
+Read-only constants that the linker places in the output `.text` section are
+part of the extracted code image. Linker padding inside that section is also
+preserved.
 
-The current supported path requires `.arg.data` to be empty. Placement of
-nonempty kernel data, unresolved fixups, or multiple loadable images is open
-and must not be approximated by concatenating sections. A narrow `mlibm.a`
-case is supported only when section garbage collection leaves a self-contained
-`.text` image and empty `.arg.data`.
+The current contract requires `.arg.data` to be empty. Nonempty mutable data
+would need graph placement and relocation behavior that has not been
+validated. It must not be approximated by concatenating ELF sections.
 
-## Build recipe proven for the MVP
+The Apache-2.0 default script is stored at
+[`src/shavecc/shave_kernel.ld`](../src/shavecc/shave_kernel.ld) and embedded in
+the library at build time. A caller may explicitly supply a replacement, but
+the returned ELF must still pass the same validation.
 
-The successful in-memory three-stage recipe is:
+## Build pipeline
+
+`shavecc` runs three in-memory stages:
 
 ```text
-moviCompile64!main
-  moviCompile.dll -cc1 -triple shave -target-cpu 3720xx
-  -S -O2 -x c entry.c -ffunction-sections -fdata-sections -o -
-
-moviAsm64!process
-  moviAsm.dll --cv 3720xx --noSPrefixing
-
-moviLLD64!process
-  moviLLD.dll -flavor gnu -EL -e <entry> -z max-page-size=0x10
-  --gc-sections <movi-dll-directory>\..\lib\mlibm.a
-  inputs: assembled ELF object, then shave_kernel.ld
+C source bytes
+  -> moviCompile64.dll
+SHAVE assembly bytes
+  -> moviAsm64.dll
+relocatable ELF32 object
+  -> moviLLD64.dll + linker script
+linked executable ELF32
 ```
 
-`shavecc` embeds the proven Apache-2.0 `shave_kernel.ld` bytes as its default
-second linker input. A caller-supplied non-empty script view replaces those
-bytes; this changes configuration, not the observed linker ABI above.
+The confirmed target selector is `3720xx`. The effective arguments are:
 
-Compiler definitions used by the generalized local-window sources were
-restricted to explicit uppercase `NAME=DECIMAL` arguments. No runtime archive
-was needed for the confirmed add-one, local-neighbor, or two-input kernels.
-The caller-selected MoviTools tree now supplies `mlibm.a` for math symbols.
-For the executed tanh-GELU control, linking without `--gc-sections` retained
-unrelated `fegetround` code and its four-byte `roundMode` global in
-`.arg.data`; garbage collection reduced `.text` from `0x6e70` to `0x3a0`,
-removed that data dependency, and preserved an empty `.arg.data`.
+```text
+moviCompile.dll -cc1 -triple shave -target-cpu 3720xx
+  -S -O2 -x c entry.c -ffunction-sections -fdata-sections -o -
 
-## Effective ACT entry contract
+moviAsm.dll --cv 3720xx --noSPrefixing
 
-The source-level entry tested by execution is:
+moviLLD.dll -flavor gnu -EL -e <entry> -z max-page-size=0x10
+  --gc-sections <MoviTools-root>\lib\mlibm.a
+```
+
+The source, assembly, object, linker script, and result stay in memory. The
+nominal `entry.c` name is a compiler argument, not an intermediate file.
+
+`mlibm.a` supplies math functions such as `tanhf`. Section garbage collection
+is important: without `--gc-sections`, unrelated archive members can introduce
+writable global data in `.arg.data`, making the kernel unsupported. With
+garbage collection, the validated GELU examples retain only the reachable math
+closure and still produce an empty data section.
+
+Simple arithmetic kernels do not require a runtime archive beyond this
+linker's normal inputs.
+
+## C entry point
+
+The execution-tested source signature is:
 
 ```c
 void controlled_act(unsigned layerParams);
 ```
 
-Generated code receives the argument in integer register `i18` and returns
-through `i30`. Ordinary compiled returns worked for all confirmed custom
-kernels. This is an effective calling convention for the calibrated carrier,
-not a complete vendor declaration.
+The compiler passes `layerParams` in integer register `i18`; ordinary compiled
+returns use `i30`. This describes the entry behavior needed by the current
+carriers, not a complete SHAVE calling-convention specification.
 
-`layerParams` is a usable 32-bit address of the invocation-selected
-`KernelParams` block. The successful C kernels used 32-bit little-endian loads
-for pointer-bearing fields. High address bits were not tested.
+`layerParams` is the low 32-bit address of the parameter block selected for
+the current graph invocation. Successful kernels read pointer-bearing fields
+with explicit little-endian 32-bit loads. High address bits have not been
+validated.
 
-For the observed 0x28-byte tensor descriptor:
+## Reading tensor descriptors
 
-```text
-record +0x00  low 32 bits of data address
-record +0x0c  u32 rank
-record +0x10  low 32 bits of dimensions address
-```
-
-The dimensions are `rank` little-endian four-byte values. Successful kernels
-checked rank 1 through 15, multiplied dimensions with an explicit capacity
-guard, and treated the buffers as contiguous FP16 arrays. Host-side preflight
-separately validated the complete static, dense, FP16, CMX, disjoint-output
-contract, including strides and relocations; the kernel source itself did not
-implement general layout handling.
-
-Confirmed parameter records relative to `layerParams`:
+The parameter block starts with one or more 0x28-byte tensor descriptors. A
+kernel normally needs these fields:
 
 ```text
-unary:  input +0x00, output +0x28
-binary: input A +0x00, input B +0x28, output +0x50
+descriptor +0x00  low 32 bits of tensor data address
+descriptor +0x0c  rank as u32
+descriptor +0x10  low 32 bits of dimensions-array address
 ```
 
-The binary inputs were internal ACT tensors created by earlier stages of a
-graph with one host input. Two independently bound host inputs remain open.
+The dimensions array contains `rank` little-endian 32-bit values. A custom
+kernel should:
 
-## Confirmed execution envelope
+1. reject rank zero or a rank larger than its own bound;
+2. reject zero dimensions;
+3. check multiplication before calculating the element count; and
+4. never process beyond the element count described for this invocation.
 
-Source-built kernels established all of the following on NPU3720:
+Host-side `patchblob` validation checks the fields that the small kernel does
+not: static shape, dense bit strides, supported precision, CMX placement,
+matching input/output spans, and non-aliasing output.
 
-- one input plus FP16 add-one over invocation-local chunks of 8 and 16
-  elements;
-- one compiled image selected by more than one range;
-- indexed local reads and nonlinear FP32 arithmetic with FP16 output;
-- an eight-byte generated stack save/restore frame;
-- invocation-local counts of 64, 128, and 2048 FP16 elements;
-- reads from index 0 through 2047 inside a 4096-byte advertised input span;
-- two tensor operands, including a local neighbor read from the second input.
-
-The nonlinear kernel used separate FP32 multiply/add operations, sign-based
-selection, and output conversion to FP16. The observed small stack frame
-worked, but stack capacity, calls, recursion, callee-save rules, and helper
-runtime behavior are open.
-
-The graph scheduler owns chunking. A custom kernel sees the current
-invocation's descriptor and buffers, not an automatic graph-global tensor
-view. Neighbor kernels replicated invocation-local endpoints. Cross-chunk
-halos and global coordinates were not established.
-
-## Representative artifacts
-
-The simplest semantic kernel, `add1-fp16`, has:
-
-| Property | Value |
-| --- | --- |
-| complete ELF size | 828 bytes |
-| `.text` size | `0xc0` (192 bytes) |
-| entry-symbol extent | 187 bytes |
-| ELF SHA-256 | `3f9d52273870c2e911000da3c3bd474c0514bd297d29539a14e935b2b01de6d5` |
-| `.text` SHA-256 | `bfe23abd677c5594c2956d1912f6d87aa87c62a6119bd8c85ab2a5fa08aaffab` |
-
-A fresh three-stage build reproduced both hashes byte-for-byte.
-
-The nonlinear neighbor kernel has a 400-byte (`0x190`) `.text` image and a
-1036-byte ELF. Its ELF SHA-256 is
-`2b50e7114f1243ec653e1afd60981c25acd29f6c5543ab25234e185ba367a186`;
-its `.text` SHA-256 is
-`9232118baf5f8a8e72f9d9856c776cd3ed2c416f9fcd776ff18b40b531f99990`.
-A repeat build reproduced both.
-
-Seven later variants covered 0xc0, 0x110, 0x120, and 0x130 text sizes. They
-were all ELF32 little-endian SPARC executables with entry/text at
-`0x1d000000`, empty `.arg.data`, no undefined symbols, and no remaining
-relocations. Those seven did not receive separate repeat-build comparisons.
-
-## Loader mapping into a graph
-
-The graph does not consume this ELF container directly. The supported bridge
-is:
+Validated descriptor positions are:
 
 ```text
-validated kernel ELF .text bytes
-  -> aligned bytes inside graph .text.KernelText
-  -> ActKernelRange code relocation addend selects the image base
-  -> ActKernelRange +0x0c records the image extent
+unary kernel:
+  input  at layerParams + 0x00
+  output at layerParams + 0x28
+
+binary kernel:
+  input A at layerParams + 0x00
+  input B at layerParams + 0x28
+  output  at layerParams + 0x50
 ```
 
-The standalone virtual address remains `0x1d000000`; the graph range record
-also carries this observed code address. A single appended image may serve
-multiple ranges. The tested graph append alignment and tail padding are
-`0x400` and `0x80`, respectively, but neither is established as a minimum.
+Both internal operands and two independently bound host inputs have been
+validated for a narrow static dense FP16 binary carrier. This does not imply
+broadcasting, unequal shapes, or arbitrary input counts.
 
-## Validation boundary
+## Invocation-local execution
 
-Before accepting a linked kernel, the MVP validates at least:
+The graph scheduler divides a tensor into invocation-local chunks. A custom
+kernel receives only the descriptor for its current chunk; it does not
+automatically receive a full graph-global tensor view.
 
-- ELF magic, class, endianness, version, type, machine, and entry;
-- section table, program table, string table, and symbol table bounds;
-- `.text` address, flags, nonempty extent, and executable-load coverage;
-- `.arg.data` address and zero size;
-- absence of undefined symbols and remaining relocation sections;
-- absence of integer overflow in every derived range.
+Confirmed FP16 kernels include:
 
-That structural validation does not prove compatibility with an arbitrary
-carrier. The `dummy.3720xx.elf` negative control was structurally appendable
-and graph-loadable but lost the device after submission. Explicit carrier
-preflight and a host semantic oracle remain necessary.
+- elementwise add-one over chunks of 8 and 16 elements;
+- one code image selected by several graph ranges;
+- FP32 intermediate arithmetic with FP16 output;
+- two-input arithmetic with independently bound host inputs;
+- invocation-local chunks of 64, 128, and 2048 elements; and
+- reads across the full advertised 4096-byte span of a 2048-element chunk.
 
-## Open ABI surface
+The last result is a lower bound for local reach, not permission to cross an
+invocation boundary. Neighbor-based kernels must define their boundary
+behavior within each chunk.
 
-No supported claim is made for nonempty `.arg.data`, global/static mutable
-data, arbitrary helper libraries or library closures that retain kernel data,
-unresolved or dynamic relocations, multiple code images, alternate entry
-addresses, high pointer bits, dynamic dimensions,
-non-dense strides, layouts other than the calibrated carriers, other dtypes,
-arbitrary arity, graph-global neighborhoods, larger stack use, exceptions, C++
-runtime behavior, or other SHAVE targets.
+A small generated stack frame has executed successfully. Larger stack use,
+function calls, recursion, callee-save rules, and general runtime-library
+behavior remain outside the supported contract.
 
-## Primary evidence
+## How the code image is installed
+
+After kernel validation, `patchblob` performs this mapping:
 
 ```text
-D:\srcs\level-zero\samples\npurun\NPU_ABI_STATUS.md (sections 14-22)
-D:\srcs\level-zero\samples\npurun\experiments\movitools-custom-kernel\
-  artifacts\reference-kernels\README.md
-  oem-tool-invocation\README.md
-  act-entry-trial\README.md
-  act-entry-trial\add1-fp16.c
-  act-entry-trial\builds\add1-fp16\elf.json
-  shape-portability\README.md
-  shared-complex\README.md
-  local-window-multi\README.md
+kernel ELF .text bytes
+  -> aligned append inside graph .text.KernelText
+  -> selected ActKernelRange relocation points to the append offset
+  -> selected ActKernelRange extent records the image size
 ```
+
+The standalone virtual address and supported graph range both use
+`0x1d000000`. Several ranges may reference one appended image. The current
+patcher uses 0x400-byte append alignment and 0x80 bytes of tail padding as
+conservative, execution-tested values; they are not proven minima.
+
+## Validation performed by `shavecc`
+
+Before returning success, the library checks at least:
+
+- ELF magic, class, byte order, type, machine, and entry address;
+- section, program, string, and symbol table bounds;
+- a nonempty executable `.text` at the expected address;
+- executable-load coverage of `.text`;
+- `.arg.data` at the expected address with size zero;
+- absence of undefined symbols;
+- absence of remaining relocation sections; and
+- overflow safety for every derived offset and extent.
+
+These checks establish structural compatibility, not computation correctness.
+The selected graph carrier must also pass its tensor-contract checks, and an
+application must compare output with a host oracle when validating new kernel
+semantics.
+
+## Unsupported assumptions
+
+Do not infer support for:
+
+- nonempty `.arg.data` or mutable global/static storage;
+- arbitrary helper libraries or data-bearing library closures;
+- unresolved, dynamic, or runtime relocations;
+- multiple executable images or alternate entry addresses;
+- high pointer halves;
+- dynamic shapes, non-dense layouts, or arbitrary precisions;
+- broadcasting, unequal binary shapes, or arbitrary arity;
+- graph-global neighborhoods or cross-chunk halos;
+- large stacks, exceptions, or a C++ runtime; or
+- SHAVE targets other than `3720xx`.
+
+## Related public documentation
+
+- [GRAPH_ELF.md](GRAPH_ELF.md) describes the native graph container and range
+  records.
+- [MOVITOOLS.md](MOVITOOLS.md) describes the compiler DLL boundary.
+- [C API](../docs/C_API.md) documents `shavecc` and `patchblob` ownership and
+  error handling.

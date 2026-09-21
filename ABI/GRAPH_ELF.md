@@ -1,274 +1,249 @@
-# Observed NPU3720 native graph ELF ABI
+# NPU3720 native graph ELF: observed ABI
 
-Status: experimental, last reconciled with the retained research evidence on
-2026-09-21.
+Status: experimental. Last updated 2026-09-21.
 
-This document records the narrow native-graph contract used by `npunlock`. It
-is not an Intel specification and must not be treated as a general VPU ELF
-ABI. The evidence comes from compiler-produced graphs on one Meteor Lake
-system (device `0x7d1d`, graph extension 1.18, compiler 8.3) and controlled
-mutations that were executed on that system.
+This document explains the part of an Intel NPU3720 native graph blob that
+`npunlock` reads and modifies. It is written for readers who know ordinary ELF
+files but may not know Intel NPU terminology.
 
-The labels used below are deliberate:
+This is an observed compatibility contract, not an Intel specification. The
+document covers only structures that were validated on a Meteor Lake NPU
+(device `0x7d1d`) with graph extension 1.18 and compiler 8.3.
 
-- **Confirmed** means a byte-level observation or a controlled execution
-  established the behavior.
-- **Strong inference** means several observations support the interpretation,
-  but the formal field definition is not known.
-- **Open** means the research did not establish a contract.
+The confidence words used below have precise meanings:
 
-## Container identity
+- **Confirmed**: byte inspection and controlled NPU execution agree.
+- **Inferred**: several observations agree, but the official field definition
+  is not available.
+- **Unknown**: `npunlock` must not rely on the behavior.
 
-**Confirmed:** native graph blobs are section-oriented ELF64 little-endian
-containers. A representative FP16 `Abs(Add(...))` carrier has the following
-header values:
+## What a native graph blob contains
 
-| Field | Observed value |
+The NPU compiler turns a model into much more than kernel machine code. The
+native graph also contains tensor placement, DMA work, synchronization,
+hardware scheduling, kernel parameters, and relocations between those pieces.
+
+For a custom activation (`ACT`) kernel, the important relationship is:
+
+```text
+invocation record
+  -> parameter block for this invocation
+  -> range record describing which code to run
+  -> code bytes inside KernelText
+```
+
+One logical graph operation may have several invocation records because the
+compiler partitions a tensor into chunks. Several range records may also point
+to the same code bytes.
+
+`npunlock` preserves the compiler-generated scheduling and tensor metadata. It
+changes only the code selected by validated ACT range records.
+
+## ELF container
+
+**Confirmed:** the native graph is an ELF64, little-endian, section-oriented
+container. It resembles a relocatable ELF file, but some identity fields do
+not describe a normal host CPU:
+
+| ELF field | Observed value |
 | --- | ---: |
-| ELF class | 2 (`ELFCLASS64`) |
+| class | 2 (`ELFCLASS64`) |
 | data encoding | 1 (little-endian) |
 | `e_type` | 1 (`ET_REL` value) |
 | `e_machine` | 0 |
-| `e_ident[EI_VERSION]` / `e_version` | 0 / 0 |
+| ELF version fields | 0 |
 | entry point | 0 |
 | program headers | none |
 | section-header size | 64 bytes |
 
-The zero/nonstandard identity values are intentional observations. A parser
-must not require an ordinary host-machine ELF identity merely because the
-container otherwise follows ELF64 section-table conventions.
+A parser therefore cannot apply ordinary x86-64 ELF identity checks. It must
+validate the observed NPU container fields and then bounds-check every section
+and relocation it uses.
 
-Representative sections include:
-
-```text
-.metadata
-.text.actKernelRtConfigSec
-.text.dmaTasks0
-.text.dmaTasks1
-.text.BarrierConfigs
-.text.KernelText
-.text.KernelData
-.text.KernelParams
-.text.ActKernelRanges
-.text.ActKernelInvocations
-.text.MappedInference
-.text.DPUInvariants
-.text.DPUVariants
-.perf.metrics
-.note.LoaderABIVersion
-.note.MappedInferenceVersion
-.meta.PlatformInfo
-compatibility_string
-.data.ConstIO / .data.BuffersIO
-.symtab.*
-.rlt.*
-```
-
-Names, offsets, sizes, record counts, and the presence of optional sections
-vary with the graph. Section-relative references and relocations are the
-contract used by the MVP; absolute file offsets are not.
-
-Relocation sections observed by the current parser use `SHT_RELA` entries of
-24 bytes. Ordinary section-symbol relocations use the standard ELF64-style
-`r_offset`, packed symbol/type word, and signed addend. Relocation type 4 is
-the observed pointer relocation used for ACT component references; its formal
-vendor name and write width are not claimed here.
-Some loader-managed relocations use a non-section `sh_link` such as `0xff20`;
-their complete arithmetic and namespace are open.
-
-## ACT object relationships
-
-The confirmed navigation path is:
+Common sections include:
 
 ```text
-ActKernelInvocation
-  -> relocation-selected KernelParams base
-  -> optional KernelData reference
-  -> selected ActKernelRange
-  -> relocation-selected slice of KernelText
+.text.KernelText             ACT machine code
+.text.KernelData             optional ACT data
+.text.KernelParams           per-invocation parameters and tensor descriptors
+.text.ActKernelRanges        code selections and extents
+.text.ActKernelInvocations   scheduled ACT work
+.text.dmaTasks*              data movement
+.text.BarrierConfigs         synchronization
+.text.DPUInvariants          DPU configuration
+.text.DPUVariants            DPU work partitions
+.text.MappedInference        top-level execution description
+.metadata                    graph metadata
+.rlt.*                       NPU relocation tables
+.symtab.*                    symbol tables
 ```
 
-These edges matter more than physical adjacency. A graph can contain support
-kernels, multiple logical ACT operations, and multiple invocation records for
-one logical operation.
+The exact section set, order, size, and file offsets vary by graph. Absolute
+file offsets are not an ABI. `npunlock` follows section references and
+relocations instead.
 
-### `ActKernelInvocation`
+Observed relocation tables use 24-byte ELF64 `SHT_RELA` entries. Relocation
+type 4 is used for ACT component pointers. Its official vendor name and write
+width are unknown, so the project supports only the exact uses described here.
+Some loader-managed tables use nonstandard section links; they are outside the
+patching contract.
 
-**Confirmed for the studied graph family:** records are 0x40 bytes and the
-raw `u32` at record-relative `+0x00` is the selected range index. Changing
-only this word redirected execution to another implementation.
+## ACT invocation records
 
-| Offset | Observed use | Confidence |
+For the supported compiler family, an `ActKernelInvocation` record is 0x40
+bytes.
+
+| Record offset | Observed purpose | Confidence |
 | ---: | --- | --- |
-| `+0x00` | zero-based `ActKernelRange` selection index | confirmed for tested family |
-| `+0x04` | relocation to the invocation's `KernelParams` base | confirmed |
-| `+0x08` | relocation to `KernelData` | confirmed relationship; data was empty in custom trials |
-| `+0x34` | raw tile candidate (`0/1` in two-tile graphs) | strong inference |
+| `+0x00` | index of the selected `ActKernelRange` | confirmed |
+| `+0x04` | relocated reference to this invocation's `KernelParams` | confirmed |
+| `+0x08` | relocated reference to `KernelData` | confirmed; supported custom kernels use no data |
+| `+0x34` | tile-like value (`0` or `1` in two-tile graphs) | inferred |
 
-Every tested invocation also had a special relocation at `+0x00` with type 5,
-symbol 2, and addend `0x18`. The addend equals the observed range-record
-stride. The range-index behavior is confirmed; the formal meaning of this
-special relocation is open.
+The number of invocation records is not the number of graph operations. It
+depends on shape, layout, compiler partitioning, and tile configuration. For
+example, some `[1,16]` FP16 operations have two invocations of eight elements
+even when compilation requests one NPU tile.
 
-Invocation count is not an operation count or a simple tile multiple. Shape,
-layout, compiler partitioning, and `NPU_TILES` all affected it. For example,
-an FP16 `[1,16]` graph configured for one NPU tile still had two invocations,
-each covering eight elements.
+## Positional operation groups
 
-### Observed positional invocation groups
+The compiler often emits several consecutive invocations for one logical ACT
+operation. `patchblob` groups records by comparing the bytes that stayed
+constant within an operation across validated compiler outputs. It excludes
+known per-invocation fields, range indices, and relocation slots from that
+identity comparison.
 
-Controlled graph-compiler 8.3 comparisons of `[1,32]` unary chains
-`Abs -> Abs`, `Exp -> Abs`, and `Abs -> Exp` established a narrow positional
-grouping rule for that graph family. Each source operation produced four
-contiguous invocation/range records. Bytes `+0x0c..+0x2f` and
-`+0x3c..+0x3f` were invariant within one operation and changed at the source
-operation boundary. The range index at `+0x00`, relocation slots at `+0x04`
-and `+0x08`, and per-invocation/tile-like fields at `+0x30`, `+0x34`, and
-`+0x38` are excluded from this identity.
+This distinction matters because two adjacent operations can use identical
+machine code while still being separate logical groups. A code address alone
+is therefore not a safe operation selector.
 
-The two adjacent `Abs` operations shared the same `KernelText` image but still
-had different invocation identities. Therefore code relocation alone is not a
-valid operation-group selector.
+Automatic high-level selection is allowed only when all of the following are
+true:
 
-`patchblob` uses the invariant slices only to discover contiguous positional
-groups, then validates every invocation's range relocation and complete tensor
-contract. A high-level caller may correlate these groups with topologically
-ordered source operations only when it independently knows the entire
-computational graph is represented by those ACT groups and the counts and
-arities agree. This observation does not establish arbitrary node-name
-mapping, mixed ACT/DPU graph mapping, or stability across compiler families.
+1. every computational node has one validated positional ACT group;
+2. node count and group count match exactly in topological order;
+3. the selected group's input arity matches the custom node; and
+4. every invocation in the group has the same supported tensor contract.
 
-### `ActKernelRange`
+Graphs containing DPU operations, fused nodes, inserted conversions, or other
+count mismatches need an explicit validated target selection. A source node
+name is not stored as a reliable range selector in the native blob.
 
-**Confirmed for the studied graph family:** records are 0x18 bytes. The
-fields used by substitution are:
+## ACT range records
 
-| Offset | Observed use | Confidence |
+For the supported compiler family, an `ActKernelRange` record is 0x18 bytes.
+
+| Record offset | Observed purpose | Confidence |
 | ---: | --- | --- |
-| `+0x04` | code virtual address, `0x1d000000` | confirmed in compatible ranges |
-| `+0x08` | code pointer relocated from `.text.KernelText` | confirmed |
-| `+0x0c` | selected code-image extent in bytes | strong inference from layout; execution-proven when changed with the base |
+| `+0x04` | code virtual address (`0x1d000000`) | confirmed |
+| `+0x08` | relocated pointer into `.text.KernelText` | confirmed |
+| `+0x0c` | selected code-image size in bytes | execution-tested inference |
 
-The relocation addend at `+0x08` is the byte offset into `KernelText`. The
-range extent bounds the selected image. Standalone Abs and Exp `.text` images
-matched their selected graph slices byte-for-byte:
+The relocation addend at `+0x08` selects a byte offset in `KernelText`. The
+extent at `+0x0c` bounds that implementation. More than one range may select
+the same code image.
 
-| Implementation | `KernelText` base | Extent | FNV-1a-64 |
-| --- | ---: | ---: | --- |
-| support/shared | `0x0000` | `0x61c0` | `8ae62928624d3d7c` |
-| Exp | `0x6400` | `0x08a0` | `5cce99108e61b81d` |
-| Abs | `0x7000` in a combined graph | `0x14a0` | `0e29aba2c3759fbc` |
+## Kernel parameters and tensor descriptors
 
-The same image may be selected by multiple ranges. This is confirmed graph
-metadata sharing; it does not prove physical instruction-cache or residency
-sharing across tiles.
+Each invocation relocation selects a base inside `.text.KernelParams`. The
+supported carriers store tensor descriptors consecutively at that base. Each
+descriptor is 0x28 bytes:
 
-### `KernelParams` and the observed `MemRefData` record
-
-An invocation's `+0x04` relocation selects a base inside
-`.text.KernelParams`. In several compiler-generated ACT implementations,
-successive bases were 0xc0 bytes apart. That is a confirmed cadence for those
-implementations, not a universal parameter-block size.
-
-The custom-kernel carriers expose consecutive 0x28-byte tensor descriptors.
-The useful effective layout is:
-
-| Offset | Raw/effective meaning |
+| Descriptor offset | Observed meaning |
 | ---: | --- |
-| `+0x00` | data pointer, supplied through a special relocation; custom code used its low 32 bits |
-| `+0x08` | raw value 1 in the accepted static carriers |
-| `+0x0c` | `u32` rank |
-| `+0x10` | relocation-selected pointer to `rank` signed 32-bit dimensions |
-| `+0x14` | relocation-selected pointer to `rank` signed 64-bit bit-strides |
-| `+0x18` | raw value 2 in FP16 carriers and 1 in the validated FP32 carrier |
-| `+0x24` | raw value 2 in the accepted CMX carriers |
+| `+0x00` | data address; validated kernels use its low 32 bits |
+| `+0x08` | raw value 1 for supported static tensors |
+| `+0x0c` | rank as `u32` |
+| `+0x10` | pointer to `rank` signed 32-bit dimensions |
+| `+0x14` | pointer to `rank` signed 64-bit bit-strides |
+| `+0x18` | element-type value: 2 for FP16, 1 for validated FP32 |
+| `+0x24` | raw value 2 for supported CMX tensors |
 
-The formal enum names of the raw values at `+0x08`, `+0x18`, and `+0x24` are
-not claimed. `npunlock` treats the complete observed combinations as narrow
-static FP16/FP32 CMX contracts.
+The official enum names for the raw values are not known. `npunlock` validates
+the complete combination instead of assigning broader meanings to individual
+numbers.
 
-For dense FP16 validation, non-singleton dimensions sorted by increasing
-stride must have bit strides `16`, then `16 * prior_dimension`, and so on.
-Singleton-dimension strides differed between valid compiler records and are
-not used to reject density. The tensor element count is the product of the
-positive dimensions and its byte span is `count * 2`.
+For a dense tensor, non-singleton dimensions ordered by increasing stride
+must start at the element bit width and grow by the previous dimension size.
+Singleton strides are ignored because valid compiler outputs do not encode
+them consistently. All dimensions must be positive, and every element-count
+and byte-span calculation is overflow checked.
 
-**Confirmed on compiler 8.3:** a plain FP32 `[1,2048]` Abs carrier is lowered
-to three ACT groups: FP32-to-FP16 conversion, four FP16 Abs invocations, and
-FP16-to-FP32 conversion. Patching the middle group therefore cannot preserve
-FP32 precision. Serializing `DisablePrecisionConversion` with value
-`dynamic:f16` on the Abs layer and compiling with
-`EXECUTION_MODE_HINT="ACCURACY"` instead produces one four-invocation FP32 ACT
-group. Each invocation advertises 1024 elements, 32-bit initial dense stride,
-and a 4096-byte input/output span. A replacement FP32 GELU kernel executed
-through that carrier with maximum absolute error `2.38419e-07` against the
-host FP32 reference. This is a validated unary carrier observation, not a
-general FP32 graph contract.
+The validated descriptor order is:
 
-Confirmed descriptor roles:
+```text
+unary operation:  input at +0x00, output at +0x28
+binary operation: input A at +0x00, input B at +0x28, output at +0x50
+```
 
-- unary carrier: input at parameter base `+0x00`, output at `+0x28`;
-- tested binary carrier: input A at `+0x00`, input B at `+0x28`, output at
-  `+0x50`.
+An FP16 span is `element_count * 2`; an FP32 span is
+`element_count * 4`. Inputs and output must describe matching element counts,
+and the output span must not alias an input span.
 
-The original binary observation used internal ACT operands produced from one
-host-bound graph input. A subsequent compiler-8.3 graph with independent FP16
-`[1,32]` host inputs, separate Abs branches, a Maximum binary carrier, and a
-final Sqrt produced four positional ACT groups for its four computational
-nodes. The binary group had four invocations, each with two eight-element,
-16-byte inputs and the same descriptor roles above. A substituted weighted-mix
-kernel followed by the retained Sqrt matched all output elements exactly.
-This confirms independent host inputs only for that static dense graph; it does
-not establish broadcasting, unequal shapes, or arbitrary descriptor counts.
+## Validated examples
 
-Observed `[1,16]`, one-tile records used rank 4, dimensions `[8,1,1,1]`, bit
-strides `[16,256,256,256]`, and raw order `0x2431`. Larger carriers advertised
-64, 128, and 2048 FP16 elements per invocation. Custom code successfully read
-indices 4094 bytes apart within the largest advertised 4096-byte input span.
-This is a lower bound, not a maximum and not permission to cross an advertised
-invocation boundary.
+These examples define the current support boundary; they are not promises
+about every graph produced by the compiler.
 
-Kernel-specific scalar data may follow the descriptors. For one compiler
-Clamp implementation, lower and upper FP32 values were at parameter-base
-`+0x50` and `+0x54`. That layout must not be applied to unrelated kernels.
+### Static FP16
 
-## Confirmed code-substitution mutation
+Validated unary carriers expose dense invocation-local chunks ranging from 8
+to 2048 FP16 elements. Custom kernels successfully read the full advertised
+4096-byte input span of a 2048-element chunk. This proves only
+invocation-local access. It does not provide a graph-global tensor view or
+permission to cross a chunk boundary.
 
-The supported mutation is intentionally small:
+A static `[1,32]` graph with two independent host inputs, separate `Abs`
+branches, a binary `Maximum` carrier, and a final `Sqrt` produced four ACT
+groups for four computational nodes. The binary group contained four
+invocations, each with two eight-element inputs and one output. A custom
+weighted-mix implementation matched the host reference exactly.
 
-1. Validate the graph ELF, required sections, relocations, explicit or
-   positionally discovered invocation/range indices, and the expected tensor
-   contract.
-2. Extract the linked kernel ELF's executable `.text` image; never append the
-   complete ELF container.
-3. Grow `.text.KernelText`, preserving its original bytes as a prefix.
-4. Rebase `e_shoff` and every later nonzero section file offset by the inserted
-   byte count; update only the `KernelText` section size.
-5. For each selected range, write the image byte size at range `+0x0c` and the
-   shared image base into the matching `KernelText` relocation addend.
-6. Preserve invocation records, parameters, `KernelData`, runtime config,
-   tensor metadata, DMA/barrier/DPU scheduling content, and unrelated
-   relocation contents.
+### Precision-preserved FP32
 
-Alignment `0x400` and tail padding `0x80` are execution-tested construction
-choices. They are not proven minimum requirements. Multiple selected ranges
-successfully referenced one appended image.
+A plain FP32 `[1,2048]` `Abs` carrier is normally lowered into three ACT
+groups: FP32-to-FP16 conversion, FP16 `Abs`, and FP16-to-FP32 conversion.
+Replacing only the middle group would lose precision.
 
-An appended known-compatible Abs image and several source-built kernels
-executed successfully. An appended standalone `dummy` image parsed and loaded
-but caused device loss after submission. Therefore graph structural validity
-and shape-compatible metadata do not prove entry-ABI compatibility.
+Marking the carrier with OpenVINO IR runtime attribute
+`DisablePrecisionConversion=dynamic:f16` and compiling with
+`EXECUTION_MODE_HINT="ACCURACY"` instead produced one FP32 ACT group. Its four
+invocations each described 1024 elements and a 4096-byte input/output span.
+A custom FP32 GELU implementation matched a host reference with maximum
+absolute error `2.38419e-07`.
 
-## Native graph creation and export context
+This establishes one unary FP32 carrier configuration, not general FP32 graph
+support.
 
-Two Level Zero graph-extension uses were confirmed:
+## How `patchblob` substitutes code
 
-- load an exported graph ELF as the native/precompiled format;
-- compile an in-memory `ZE_GRAPH_FORMAT_NGRAPH_LITE` payload through
-  `pfnCreate2`, then copy the complete native ELF with
-  `pfnGetNativeBinary2` before graph destruction.
+The supported mutation is deliberately narrow:
 
-The tested `NGRAPH_LITE` `ALL_WEIGHTS_COPY` payload is little-endian:
+1. Validate the graph ELF, required sections, relocation tables, selected
+   groups, and tensor contracts.
+2. Validate the standalone kernel ELF and extract only its executable `.text`
+   image.
+3. Append that image to `.text.KernelText` at an aligned offset.
+4. Rebase section file offsets affected by the insertion.
+5. Update the selected range extents and their `KernelText` relocation
+   addends.
+6. Verify that invocation records, parameters, tensor metadata, runtime
+   configuration, DMA/barrier/DPU scheduling data, and unrelated relocations
+   did not change.
+
+The tested construction uses 0x400-byte image alignment and 0x80 bytes of tail
+padding. These are conservative working values, not proven hardware minima.
+Several selected ranges may point to the same appended image.
+
+Passing ELF validation is not enough to prove that arbitrary code follows the
+ACT entry convention. `npunlock` therefore also requires a compatible carrier
+contract and treats host-side semantic comparison as the correctness oracle.
+
+## Creating the graph through Level Zero
+
+`ir2blob` asks the Intel NPU driver to compile OpenVINO-format IR without
+linking or loading the OpenVINO runtime. The confirmed graph-extension path is
+`pfnCreate2` with an in-memory `ZE_GRAPH_FORMAT_NGRAPH_LITE` payload:
 
 ```text
 u16 compiler_major
@@ -280,34 +255,33 @@ u64 weights_size
 u8  weights[weights_size]
 ```
 
-The compiler version is queried from the driver. On the tested driver,
-`pBuildFlags` must point to a non-null empty C string when no flags are used.
-An initial `pfnCreate3` attempt terminated; `pfnCreate2` is the confirmed path.
-This wire payload consumes OpenVINO-format IR, but using it does not require
-linking or loading OpenVINO.
+The compiler version is queried from the driver. `pBuildFlags` must be a
+non-null C string even when it is empty. After compilation, `ir2blob` copies
+the complete native ELF using `pfnGetNativeBinary2` before releasing the graph.
 
-## Explicitly unsupported conclusions
+`pfnCreate3` is not part of the supported path.
 
-The research does not establish a stable ABI for dynamic shapes, other data
-types, arbitrary strides/layouts, high pointer halves, arbitrary ACT record
-counts, arbitrary graph versions, nonempty kernel data, data/code fixups,
-helper runtimes, cross-invocation halos, or mapping a source node name to an
-ACT range. DPU-only graphs have no compatible ACT carrier.
+## Unsupported assumptions
 
-## Primary evidence
+Do not infer support for:
 
-The retained research tree is the evidence source; it is not vendored into
-`npunlock`:
+- dynamic shapes or arbitrary strides/layouts;
+- element types other than the narrow FP16 and unary FP32 cases above;
+- broadcasting or unequal binary input shapes;
+- arbitrary compiler or graph-format versions;
+- nonempty `KernelData` for custom kernels;
+- unresolved data/code fixups or helper runtimes;
+- high pointer halves;
+- cross-invocation neighborhoods or graph-global coordinates;
+- arbitrary ACT record counts; or
+- mapping a source node name directly to an ACT range.
 
-```text
-D:\srcs\level-zero\samples\npurun\NPU_ABI_STATUS.md
-D:\srcs\level-zero\samples\npurun\artifacts\component-contract\
-D:\srcs\level-zero\samples\npurun\experiments\movitools-custom-kernel\
-  artifacts\reference-kernels\README.md
-  artifacts\mutated\README.md
-  act-entry-trial\README.md
-  shape-portability\README.md
-  shared-complex\README.md
-  local-window-multi\README.md
-  direct-ir\README.md
-```
+A graph with no compatible ACT carrier, including a DPU-only graph, must be
+rejected rather than patched speculatively.
+
+## Related public documentation
+
+- [KERNEL_ELF.md](KERNEL_ELF.md) describes the standalone SHAVE kernel ELF.
+- [MOVITOOLS.md](MOVITOOLS.md) describes the compiler DLL invocation boundary.
+- [C API](../docs/C_API.md) documents the supported public library calls.
+- [README](../README.md) gives an end-to-end overview.
