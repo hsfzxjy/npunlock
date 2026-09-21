@@ -400,16 +400,17 @@ The project deliberately exposes only the contracts that have been observed and 
 
 ## Build and offline verification
 
-The supported host build uses Visual Studio 2022 Build Tools. Run every
-MSVC-dependent command through the repository wrapper so the developer
-environment is normalized consistently:
+The supported host build is Windows x64 with MSVC. The public CMake preset does
+not select a particular Visual Studio release or generator. Run every
+MSVC-dependent command through the repository wrapper so the latest installed
+C++ build environment is normalized consistently:
 
 ```powershell
 python -m pip install .
-tools\msvc-run.ps1 cmake --preset windows-vs2022
+tools\msvc-run.ps1 cmake --preset windows
 tools\msvc-run.ps1 cmake --build --preset windows-debug
 tools\msvc-run.ps1 ctest --preset windows-debug
-tools\msvc-run.ps1 cmake --build build\vs2022 --config Debug --target format-check
+tools\msvc-run.ps1 cmake --build build\windows --config Debug --target format-check
 ```
 
 The default configuration is offline and does not invoke MoviTools, OpenVINO,
@@ -425,8 +426,7 @@ environment:
 
 ```powershell
 $env:NPUNLOCK_MOVITOOLS_DIR = 'D:\path\containing\MoviTools\DLLs'
-tools\msvc-run.ps1 cmake -S . -B build\integration `
-  -G "Visual Studio 17 2022" -A x64 `
+tools\msvc-run.ps1 cmake --preset windows -B build\integration `
   -DNPUNLOCK_ENABLE_MOVITOOLS_TESTS=ON `
   -DNPUNLOCK_ENABLE_NPU_TESTS=ON `
   -DNPUNLOCK_ENABLE_GRAPHINFER_TESTS=ON
@@ -437,7 +437,7 @@ tools\msvc-run.ps1 ctest --test-dir build\integration -C Debug --output-on-failu
 Install the C libraries, public headers, CLI, workers, and CMake package with:
 
 ```powershell
-tools\msvc-run.ps1 cmake --install build\vs2022 --config Debug --prefix build\stage
+tools\msvc-run.ps1 cmake --install build\windows --config Debug --prefix build\stage
 ```
 
 See [`docs/C_API.md`](docs/C_API.md) for C ownership, linking, deployment, and

@@ -7,11 +7,9 @@
   },
   "configurePresets": [
     {
-      "name": "windows-vs2022",
-      "displayName": "Windows VS 2022",
-      "generator": "Visual Studio 17 2022",
-      "binaryDir": "${sourceDir}/build/vs2022",
-      "architecture": "x64",
+      "name": "windows",
+      "displayName": "Windows",
+      "binaryDir": "${sourceDir}/build/windows",
       "cacheVariables": {
         "NPUNLOCK_BUILD_TESTS": "ON",
         "NPUNLOCK_ENABLE_NPU_TESTS": "OFF"
@@ -21,19 +19,19 @@
   "buildPresets": [
     {
       "name": "windows-debug",
-      "configurePreset": "windows-vs2022",
+      "configurePreset": "windows",
       "configuration": "Debug"
     },
     {
       "name": "windows-release",
-      "configurePreset": "windows-vs2022",
+      "configurePreset": "windows",
       "configuration": "Release"
     }
   ],
   "testPresets": [
     {
       "name": "windows-debug",
-      "configurePreset": "windows-vs2022",
+      "configurePreset": "windows",
       "configuration": "Debug",
       "output": {
         "outputOnFailure": true
