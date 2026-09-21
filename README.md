@@ -26,6 +26,19 @@ Python graph + C kernel
          NPU
 ```
 
+## Why npunlock?
+
+Model compilers can run only the operations and combinations they know how to
+lower. When an operation is missing, unusually specialized, or better expressed
+as a small C routine, the usual choices are to reformulate the model or move
+that work off the NPU.
+
+`npunlock` provides another option: keep ordinary layers in the normal Intel
+graph pipeline while supplying C for selected programmable operations. It uses
+Intel's compiler and current driver to construct and execute the graph, so it
+does not try to replace the NPU compiler or use programmable code in place of
+the dedicated tensor engines.
+
 ## Quick example
 
 From the repository root, this example creates an FP16 graph whose custom
@@ -139,15 +152,63 @@ See [Current limitations](wiki/LIMITATIONS.md) for the detailed boundary.
 
 ## Documentation
 
-- [Documentation index](wiki/README.md)
-- [Getting MoviTools](wiki/GET_MOVITOOLS.md)
-- [Python API](wiki/PYTHON_API.md)
-- [Custom kernels](wiki/CUSTOM_KERNELS.md)
-- [How npunlock works](wiki/HOW_NPUNLOCK_WORKS.md)
-- [Intel NPU architecture](wiki/INTEL_NPU_ARCHITECTURE.md)
-- [Current limitations](wiki/LIMITATIONS.md)
-- [Development](wiki/DEVELOPMENT.md)
-- [C API guide](docs/C_API.md)
+The [documentation index](wiki/README.md) links all technical guides. Start
+with whichever question matches what you need:
+
+### How do I obtain MoviTools safely?
+
+Extract the compiler payload from the known Lenovo package without installing
+its legacy driver. [Getting MoviTools](wiki/GET_MOVITOOLS.md) provides the
+official links, expected hash, extraction command, layout, and provenance
+notes.
+
+### How do I construct and run a graph from Python?
+
+The Python frontend builds symbolic graphs, accepts custom C operations,
+compiles them, and runs NumPy tensors through the bundled native runtime. See
+the [Python API guide](wiki/PYTHON_API.md) for the actual graph, configuration,
+compilation, and execution interfaces.
+
+### What does a custom C kernel look like?
+
+Custom kernels use a narrow C entry-point and tensor-descriptor contract rather
+than an unrestricted hosted C environment. [Writing custom kernels](wiki/CUSTOM_KERNELS.md)
+documents the entry point, observed tensor layouts, supported precisions,
+multi-input behavior, math linkage, and examples.
+
+### How does npunlock put custom code into an NPU graph?
+
+Intel's compiler first creates a valid graph around a compatible carrier
+operation; `npunlock` then substitutes the selected ACT-SHAVE executable while
+preserving that execution environment. [How npunlock works](wiki/HOW_NPUNLOCK_WORKS.md)
+explains the complete pipeline and separates confirmed behavior from current
+inferences.
+
+### What are DPU and ACT-SHAVE processors?
+
+The DPU handles regular tensor computation, while ACT-SHAVE provides the
+programmable path used by custom kernels. The
+[Intel NPU architecture overview](wiki/INTEL_NPU_ARCHITECTURE.md) introduces
+those roles without assuming prior NPU knowledge.
+
+### Which hardware, shapes, and data types are supported?
+
+The confirmed contract is intentionally smaller than the capabilities of the
+underlying hardware. [Current limitations](wiki/LIMITATIONS.md) lists the
+validated platform, tensor, carrier, mapping, ELF, and graph-patching boundaries.
+
+### Can I use the native libraries without Python?
+
+Yes. The project exposes separate C17 interfaces for kernel compilation, graph
+compilation, patching, and execution. The [C API guide](docs/C_API.md) covers
+ownership, deployment, diagnostics, and component-level use; the detailed
+binary observations remain under [`ABI/`](ABI/).
+
+### How do I build, test, or contribute to the native project?
+
+The [development guide](wiki/DEVELOPMENT.md) describes the CMake presets,
+native targets, unified worker, CLI, package layout, offline tests, and opt-in
+hardware tests.
 
 ## License
 
