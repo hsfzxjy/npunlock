@@ -6,6 +6,18 @@
 
 #include "npunlock/graphinfer.h"
 
+#define FIXTURE_ROOT "tests/fixtures/npu3720/"
+
+static const uint8_t input_fp16[] = {
+    0x00, 0xc0, 0x00, 0xbf, 0x00, 0xbe, 0x00, 0xbd, 0x00, 0xbc, 0x00, 0xba, 0x00, 0xb8, 0x00, 0xb4,
+    0x00, 0x00, 0x00, 0x34, 0x00, 0x38, 0x00, 0x3a, 0x00, 0x3c, 0x00, 0x3d, 0x00, 0x3e, 0x00, 0x3f,
+};
+
+static const uint8_t expected_fp16[] = {
+    0x00, 0xbe, 0xbc, 0xbc, 0xf0, 0xba, 0x66, 0xb8, 0x78, 0xb3, 0x58, 0x2d, 0x66, 0x36, 0xbc, 0x39,
+    0x22, 0x3c, 0x66, 0x3d, 0xaa, 0x3e, 0xef, 0x3f, 0x9a, 0x40, 0x3c, 0x41, 0xde, 0x41, 0x80, 0x42,
+};
+
 typedef struct file_buffer {
   uint8_t *data;
   size_t size;
@@ -49,18 +61,15 @@ static void release_file(file_buffer *buffer) {
   memset(buffer, 0, sizeof(*buffer));
 }
 
-int main(int argc, char **argv) {
+int main(void) {
   file_buffer graph = {0};
-  file_buffer input = {0};
-  file_buffer expected = {0};
   graphinfer_options options = {0};
   graphinfer_input graph_input = {0};
   graphinfer_result result = {0};
   npunlock_status status;
   int return_code = 1;
-  if (argc != 4 || !read_file(argv[1], &graph) || !read_file(argv[2], &input) ||
-      !read_file(argv[3], &expected)) {
-    fprintf(stderr, "usage: %s NATIVE_GRAPH INPUT EXPECTED_OUTPUT\n", argv[0]);
+  if (!read_file(FIXTURE_ROOT "add1-shared-1x16.blob", &graph)) {
+    fprintf(stderr, "failed to read bundled graph fixture\n");
     goto done;
   }
   options.struct_size = sizeof(options);
@@ -69,7 +78,7 @@ int main(int argc, char **argv) {
   options.timeout_ms = 15000;
   graph_input.struct_size = sizeof(graph_input);
   graph_input.argument_index = 0;
-  graph_input.data = (npunlock_view){input.data, input.size};
+  graph_input.data = (npunlock_view){input_fp16, sizeof(input_fp16)};
   status =
       graphinfer_infer(&options, (npunlock_view){graph.data, graph.size}, &graph_input, 1, &result);
   if (status != NPUNLOCK_STATUS_OK) {
@@ -81,20 +90,18 @@ int main(int argc, char **argv) {
   }
   if (result.device_vendor_id != 0x8086 || result.output_count != 1 ||
       result.outputs[0].precision != GRAPHINFER_PRECISION_FP16 ||
-      result.outputs[0].data.size != expected.size ||
-      memcmp(result.outputs[0].data.data, expected.data, expected.size) != 0) {
+      result.outputs[0].data.size != sizeof(expected_fp16) ||
+      memcmp(result.outputs[0].data.data, expected_fp16, sizeof(expected_fp16)) != 0) {
     fprintf(stderr, "unexpected inference result: vendor=0x%04x outputs=%zu\n",
             result.device_vendor_id, result.output_count);
     goto done;
   }
   printf("executed caller graph and tensor: %zu input bytes, %zu output bytes; driver=0x%08x\n",
-         input.size, result.outputs[0].data.size, result.driver_version);
+         sizeof(input_fp16), result.outputs[0].data.size, result.driver_version);
   return_code = 0;
 
 done:
   graphinfer_result_release(&result);
-  release_file(&expected);
-  release_file(&input);
   release_file(&graph);
   return return_code;
 }

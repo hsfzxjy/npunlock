@@ -413,10 +413,25 @@ tools\msvc-run.ps1 cmake --build build\vs2022 --config Debug --target format-che
 ```
 
 The default configuration is offline and does not invoke MoviTools, OpenVINO,
-the Intel NPU driver, or NPU hardware. Python installation is needed only for
-the Python frontend test; CMake skips that test when Python or NumPy is absent.
-Hardware and OEM integration suites remain separately gated and require
-explicit caller-supplied paths.
+the Intel NPU driver, or NPU hardware. It does run the byte-exact patch proof
+against the small licensed fixtures under `tests/fixtures/npu3720`. Python
+installation is needed only for the Python frontend test; CMake skips that
+test when Python or NumPy is absent.
+
+The MoviTools and hardware suites remain separately gated. Their source, IR,
+graph, and golden-output fixtures are bundled; only the local proprietary DLL
+directory is supplied at configure time:
+
+```powershell
+tools\msvc-run.ps1 cmake -S . -B build\integration `
+  -G "Visual Studio 17 2022" -A x64 `
+  -DNPUNLOCK_ENABLE_MOVITOOLS_TESTS=ON `
+  -DNPUNLOCK_ENABLE_NPU_TESTS=ON `
+  -DNPUNLOCK_ENABLE_GRAPHINFER_TESTS=ON `
+  '-DNPUNLOCK_MOVITOOLS_DIR=D:\path\containing\MoviTools\DLLs'
+tools\msvc-run.ps1 cmake --build build\integration --config Debug
+tools\msvc-run.ps1 ctest --test-dir build\integration -C Debug --output-on-failure
+```
 
 Install the C libraries, public headers, CLI, workers, and CMake package with:
 

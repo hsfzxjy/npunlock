@@ -5,6 +5,8 @@
 
 #include "npunlock/patchblob.h"
 
+#define FIXTURE_ROOT "tests/fixtures/npu3720/"
+
 #define CHECK(expression)                                                                          \
   do {                                                                                             \
     if (!(expression)) {                                                                           \
@@ -47,7 +49,7 @@ static npunlock_buffer read_file(const char *path) {
   return buffer;
 }
 
-int main(int argument_count, char **arguments) {
+int main(void) {
   npunlock_buffer carrier;
   npunlock_buffer elf;
   npunlock_buffer expected;
@@ -59,10 +61,9 @@ int main(int argument_count, char **arguments) {
   size_t index;
   npunlock_status status;
 
-  CHECK(argument_count == 4);
-  carrier = read_file(arguments[1]);
-  elf = read_file(arguments[2]);
-  expected = read_file(arguments[3]);
+  carrier = read_file(FIXTURE_ROOT "abs-add-1x16-tile1.blob");
+  elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
+  expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
   CHECK(carrier.data != NULL && elf.data != NULL && expected.data != NULL);
   options.struct_size = sizeof(options);
   options.image_alignment = 0x400;

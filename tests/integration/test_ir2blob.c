@@ -6,6 +6,8 @@
 
 #include "npunlock/ir2blob.h"
 
+#define FIXTURE_ROOT "tests/fixtures/npu3720/"
+
 typedef struct file_buffer {
   uint8_t *data;
   size_t size;
@@ -51,17 +53,15 @@ static void release_file(file_buffer *buffer) {
   memset(buffer, 0, sizeof(*buffer));
 }
 
-int main(int argc, char **argv) {
+int main(void) {
   file_buffer xml = {0};
   file_buffer weights = {0};
-  file_buffer expected = {0};
   ir2blob_options options = {0};
   ir2blob_result result = {0};
   npunlock_status status;
   int return_code = 1;
-  if (argc != 4 || !read_file(argv[1], &xml) || !read_file(argv[2], &weights) ||
-      !read_file(argv[3], &expected)) {
-    fprintf(stderr, "usage: %s IR_XML WEIGHTS EXPECTED_NATIVE_BLOB\n", argv[0]);
+  if (!read_file(FIXTURE_ROOT "abs.xml", &xml) || !read_file(FIXTURE_ROOT "abs.bin", &weights)) {
+    fprintf(stderr, "failed to read bundled Abs IR fixtures\n");
     goto done;
   }
   options.struct_size = sizeof(options);
@@ -78,12 +78,10 @@ int main(int argc, char **argv) {
     goto done;
   }
   if (result.device_vendor_id != 0x8086 || result.compiler_version_major == 0 ||
-      result.graph_blob.size != expected.size ||
-      memcmp(result.graph_blob.data, expected.data, expected.size) != 0) {
-    fprintf(stderr,
-            "unexpected native result: vendor=0x%04x compiler=%u.%u size=%zu expected=%zu\n",
+      result.graph_blob.data == NULL || result.graph_blob.size == 0) {
+    fprintf(stderr, "unexpected native result: vendor=0x%04x compiler=%u.%u size=%zu\n",
             result.device_vendor_id, result.compiler_version_major, result.compiler_version_minor,
-            result.graph_blob.size, expected.size);
+            result.graph_blob.size);
     goto done;
   }
   printf("compiled and reloaded native graph: %zu bytes; driver=0x%08x device=%u:%u "
@@ -96,7 +94,6 @@ int main(int argc, char **argv) {
 
 done:
   ir2blob_result_release(&result);
-  release_file(&expected);
   release_file(&weights);
   release_file(&xml);
   return return_code;

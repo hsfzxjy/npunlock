@@ -8,27 +8,9 @@ include(CMakePackageConfigHelpers)
 
 option(NPUNLOCK_BUILD_TESTS "Build offline unit tests" ON)
 option(NPUNLOCK_ENABLE_NPU_TESTS "Enable tests that require an Intel NPU" OFF)
-option(NPUNLOCK_ENABLE_GRAPHINFER_TESTS "Enable caller-supplied graph inference tests" OFF)
+option(NPUNLOCK_ENABLE_GRAPHINFER_TESTS "Enable bundled graph inference tests on an Intel NPU" OFF)
 option(NPUNLOCK_ENABLE_MOVITOOLS_TESTS "Enable tests that invoke caller-supplied MoviTools" OFF)
-option(NPUNLOCK_ENABLE_PATCHBLOB_TESTS "Enable tests using caller-supplied retained graph fixtures" OFF)
 set(NPUNLOCK_MOVITOOLS_DIR "" CACHE PATH "Directory containing the three MoviTools DLLs")
-set(NPUNLOCK_MOVITOOLS_TEST_SOURCE "" CACHE FILEPATH "C source for the MoviTools integration test")
-set(NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT "" CACHE FILEPATH
-    "Linker script for the MoviTools integration test")
-set(NPUNLOCK_MOVITOOLS_TEST_EXPECTED_ELF "" CACHE FILEPATH
-    "Expected repeatable ELF for the MoviTools integration test")
-set(NPUNLOCK_NPU_TEST_IR_XML "" CACHE FILEPATH "IR XML for the NPU integration test")
-set(NPUNLOCK_NPU_TEST_WEIGHTS "" CACHE FILEPATH "Weights for the NPU integration test")
-set(NPUNLOCK_NPU_TEST_EXPECTED_BLOB "" CACHE FILEPATH
-    "Expected repeatable native blob for the NPU integration test")
-set(NPUNLOCK_GRAPHINFER_TEST_GRAPH "" CACHE FILEPATH "Native graph for graphinfer testing")
-set(NPUNLOCK_GRAPHINFER_TEST_INPUT "" CACHE FILEPATH "Raw input tensor for graphinfer testing")
-set(NPUNLOCK_GRAPHINFER_TEST_EXPECTED_OUTPUT "" CACHE FILEPATH
-    "Expected raw output tensor for graphinfer testing")
-set(NPUNLOCK_PATCHBLOB_TEST_CARRIER "" CACHE FILEPATH "ACT carrier graph for patchblob testing")
-set(NPUNLOCK_PATCHBLOB_TEST_ELF "" CACHE FILEPATH "Linked SHAVE ELF for patchblob testing")
-set(NPUNLOCK_PATCHBLOB_TEST_EXPECTED_BLOB "" CACHE FILEPATH
-    "Expected patched graph for patchblob testing")
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -262,41 +244,23 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     endif()
   endif()
 
-  if(NPUNLOCK_ENABLE_PATCHBLOB_TESTS)
-    foreach(required_file
-        NPUNLOCK_PATCHBLOB_TEST_CARRIER
-        NPUNLOCK_PATCHBLOB_TEST_ELF
-        NPUNLOCK_PATCHBLOB_TEST_EXPECTED_BLOB)
-      if(NOT IS_ABSOLUTE "${${required_file}}" OR NOT EXISTS "${${required_file}}")
-        message(FATAL_ERROR "${required_file} must name an existing absolute file")
-      endif()
-    endforeach()
-    add_executable(npunlock_test_patchblob_integration tests/integration/test_patchblob.c)
-    target_link_libraries(
-      npunlock_test_patchblob_integration PRIVATE patchblob npunlock_common npunlock_warnings
-    )
-    add_test(
-      NAME patchblob_shared_add1
-      COMMAND npunlock_test_patchblob_integration
-        "${NPUNLOCK_PATCHBLOB_TEST_CARRIER}"
-        "${NPUNLOCK_PATCHBLOB_TEST_ELF}"
-        "${NPUNLOCK_PATCHBLOB_TEST_EXPECTED_BLOB}"
-    )
-  endif()
+  add_executable(npunlock_test_patchblob_integration tests/integration/test_patchblob.c)
+  target_link_libraries(
+    npunlock_test_patchblob_integration PRIVATE patchblob npunlock_common npunlock_warnings
+  )
+  add_test(NAME patchblob_shared_add1 COMMAND npunlock_test_patchblob_integration)
+  set_tests_properties(
+    patchblob_shared_add1 PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  )
 
   if(NPUNLOCK_ENABLE_MOVITOOLS_TESTS)
     if(NOT WIN32)
       message(FATAL_ERROR "MoviTools integration tests require Windows")
     endif()
-    foreach(required_path
-        NPUNLOCK_MOVITOOLS_DIR
-        NPUNLOCK_MOVITOOLS_TEST_SOURCE
-        NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT
-        NPUNLOCK_MOVITOOLS_TEST_EXPECTED_ELF)
-      if(NOT IS_ABSOLUTE "${${required_path}}" OR NOT EXISTS "${${required_path}}")
-        message(FATAL_ERROR "${required_path} must name an existing absolute path")
-      endif()
-    endforeach()
+    if(NOT IS_ABSOLUTE "${NPUNLOCK_MOVITOOLS_DIR}" OR
+       NOT IS_DIRECTORY "${NPUNLOCK_MOVITOOLS_DIR}")
+      message(FATAL_ERROR "NPUNLOCK_MOVITOOLS_DIR must name an existing absolute directory")
+    endif()
     foreach(required_dll moviCompile64.dll moviAsm64.dll moviLLD64.dll)
       if(NOT EXISTS "${NPUNLOCK_MOVITOOLS_DIR}/${required_dll}")
         message(FATAL_ERROR "missing ${required_dll} under NPUNLOCK_MOVITOOLS_DIR")
@@ -311,65 +275,40 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
       NAME movitools_add1
       COMMAND npunlock_test_shavecc_integration
         "${NPUNLOCK_MOVITOOLS_DIR}"
-        "${NPUNLOCK_MOVITOOLS_TEST_SOURCE}"
-        "${NPUNLOCK_MOVITOOLS_TEST_LINKER_SCRIPT}"
-        "${NPUNLOCK_MOVITOOLS_TEST_EXPECTED_ELF}"
     )
-    set_tests_properties(movitools_add1 PROPERTIES TIMEOUT 30)
+    set_tests_properties(
+      movitools_add1 PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
   endif()
 
   if(NPUNLOCK_ENABLE_NPU_TESTS)
     if(NOT WIN32)
       message(FATAL_ERROR "NPU integration tests require Windows")
     endif()
-    foreach(required_file
-        NPUNLOCK_NPU_TEST_IR_XML
-        NPUNLOCK_NPU_TEST_WEIGHTS
-        NPUNLOCK_NPU_TEST_EXPECTED_BLOB)
-      if(NOT IS_ABSOLUTE "${${required_file}}" OR NOT EXISTS "${${required_file}}")
-        message(FATAL_ERROR "${required_file} must name an existing absolute file")
-      endif()
-    endforeach()
     add_executable(npunlock_test_ir2blob_integration tests/integration/test_ir2blob.c)
     target_link_libraries(
       npunlock_test_ir2blob_integration PRIVATE ir2blob npunlock_common npunlock_warnings
     )
     add_dependencies(npunlock_test_ir2blob_integration npunlock_ir_worker)
-    add_test(
-      NAME npu_ir2blob_abs
-      COMMAND npunlock_test_ir2blob_integration
-        "${NPUNLOCK_NPU_TEST_IR_XML}"
-        "${NPUNLOCK_NPU_TEST_WEIGHTS}"
-        "${NPUNLOCK_NPU_TEST_EXPECTED_BLOB}"
+    add_test(NAME npu_ir2blob_abs COMMAND npunlock_test_ir2blob_integration)
+    set_tests_properties(
+      npu_ir2blob_abs PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
-    set_tests_properties(npu_ir2blob_abs PROPERTIES TIMEOUT 30)
   endif()
 
   if(NPUNLOCK_ENABLE_GRAPHINFER_TESTS)
     if(NOT WIN32)
       message(FATAL_ERROR "graphinfer integration tests require Windows")
     endif()
-    foreach(required_file
-        NPUNLOCK_GRAPHINFER_TEST_GRAPH
-        NPUNLOCK_GRAPHINFER_TEST_INPUT
-        NPUNLOCK_GRAPHINFER_TEST_EXPECTED_OUTPUT)
-      if(NOT IS_ABSOLUTE "${${required_file}}" OR NOT EXISTS "${${required_file}}")
-        message(FATAL_ERROR "${required_file} must name an existing absolute file")
-      endif()
-    endforeach()
     add_executable(npunlock_test_graphinfer_integration tests/integration/test_graphinfer.c)
     target_link_libraries(
       npunlock_test_graphinfer_integration PRIVATE graphinfer npunlock_common npunlock_warnings
     )
     add_dependencies(npunlock_test_graphinfer_integration npunlock_infer_worker)
-    add_test(
-      NAME npu_graphinfer
-      COMMAND npunlock_test_graphinfer_integration
-        "${NPUNLOCK_GRAPHINFER_TEST_GRAPH}"
-        "${NPUNLOCK_GRAPHINFER_TEST_INPUT}"
-        "${NPUNLOCK_GRAPHINFER_TEST_EXPECTED_OUTPUT}"
+    add_test(NAME npu_graphinfer COMMAND npunlock_test_graphinfer_integration)
+    set_tests_properties(
+      npu_graphinfer PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
-    set_tests_properties(npu_graphinfer PROPERTIES TIMEOUT 30)
   endif()
 endif()
 

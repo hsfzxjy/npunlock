@@ -6,6 +6,8 @@
 
 #include "npunlock/shavecc.h"
 
+#define FIXTURE_ROOT "tests/fixtures/npu3720/"
+
 typedef struct file_buffer {
   uint8_t *data;
   size_t size;
@@ -62,9 +64,10 @@ int main(int argc, char **argv) {
   npunlock_status status;
   int return_code = 1;
 
-  if (argc != 5 || !read_file(argv[2], &source) || !read_file(argv[3], &script) ||
-      !read_file(argv[4], &expected)) {
-    fprintf(stderr, "usage: %s MOVI_DLL_DIR SOURCE LINKER_SCRIPT EXPECTED_ELF\n", argv[0]);
+  if (argc != 2 || !read_file(FIXTURE_ROOT "add1-fp16.c", &source) ||
+      !read_file(FIXTURE_ROOT "shave_kernel.ld", &script) ||
+      !read_file(FIXTURE_ROOT "add1-fp16.elf", &expected)) {
+    fprintf(stderr, "usage: %s MOVI_DLL_DIR\n", argv[0]);
     goto done;
   }
   options.struct_size = sizeof(options);
