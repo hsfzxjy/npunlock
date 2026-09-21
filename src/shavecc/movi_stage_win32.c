@@ -337,7 +337,8 @@ npunlock_status npunlock_run_movi_stage(npunlock_view worker_executable_utf8,
   HANDLE input_write = NULL;
   HANDLE response_read = NULL;
   HANDLE response_write = NULL;
-  HANDLE null_output = INVALID_HANDLE_VALUE;
+  HANDLE child_out = INVALID_HANDLE_VALUE;
+  HANDLE child_err = INVALID_HANDLE_VALUE;
   HANDLE job = NULL;
   HANDLE writer_thread = NULL;
   request_writer writer;
@@ -382,10 +383,14 @@ npunlock_status npunlock_run_movi_stage(npunlock_view worker_executable_utf8,
     status = NPUNLOCK_STATUS_INTERNAL_ERROR;
     goto done;
   }
-  null_output = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
-                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   job = CreateJobObjectW(NULL, NULL);
-  if (null_output == INVALID_HANDLE_VALUE || job == NULL || !configure_job(job)) {
+  if (!DuplicateHandle(GetCurrentProcess(), GetStdHandle(STD_OUTPUT_HANDLE), GetCurrentProcess(),
+                       &child_out, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+    status = NPUNLOCK_STATUS_INTERNAL_ERROR;
+    goto done;
+  }
+  if (!DuplicateHandle(GetCurrentProcess(), GetStdHandle(STD_ERROR_HANDLE), GetCurrentProcess(),
+                       &child_err, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
     status = NPUNLOCK_STATUS_INTERNAL_ERROR;
     goto done;
   }
@@ -399,14 +404,16 @@ npunlock_status npunlock_run_movi_stage(npunlock_view worker_executable_utf8,
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESTDHANDLES;
   startup.hStdInput = input_read;
-  startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-  startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-  if (!CreateProcessW(worker_path, command_line, NULL, NULL, TRUE,
-                      CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &startup, &process)) {
+  startup.hStdOutput = child_out;
+  startup.hStdError = child_err;
+  if (!CreateProcessW(worker_path, command_line, NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL,
+                      &startup, &process)) {
     status = GetLastError() == ERROR_FILE_NOT_FOUND ? NPUNLOCK_STATUS_NOT_FOUND
                                                     : NPUNLOCK_STATUS_INTERNAL_ERROR;
     goto done;
   }
+  CloseHandle(child_out);
+  CloseHandle(child_err);
   if (!AssignProcessToJobObject(job, process.hProcess) ||
       ResumeThread(process.hThread) == (DWORD)-1) {
     TerminateProcess(process.hProcess, 125);
@@ -419,8 +426,6 @@ npunlock_status npunlock_run_movi_stage(npunlock_view worker_executable_utf8,
   input_read = NULL;
   CloseHandle(response_write);
   response_write = NULL;
-  CloseHandle(null_output);
-  null_output = INVALID_HANDLE_VALUE;
   writer.pipe = input_write;
   writer.data = request;
   writer.size = request_size;
@@ -535,8 +540,11 @@ done:
   if (response_write != NULL) {
     CloseHandle(response_write);
   }
-  if (null_output != INVALID_HANDLE_VALUE) {
-    CloseHandle(null_output);
+  if (child_out != INVALID_HANDLE_VALUE) {
+    CloseHandle(child_out);
+  }
+  if (child_err != INVALID_HANDLE_VALUE) {
+    CloseHandle(child_err);
   }
   free(request);
   free(response);
