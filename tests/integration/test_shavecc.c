@@ -53,7 +53,7 @@ static void release_file(file_buffer *buffer) {
   memset(buffer, 0, sizeof(*buffer));
 }
 
-int main(int argc, char **argv) {
+int main(void) {
   static const uint8_t target[] = "3720xx";
   static const uint8_t entry[] = "controlled_act";
   file_buffer source = {0};
@@ -62,16 +62,20 @@ int main(int argc, char **argv) {
   shavecc_options options = {0};
   shavecc_result result = {0};
   npunlock_status status;
+  char *movi_dll_directory = NULL;
+  size_t movi_dll_directory_size = 0;
   int return_code = 1;
 
-  if (argc != 2 || !read_file(FIXTURE_ROOT "add1-fp16.c", &source) ||
+  if (_dupenv_s(&movi_dll_directory, &movi_dll_directory_size, "NPUNLOCK_MOVITOOLS_DIR") != 0 ||
+      movi_dll_directory_size <= 1 || !read_file(FIXTURE_ROOT "add1-fp16.c", &source) ||
       !read_file(FIXTURE_ROOT "shave_kernel.ld", &script) ||
       !read_file(FIXTURE_ROOT "add1-fp16.elf", &expected)) {
-    fprintf(stderr, "usage: %s MOVI_DLL_DIR\n", argv[0]);
+    fprintf(stderr, "NPUNLOCK_MOVITOOLS_DIR must name the MoviTools DLL directory\n");
     goto done;
   }
   options.struct_size = sizeof(options);
-  options.movi_dll_directory_utf8 = (npunlock_view){(const uint8_t *)argv[1], strlen(argv[1])};
+  options.movi_dll_directory_utf8 =
+      (npunlock_view){(const uint8_t *)movi_dll_directory, strlen(movi_dll_directory)};
   options.target_cpu = (npunlock_view){target, sizeof(target) - 1};
   options.entry_symbol = (npunlock_view){entry, sizeof(entry) - 1};
   options.linker_script = (npunlock_view){script.data, script.size};
@@ -100,5 +104,6 @@ done:
   release_file(&expected);
   release_file(&script);
   release_file(&source);
+  free(movi_dll_directory);
   return return_code;
 }

@@ -419,16 +419,17 @@ installation is needed only for the Python frontend test; CMake skips that
 test when Python or NumPy is absent.
 
 The MoviTools and hardware suites remain separately gated. Their source, IR,
-graph, and golden-output fixtures are bundled; only the local proprietary DLL
-directory is supplied at configure time:
+graph, and golden-output fixtures are bundled. CMake never stores the local
+proprietary DLL path; the enabled MoviTools test reads it from the runtime
+environment:
 
 ```powershell
+$env:NPUNLOCK_MOVITOOLS_DIR = 'D:\path\containing\MoviTools\DLLs'
 tools\msvc-run.ps1 cmake -S . -B build\integration `
   -G "Visual Studio 17 2022" -A x64 `
   -DNPUNLOCK_ENABLE_MOVITOOLS_TESTS=ON `
   -DNPUNLOCK_ENABLE_NPU_TESTS=ON `
-  -DNPUNLOCK_ENABLE_GRAPHINFER_TESTS=ON `
-  '-DNPUNLOCK_MOVITOOLS_DIR=D:\path\containing\MoviTools\DLLs'
+  -DNPUNLOCK_ENABLE_GRAPHINFER_TESTS=ON
 tools\msvc-run.ps1 cmake --build build\integration --config Debug
 tools\msvc-run.ps1 ctest --test-dir build\integration -C Debug --output-on-failure
 ```
@@ -471,6 +472,8 @@ multiple compatible ACT invocations. The caller must supply the observed
 arity, per-invocation element count, and byte span; `npurun` does not guess a
 source-node mapping. Hardware/OEM calls have finite worker deadlines. MoviTools
 binaries remain caller-supplied and are not bundled with this project.
+When `--movi-dll-dir` is omitted, `npurun` reads
+`NPUNLOCK_MOVITOOLS_DIR`; the CLI argument takes precedence when both are set.
 
 For the narrow validated unary add-one demonstration, `npurun` can also load
 and execute the patched graph in a bounded private process, save the raw FP16
@@ -511,6 +514,17 @@ The package serializes OpenVINO-format IR without importing OpenVINO and binds
 the four public C libraries directly through `ctypes`. Custom nodes lower to
 caller-selected carrier operators and still require explicit advanced
 `PatchTarget` values, preserving the C MVP's validated selector boundary.
+Configure MoviTools for custom compilation either in Python or through the
+runtime environment:
+
+```python
+npu.configure(movi_dll_dir=r"D:\path\containing\MoviTools\DLLs")
+
+# Alternatively, set NPUNLOCK_MOVITOOLS_DIR before calling npu.compile().
+```
+
+An explicit `movi_dll_dir=` passed to `npu.compile()` overrides both settings;
+the process-local `configure()` value overrides the environment.
 `Program.run()` validates named NumPy FP16 inputs against the symbolic graph,
 calls `graphinfer`, and returns copied NumPy outputs without implementing a
 second Level Zero execution path in Python.

@@ -15,6 +15,7 @@
 
 #define MAX_TARGETS 32u
 #define MAX_DEFINITIONS 32u
+#define MOVITOOLS_DIRECTORY_ENV "NPUNLOCK_MOVITOOLS_DIR"
 
 typedef struct file_buffer {
   uint8_t *data;
@@ -35,6 +36,7 @@ typedef struct build_arguments {
   const char *run_worker_path;
   const char *run_input_path;
   const char *run_output_path;
+  char *owned_movi_directory;
   const char *definitions[MAX_DEFINITIONS];
   size_t definition_count;
   uint32_t invocations[MAX_TARGETS];
@@ -64,7 +66,7 @@ typedef struct build_provenance {
 static void print_usage(const char *program) {
   printf("usage: %s --version\n", program);
   printf("       %s build --ir MODEL.xml [--weights MODEL.bin] \\\n", program);
-  printf("         --shave-source KERNEL.c --movi-dll-dir DIR --linker-script FILE \\\n");
+  printf("         --shave-source KERNEL.c [--movi-dll-dir DIR] --linker-script FILE \\\n");
   printf("         --patch-invocation N --patch-range N [repeat both options] \\\n");
   printf("         --input-count N --element-count N --span-bytes N \\\n");
   printf("         --output GRAPH.blob --manifest BUILD.json [options]\n");
@@ -72,6 +74,32 @@ static void print_usage(const char *program) {
   printf("         --image-alignment N --tail-padding N --movi-worker FILE --ir-worker FILE\n");
   printf("         --run-add1 --run-input FILE --run-output FILE [--run-input-index N]\n");
   printf("         [--run-worker FILE]\n");
+  printf("environment: %s supplies DIR when --movi-dll-dir is omitted\n", MOVITOOLS_DIRECTORY_ENV);
+}
+
+static char *copy_environment_value(const char *name) {
+#ifdef _WIN32
+  char *value = NULL;
+  size_t size = 0;
+  if (_dupenv_s(&value, &size, name) != 0 || size <= 1) {
+    free(value);
+    return NULL;
+  }
+  return value;
+#else
+  const char *value = getenv(name);
+  char *copy;
+  size_t size;
+  if (value == NULL || value[0] == 0) {
+    return NULL;
+  }
+  size = strlen(value) + 1u;
+  copy = (char *)malloc(size);
+  if (copy != NULL) {
+    memcpy(copy, value, size);
+  }
+  return copy;
+#endif
 }
 
 static int parse_u32(const char *text, uint32_t *result) {
@@ -207,9 +235,16 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
       return 0;
     }
   }
-  if (build->ir_path == NULL || build->source_path == NULL || build->movi_directory == NULL ||
-      build->linker_script_path == NULL || build->output_path == NULL ||
-      build->manifest_path == NULL || build->invocation_count == 0 ||
+  if (build->movi_directory == NULL) {
+    build->owned_movi_directory = copy_environment_value(MOVITOOLS_DIRECTORY_ENV);
+    build->movi_directory = build->owned_movi_directory;
+  }
+  if (build->movi_directory == NULL) {
+    fprintf(stderr, "--movi-dll-dir or %s is required\n", MOVITOOLS_DIRECTORY_ENV);
+    return 0;
+  }
+  if (build->ir_path == NULL || build->source_path == NULL || build->linker_script_path == NULL ||
+      build->output_path == NULL || build->manifest_path == NULL || build->invocation_count == 0 ||
       build->invocation_count != build->range_count || build->input_count == 0 ||
       build->element_count == 0 || build->span_bytes == 0 || build->timeout_ms == 0) {
     fprintf(stderr, "missing or inconsistent required build options\n");
@@ -758,11 +793,15 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (argc >= 2 && strcmp(argv[1], "build") == 0) {
+    int result;
     if (!parse_build_arguments(argc, argv, &build)) {
       print_usage(argv[0]);
+      free(build.owned_movi_directory);
       return 2;
     }
-    return run_build(&build);
+    result = run_build(&build);
+    free(build.owned_movi_directory);
+    return result;
   }
   print_usage(argv[0]);
   return 2;

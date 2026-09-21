@@ -4,6 +4,7 @@ import ctypes
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 import numpy as np
@@ -162,6 +163,9 @@ class FakeNative:
 
 
 class CompilationFlowTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        npu.configure(movi_dll_dir=None)
+
     def test_thin_compile_flow(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         target = npu.PatchTarget(0, 0, 1, 16, 32)
@@ -187,6 +191,49 @@ class CompilationFlowTests(unittest.TestCase):
         result = program.run({"x": np.zeros((1, 32), dtype=np.float16)})
         np.testing.assert_array_equal(result["Result_0"], np.ones((1, 32), dtype=np.float16))
         self.assertEqual(fake.infer_args[1][0].selector, "x")
+
+    def test_movitools_directory_from_environment(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        target = npu.PatchTarget(0, 0, 1, 16, 32)
+        y = npu.custom(
+            x,
+            source=b"kernel",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+            _patch_targets=[target],
+        )
+        fake = FakeNative()
+        with patch.dict("os.environ", {"NPUNLOCK_MOVITOOLS_DIR": "environment-movi"}):
+            npu.compile(
+                npu.Graph([x], [y]),
+                native_dir="unused",
+                linker_script=b"script",
+                libraries=fake,  # type: ignore[arg-type]
+            )
+        self.assertEqual(fake.assertions[1]["movi_dll_dir"], "environment-movi")
+
+    def test_configured_movitools_directory_overrides_environment(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        target = npu.PatchTarget(0, 0, 1, 16, 32)
+        y = npu.custom(
+            x,
+            source=b"kernel",
+            carrier="Abs",
+            _shape=x.shape,
+            _dtype=x.dtype,
+            _patch_targets=[target],
+        )
+        fake = FakeNative()
+        npu.configure(movi_dll_dir="configured-movi")
+        with patch.dict("os.environ", {"NPUNLOCK_MOVITOOLS_DIR": "environment-movi"}):
+            npu.compile(
+                npu.Graph([x], [y]),
+                native_dir="unused",
+                linker_script=b"script",
+                libraries=fake,  # type: ignore[arg-type]
+            )
+        self.assertEqual(fake.assertions[1]["movi_dll_dir"], "configured-movi")
 
     def test_program_run_rejects_wrong_tensor_contract(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

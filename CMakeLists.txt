@@ -10,7 +10,6 @@ option(NPUNLOCK_BUILD_TESTS "Build offline unit tests" ON)
 option(NPUNLOCK_ENABLE_NPU_TESTS "Enable tests that require an Intel NPU" OFF)
 option(NPUNLOCK_ENABLE_GRAPHINFER_TESTS "Enable bundled graph inference tests on an Intel NPU" OFF)
 option(NPUNLOCK_ENABLE_MOVITOOLS_TESTS "Enable tests that invoke caller-supplied MoviTools" OFF)
-set(NPUNLOCK_MOVITOOLS_DIR "" CACHE PATH "Directory containing the three MoviTools DLLs")
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -257,25 +256,12 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     if(NOT WIN32)
       message(FATAL_ERROR "MoviTools integration tests require Windows")
     endif()
-    if(NOT IS_ABSOLUTE "${NPUNLOCK_MOVITOOLS_DIR}" OR
-       NOT IS_DIRECTORY "${NPUNLOCK_MOVITOOLS_DIR}")
-      message(FATAL_ERROR "NPUNLOCK_MOVITOOLS_DIR must name an existing absolute directory")
-    endif()
-    foreach(required_dll moviCompile64.dll moviAsm64.dll moviLLD64.dll)
-      if(NOT EXISTS "${NPUNLOCK_MOVITOOLS_DIR}/${required_dll}")
-        message(FATAL_ERROR "missing ${required_dll} under NPUNLOCK_MOVITOOLS_DIR")
-      endif()
-    endforeach()
     add_executable(npunlock_test_shavecc_integration tests/integration/test_shavecc.c)
     target_link_libraries(
       npunlock_test_shavecc_integration PRIVATE shavecc npunlock_common npunlock_warnings
     )
     add_dependencies(npunlock_test_shavecc_integration npunlock_movi_worker)
-    add_test(
-      NAME movitools_add1
-      COMMAND npunlock_test_shavecc_integration
-        "${NPUNLOCK_MOVITOOLS_DIR}"
-    )
+    add_test(NAME movitools_add1 COMMAND npunlock_test_shavecc_integration)
     set_tests_properties(
       movitools_add1 PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )

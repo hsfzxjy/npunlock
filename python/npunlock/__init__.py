@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -34,12 +35,40 @@ __all__ = [
     "Tensor",
     "TensorSpec",
     "compile",
+    "configure",
     "constant",
     "custom",
     "input",
     "op",
     "serialize_ir",
 ]
+
+_configured_movi_dll_dir: str | None = None
+
+
+def configure(*, movi_dll_dir: str | Path | None) -> None:
+    """Set the process-local MoviTools directory used by custom compilation.
+
+    Passing ``None`` clears the process-local override so that
+    ``NPUNLOCK_MOVITOOLS_DIR`` is consulted again.
+    """
+
+    global _configured_movi_dll_dir
+    if movi_dll_dir is None:
+        _configured_movi_dll_dir = None
+        return
+    value = os.fspath(movi_dll_dir)
+    if not value:
+        raise ValueError("movi_dll_dir must not be empty")
+    _configured_movi_dll_dir = value
+
+
+def _resolve_movi_dll_dir(explicit: str | Path | None) -> str | Path | None:
+    if explicit is not None:
+        return explicit
+    if _configured_movi_dll_dir is not None:
+        return _configured_movi_dll_dir
+    return os.environ.get("NPUNLOCK_MOVITOOLS_DIR") or None
 
 
 class OpFactory:
@@ -146,9 +175,13 @@ def compile(
     if not isinstance(graph, Graph):
         raise TypeError("compile() requires a Graph")
     serialized = serialize_ir(graph)
+    resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
     if serialized.custom_nodes:
-        if movi_dll_dir is None or linker_script is None:
-            raise ValueError("custom kernels require movi_dll_dir and linker_script")
+        if resolved_movi_dll_dir is None or linker_script is None:
+            raise ValueError(
+                "custom kernels require a MoviTools directory from movi_dll_dir, "
+                "configure(), or NPUNLOCK_MOVITOOLS_DIR, plus linker_script"
+            )
         for node in serialized.custom_nodes:
             target_values = node.metadata.get("_patch_targets")
             if not isinstance(target_values, tuple) or not target_values or not all(
@@ -171,14 +204,14 @@ def compile(
     blob = ir_result.graph_blob
     reports: list[bytes] = []
     if serialized.custom_nodes:
-        assert movi_dll_dir is not None and linker_script is not None
+        assert resolved_movi_dll_dir is not None and linker_script is not None
         script = linker_script if isinstance(linker_script, bytes) else Path(linker_script).read_bytes()
         for node in serialized.custom_nodes:
             target_values = node.metadata.get("_patch_targets")
             assert isinstance(target_values, tuple)
             elf = native.compile_shave(
                 _kernel_source(node.metadata.get("_kernel")),
-                movi_dll_dir=movi_dll_dir,
+                movi_dll_dir=resolved_movi_dll_dir,
                 linker_script=script,
                 definitions=definitions,
                 timeout_ms=timeout_ms,
