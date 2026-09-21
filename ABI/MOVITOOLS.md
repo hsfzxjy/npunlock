@@ -167,6 +167,10 @@ Two in-memory inputs are passed in order:
 1. the assembler-produced ELF relocatable object;
 2. the `shave_kernel.ld` bytes.
 
+`shavecc` supplies the vendored script from embedded library bytes by default,
+or uses a non-empty caller-provided view verbatim. The worker protocol still
+receives the selected script entirely in memory.
+
 No input filename and no `-T` argument are used. The linker recognizes the
 script from the buffer contents. Successful arguments are:
 

@@ -11,7 +11,7 @@ included.
 | `abs.xml` | `02be7ab43b45c3ab80e11adf796f3c31e17c9d6c95e8748e74cce888f80c9a31` | Project research artifact: minimal static FP16 OpenVINO-format Abs IR used as `ir2blob` input. |
 | `abs.bin` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | Empty weights associated with `abs.xml`. |
 | `add1-fp16.c` | `72de0a6b2996a436f7a60cee60e0fc3f5208d75543a41cc697b864fd0850a531` | Project add-one ACT-SHAVE source used by the opt-in `shavecc` test. |
-| `shave_kernel.ld` | `4b7faf5233e425c6d75a63b18d7f8ea7e06b3b023cbf3b39731de64294f975da` | Copied from Intel's Apache-2.0 `npu_compiler` repository at commit `0b38f7d42113ff329ac2bdd33583d123de4ccf2f`; used as linker input. That checkout has no `NOTICE` file. |
+| `src/shavecc/shave_kernel.ld` | `4b7faf5233e425c6d75a63b18d7f8ea7e06b3b023cbf3b39731de64294f975da` | Runtime source asset copied from Intel's Apache-2.0 `npu_compiler` repository at commit `0b38f7d42113ff329ac2bdd33583d123de4ccf2f`; embedded into `shavecc` as its default linker script. That checkout has no `NOTICE` file. |
 | `add1-fp16.elf` | `3f9d52273870c2e911000da3c3bd474c0514bd297d29539a14e935b2b01de6d5` | Golden linked output produced from `add1-fp16.c` and `shave_kernel.ld` with caller-owned MoviTools; used by offline ELF/patch tests. |
 | `abs-add-1x16-tile1.blob` | `d4abc3c09cabdb14fd5090fa5d2e4d33f4aa755aad2bcad4f078acc891d26e07` | Project research artifact: unmodified NPU3720 ACT carrier graph used by the offline patch test. |
 | `abs-abs-1x32.blob` | `da8c205954f565c95845d9109558928d3c3e2c249c2c9942dc92b7ed60c4402c` | Project-generated NPU3720 carrier compiled with graph compiler 8.3 from a two-Abs static FP16 chain; verifies positional ACT-group discovery when adjacent operations share code. |

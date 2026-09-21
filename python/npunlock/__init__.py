@@ -178,10 +178,10 @@ def compile(
     resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
     explicit_target_groups: tuple[tuple[PatchTarget, ...], ...] | None = None
     if serialized.custom_nodes:
-        if resolved_movi_dll_dir is None or linker_script is None:
+        if resolved_movi_dll_dir is None:
             raise ValueError(
                 "custom kernels require a MoviTools directory from movi_dll_dir, "
-                "configure(), or NPUNLOCK_MOVITOOLS_DIR, plus linker_script"
+                "configure(), or NPUNLOCK_MOVITOOLS_DIR"
             )
         supplied = tuple(node.metadata.get("_patch_targets") for node in serialized.custom_nodes)
         if any(value is not None for value in supplied):
@@ -214,8 +214,12 @@ def compile(
     blob = ir_result.graph_blob
     reports: list[bytes] = []
     if serialized.custom_nodes:
-        assert resolved_movi_dll_dir is not None and linker_script is not None
-        script = linker_script if isinstance(linker_script, bytes) else Path(linker_script).read_bytes()
+        assert resolved_movi_dll_dir is not None
+        script = (
+            linker_script
+            if isinstance(linker_script, bytes) or linker_script is None
+            else Path(linker_script).read_bytes()
+        )
         target_groups = explicit_target_groups
         if target_groups is None:
             discovered_groups = native.discover_patch_targets(blob)

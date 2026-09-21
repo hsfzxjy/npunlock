@@ -18,7 +18,7 @@ typedef struct shavecc_options {
   npunlock_view entry_symbol;
   const npunlock_view *compiler_definitions;
   size_t compiler_definition_count;
-  npunlock_view linker_script;
+  npunlock_view linker_script; /* Empty selects shavecc_default_linker_script(). */
   uint32_t timeout_ms;
 } shavecc_options;
 
@@ -32,6 +32,8 @@ NPUNLOCK_SHAVECC_API npunlock_status shavecc_compile(const shavecc_options *opti
                                                      npunlock_view c_source,
                                                      shavecc_result *result);
 NPUNLOCK_SHAVECC_API void shavecc_result_release(shavecc_result *result);
+/* Immutable library-owned bytes valid for the lifetime of the loaded library. */
+NPUNLOCK_SHAVECC_API npunlock_view shavecc_default_linker_script(void);
 
 #ifdef __cplusplus
 }

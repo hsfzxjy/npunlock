@@ -469,7 +469,6 @@ npurun build `
   --weights model.bin `
   --shave-source kernel.c `
   --movi-dll-dir D:\path\containing\MoviTools\DLLs `
-  --linker-script shave_kernel.ld `
   --patch-position 0 `
   --output patched.blob `
   --manifest patched.json
@@ -479,7 +478,9 @@ npurun build `
 node name. Discovery derives all compatible invocations and their observed
 arity/span contract. The explicit `--patch-invocation`, `--patch-range`,
 `--input-count`, `--element-count`, and `--span-bytes` options remain available
-for advanced overrides. Hardware/OEM calls have finite worker deadlines.
+for advanced overrides. `shavecc` uses its vendored NPU3720 linker script by
+default; `--linker-script FILE` supplies an exact caller override.
+Hardware/OEM calls have finite worker deadlines.
 MoviTools binaries remain caller-supplied and are not bundled with this project.
 When `--movi-dll-dir` is omitted, `npurun` reads
 `NPUNLOCK_MOVITOOLS_DIR`; the CLI argument takes precedence when both are set.

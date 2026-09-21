@@ -7,6 +7,7 @@
 #include "npunlock/shavecc.h"
 
 #define FIXTURE_ROOT "tests/fixtures/npu3720/"
+#define LINKER_SCRIPT_PATH "src/shavecc/shave_kernel.ld"
 
 typedef struct file_buffer {
   uint8_t *data;
@@ -68,7 +69,7 @@ int main(void) {
 
   if (_dupenv_s(&movi_dll_directory, &movi_dll_directory_size, "NPUNLOCK_MOVITOOLS_DIR") != 0 ||
       movi_dll_directory_size <= 1 || !read_file(FIXTURE_ROOT "add1-fp16.c", &source) ||
-      !read_file(FIXTURE_ROOT "shave_kernel.ld", &script) ||
+      !read_file(LINKER_SCRIPT_PATH, &script) ||
       !read_file(FIXTURE_ROOT "add1-fp16.elf", &expected)) {
     fprintf(stderr, "NPUNLOCK_MOVITOOLS_DIR must name the MoviTools DLL directory\n");
     goto done;
@@ -78,8 +79,12 @@ int main(void) {
       (npunlock_view){(const uint8_t *)movi_dll_directory, strlen(movi_dll_directory)};
   options.target_cpu = (npunlock_view){target, sizeof(target) - 1};
   options.entry_symbol = (npunlock_view){entry, sizeof(entry) - 1};
-  options.linker_script = (npunlock_view){script.data, script.size};
   options.timeout_ms = 8000;
+  if (shavecc_default_linker_script().size != script.size ||
+      memcmp(shavecc_default_linker_script().data, script.data, script.size) != 0) {
+    fprintf(stderr, "embedded linker script differs from its vendored source\n");
+    goto done;
+  }
   status = shavecc_compile(&options, (npunlock_view){source.data, source.size}, &result);
   if (status != NPUNLOCK_STATUS_OK) {
     fprintf(stderr, "shavecc_compile failed: %s\n", npunlock_status_name(status));
@@ -95,7 +100,15 @@ int main(void) {
             result.elf.size, expected.size);
     goto done;
   }
-  printf("validated linked SHAVE ELF: %zu bytes; retained output is byte-identical\n",
+  shavecc_result_release(&result);
+  options.linker_script = (npunlock_view){script.data, script.size};
+  status = shavecc_compile(&options, (npunlock_view){source.data, source.size}, &result);
+  if (status != NPUNLOCK_STATUS_OK || result.elf.size != expected.size ||
+      memcmp(result.elf.data, expected.data, expected.size) != 0) {
+    fprintf(stderr, "caller linker-script override did not reproduce the retained ELF\n");
+    goto done;
+  }
+  printf("validated built-in and caller-supplied linker scripts: %zu-byte identical ELF\n",
          result.elf.size);
   return_code = 0;
 

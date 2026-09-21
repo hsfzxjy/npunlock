@@ -59,7 +59,23 @@ else()
   set(NPUNLOCK_INFER_WORKER_SOURCE src/graphinfer/infer_worker_stub.c)
 endif()
 
-add_library(shavecc src/shavecc/shavecc.c ${NPUNLOCK_MOVI_STAGE_SOURCE})
+set(NPUNLOCK_DEFAULT_LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/src/shavecc/shave_kernel.ld")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NPUNLOCK_DEFAULT_LINKER_SCRIPT}")
+file(READ "${NPUNLOCK_DEFAULT_LINKER_SCRIPT}" NPUNLOCK_DEFAULT_LINKER_SCRIPT_HEX HEX)
+string(REGEX REPLACE "([0-9a-fA-F][0-9a-fA-F])" "0x\\1,"
+  NPUNLOCK_DEFAULT_LINKER_SCRIPT_BYTES "${NPUNLOCK_DEFAULT_LINKER_SCRIPT_HEX}"
+)
+configure_file(
+  cmake/default_linker_script.c.in
+  generated/default_linker_script.c
+  @ONLY
+)
+
+add_library(shavecc
+  src/shavecc/shavecc.c
+  ${NPUNLOCK_MOVI_STAGE_SOURCE}
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/default_linker_script.c
+)
 add_library(npunlock::shavecc ALIAS shavecc)
 target_include_directories(shavecc PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

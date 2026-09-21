@@ -84,11 +84,17 @@ if (result.diagnostic.json.data != NULL) {
 
 ## `shavecc`
 
-`shavecc_compile()` accepts source and linker-script bytes, an absolute
-caller-supplied MoviTools directory, target `3720xx`, entry symbol
+`shavecc_compile()` accepts source bytes, an absolute caller-supplied
+MoviTools directory, target `3720xx`, entry symbol
 `controlled_act`, optional `NAME=DECIMAL` compiler definitions, and a finite
 timeout. Its three unsafe stages run in separate bounded workers. The returned
 ELF has already passed the project's narrow SHAVE validation contract.
+
+An empty `shavecc_options.linker_script` view selects the Apache-2.0 NPU3720
+script embedded in the library. A non-empty view is used verbatim as a caller
+override. `shavecc_default_linker_script()` returns an immutable, library-owned
+view of the embedded bytes for inspection or provenance hashing; callers must
+not release or modify it.
 
 The MoviTools binaries are proprietary caller dependencies. They are not
 searched for globally or distributed with `npunlock`.

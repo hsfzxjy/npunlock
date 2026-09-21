@@ -67,7 +67,7 @@ typedef struct build_provenance {
 static void print_usage(const char *program) {
   printf("usage: %s --version\n", program);
   printf("       %s build --ir MODEL.xml [--weights MODEL.bin] \\\n", program);
-  printf("         --shave-source KERNEL.c [--movi-dll-dir DIR] --linker-script FILE \\\n");
+  printf("         --shave-source KERNEL.c [--movi-dll-dir DIR] [--linker-script FILE] \\\n");
   printf("         --patch-position N \\\n");
   printf("         --output GRAPH.blob --manifest BUILD.json [options]\n");
   printf("options: --build-flags TEXT --timeout-ms N --compiler-definition NAME=VALUE\n");
@@ -254,8 +254,8 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     fprintf(stderr, "--movi-dll-dir or %s is required\n", MOVITOOLS_DIRECTORY_ENV);
     return 0;
   }
-  if (build->ir_path == NULL || build->source_path == NULL || build->linker_script_path == NULL ||
-      build->output_path == NULL || build->manifest_path == NULL || build->timeout_ms == 0) {
+  if (build->ir_path == NULL || build->source_path == NULL || build->output_path == NULL ||
+      build->manifest_path == NULL || build->timeout_ms == 0) {
     fprintf(stderr, "missing or inconsistent required build options\n");
     return 0;
   }
@@ -277,18 +277,21 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
   if (strcmp(build->output_path, build->manifest_path) == 0 ||
       strcmp(build->output_path, build->ir_path) == 0 ||
       strcmp(build->output_path, build->source_path) == 0 ||
-      strcmp(build->output_path, build->linker_script_path) == 0 ||
+      (build->linker_script_path != NULL &&
+       strcmp(build->output_path, build->linker_script_path) == 0) ||
       (build->weights_path != NULL && strcmp(build->output_path, build->weights_path) == 0) ||
       strcmp(build->manifest_path, build->ir_path) == 0 ||
       strcmp(build->manifest_path, build->source_path) == 0 ||
-      strcmp(build->manifest_path, build->linker_script_path) == 0 ||
+      (build->linker_script_path != NULL &&
+       strcmp(build->manifest_path, build->linker_script_path) == 0) ||
       (build->weights_path != NULL && strcmp(build->manifest_path, build->weights_path) == 0) ||
       (build->run_output_path != NULL &&
        (strcmp(build->run_output_path, build->output_path) == 0 ||
         strcmp(build->run_output_path, build->manifest_path) == 0 ||
         strcmp(build->run_output_path, build->ir_path) == 0 ||
         strcmp(build->run_output_path, build->source_path) == 0 ||
-        strcmp(build->run_output_path, build->linker_script_path) == 0 ||
+        (build->linker_script_path != NULL &&
+         strcmp(build->run_output_path, build->linker_script_path) == 0) ||
         (build->weights_path != NULL &&
          strcmp(build->run_output_path, build->weights_path) == 0)))) {
     fprintf(stderr, "output and manifest paths must not name an input or each other\n");
@@ -454,8 +457,10 @@ static int write_manifest(const char *path, const build_arguments *build,
       fprintf(stream,
               "  \"shavecc\": {\"target\": \"3720xx\", \"entry\": "
               "\"controlled_act\", \"elf_size\": %zu, \"source_sha256\": \"%s\", "
-              "\"linker_script_sha256\": \"%s\", \"movi_dll_directory\": ",
+              "\"linker_script_source\": \"%s\", \"linker_script_sha256\": \"%s\", "
+              "\"movi_dll_directory\": ",
               shave_result->elf.size, provenance->source_hash,
+              build->linker_script_path == NULL ? "builtin" : "caller",
               provenance->linker_script_hash) < 0 ||
       !write_json_string(stream, build->movi_directory) ||
       fprintf(stream,
@@ -668,7 +673,9 @@ static int run_build(const build_arguments *build) {
     }
   }
   source = read_file(build->source_path, 0);
-  linker_script = read_file(build->linker_script_path, 0);
+  if (build->linker_script_path != NULL) {
+    linker_script = read_file(build->linker_script_path, 0);
+  }
   if (source.size == SIZE_MAX || linker_script.size == SIZE_MAX) {
     goto cleanup;
   }
@@ -681,7 +688,10 @@ static int run_build(const build_arguments *build) {
   hash_view((npunlock_view){ir.data, ir.size}, provenance.ir_hash);
   hash_view((npunlock_view){weights.data, weights.size}, provenance.weights_hash);
   hash_view((npunlock_view){source.data, source.size}, provenance.source_hash);
-  hash_view((npunlock_view){linker_script.data, linker_script.size}, provenance.linker_script_hash);
+  hash_view(build->linker_script_path == NULL
+                ? shavecc_default_linker_script()
+                : (npunlock_view){linker_script.data, linker_script.size},
+            provenance.linker_script_hash);
   if (!hash_movi_dll(build->movi_directory, "moviCompile64.dll", provenance.movi_compile_hash) ||
       !hash_movi_dll(build->movi_directory, "moviAsm64.dll", provenance.movi_asm_hash) ||
       !hash_movi_dll(build->movi_directory, "moviLLD64.dll", provenance.movi_lld_hash)) {

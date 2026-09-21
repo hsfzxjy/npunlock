@@ -377,14 +377,14 @@ class NativeLibraries:
         source: bytes,
         *,
         movi_dll_dir: str | os.PathLike[str],
-        linker_script: bytes,
+        linker_script: bytes | None = None,
         definitions: Iterable[str] = (),
         timeout_ms: int = 20_000,
         worker: str | None = None,
     ) -> bytes:
         source_view, source_owner = _owned_view(source)
         directory_view, directory_owner = _owned_view(os.fspath(movi_dll_dir).encode("utf-8"))
-        script_view, script_owner = _owned_view(linker_script)
+        script_view, script_owner = _owned_view(linker_script or b"")
         worker_view, worker_owner = _owned_view(worker.encode("utf-8") if worker else b"")
         cpu_view, cpu_owner = _owned_view(b"3720xx")
         entry_view, entry_owner = _owned_view(b"controlled_act")

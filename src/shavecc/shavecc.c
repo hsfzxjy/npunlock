@@ -151,6 +151,7 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
                                     "-e",          NULL,      "-z",  "max-page-size=0x10"};
   npunlock_view target;
   npunlock_view entry;
+  npunlock_view linker_script;
   npunlock_view *compile_arguments = NULL;
   npunlock_view link_arguments[sizeof(link_base) / sizeof(link_base[0])];
   npunlock_view assemble_arguments[sizeof(assemble_args) / sizeof(assemble_args[0])];
@@ -184,13 +185,14 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
       !npunlock_view_is_valid(options->entry_symbol) || view_has_nul(options->entry_symbol) ||
       (options->compiler_definition_count != 0 && options->compiler_definitions == NULL) ||
       options->compiler_definition_count > 64 || !npunlock_view_is_valid(options->linker_script) ||
-      options->linker_script.size == 0 || view_has_nul(options->linker_script) ||
-      options->timeout_ms == 0) {
+      view_has_nul(options->linker_script) || options->timeout_ms == 0) {
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
                                    "shavecc.validate", "invalid options or C source view");
   }
   target = options->target_cpu.size == 0 ? literal_view("3720xx") : options->target_cpu;
   entry = options->entry_symbol.size == 0 ? literal_view("controlled_act") : options->entry_symbol;
+  linker_script =
+      options->linker_script.size == 0 ? shavecc_default_linker_script() : options->linker_script;
   if (!view_equals(target, "3720xx")) {
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
                                    "shavecc.validate",
@@ -275,7 +277,7 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
     link_arguments[index] = link_base[index] == NULL ? entry : literal_view(link_base[index]);
   }
   inputs[0] = (npunlock_view){assembled.output.data, assembled.output.size};
-  inputs[1] = options->linker_script;
+  inputs[1] = linker_script;
   status = npunlock_run_movi_stage(
       options->worker_executable_utf8, (npunlock_view){linker_path.data, linker_path.size},
       NPUNLOCK_MOVI_STAGE_LINK, link_arguments, sizeof(link_arguments) / sizeof(link_arguments[0]),

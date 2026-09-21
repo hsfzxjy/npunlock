@@ -1,0 +1,10 @@
+#include "npunlock/shavecc.h"
+
+static const uint8_t npunlock_default_linker_script_data[] = {
+    @NPUNLOCK_DEFAULT_LINKER_SCRIPT_BYTES@
+};
+
+npunlock_view shavecc_default_linker_script(void) {
+  return (npunlock_view){npunlock_default_linker_script_data,
+                         sizeof(npunlock_default_linker_script_data)};
+}

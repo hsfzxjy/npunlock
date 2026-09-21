@@ -42,17 +42,33 @@ int main(void) {
   graphinfer_options infer_options = {0};
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
+  npunlock_view default_script = shavecc_default_linker_script();
+
+  CHECK(default_script.data != NULL && default_script.size != 0);
+  CHECK(default_script.size >= sizeof("OUTPUT_FORMAT") - 1);
+  CHECK(memcmp(default_script.data, "OUTPUT_FORMAT", sizeof("OUTPUT_FORMAT") - 1) == 0);
 
   shave_options.struct_size = sizeof(shave_options);
   shave_options.movi_dll_directory_utf8 = (npunlock_view){path, sizeof(path) - 1};
   shave_options.target_cpu = (npunlock_view){cpu, sizeof(cpu) - 1};
   shave_options.entry_symbol = (npunlock_view){entry, sizeof(entry) - 1};
-  shave_options.linker_script = (npunlock_view){script, sizeof(script) - 1};
   shave_options.timeout_ms = 1000;
   CHECK(shavecc_compile(&shave_options, (npunlock_view){source, sizeof(source) - 1},
                         &shave_result) == NPUNLOCK_STATUS_NOT_FOUND);
   CHECK(check_diagnostic(&shave_result.diagnostic, "not_found"));
   shavecc_result_release(&shave_result);
+  shavecc_result_release(&shave_result);
+
+  shave_options.linker_script = (npunlock_view){script, sizeof(script) - 1};
+  CHECK(shavecc_compile(&shave_options, (npunlock_view){source, sizeof(source) - 1},
+                        &shave_result) == NPUNLOCK_STATUS_NOT_FOUND);
+  CHECK(check_diagnostic(&shave_result.diagnostic, "not_found"));
+  shavecc_result_release(&shave_result);
+
+  shave_options.linker_script = (npunlock_view){NULL, 1};
+  CHECK(shavecc_compile(&shave_options, (npunlock_view){source, sizeof(source) - 1},
+                        &shave_result) == NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&shave_result.diagnostic, "invalid_argument"));
   shavecc_result_release(&shave_result);
 
   ir_options.struct_size = sizeof(ir_options);

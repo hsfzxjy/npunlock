@@ -80,6 +80,10 @@ moviLLD64!process
   inputs: assembled ELF object, then shave_kernel.ld
 ```
 
+`shavecc` embeds the proven Apache-2.0 `shave_kernel.ld` bytes as its default
+second linker input. A caller-supplied non-empty script view replaces those
+bytes; this changes configuration, not the observed linker ABI above.
+
 Compiler definitions used by the generalized local-window sources were
 restricted to explicit uppercase `NAME=DECIMAL` arguments. No runtime archive
 was needed for the confirmed add-one, local-neighbor, or two-input kernels.

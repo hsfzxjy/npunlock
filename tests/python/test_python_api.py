@@ -192,9 +192,9 @@ class CompilationFlowTests(unittest.TestCase):
             npu.Graph([x], [y]),
             native_dir="unused",
             movi_dll_dir="movi",
-            linker_script=b"script",
             libraries=fake,  # type: ignore[arg-type]
         )
+        self.assertIsNone(fake.assertions[1]["linker_script"])
         self.assertEqual(program.graph_blob, b"patched")
         self.assertIn(b'type="Abs"', fake.xml)
         self.assertEqual(fake.patch_args, (b"native", b"elf", (target,)))
