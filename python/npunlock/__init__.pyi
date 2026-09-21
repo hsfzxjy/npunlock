@@ -4,6 +4,14 @@ from typing import Any, Iterable, Mapping, Sequence, TypeAlias
 Shape: TypeAlias = tuple[int, ...]
 DType: TypeAlias = str
 
+class NativeError(RuntimeError):
+    stage: str
+    status: int
+    status_name: str
+    diagnostic: bytes
+    stdout_log: bytes
+    stderr_log: bytes
+
 class TensorSpec:
     shape: Shape
     dtype: DType

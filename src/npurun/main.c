@@ -382,6 +382,26 @@ static void print_diagnostic(const npunlock_diagnostic *diagnostic) {
   }
 }
 
+static void report_worker_streams(const npunlock_buffer *stdout_log,
+                                  const npunlock_buffer *stderr_log, npunlock_status status) {
+  if (status != NPUNLOCK_STATUS_OK) {
+    if (stdout_log != NULL && stdout_log->size != 0) {
+      fwrite(stdout_log->data, 1, stdout_log->size, stdout);
+      fflush(stdout);
+    }
+    if (stderr_log != NULL && stderr_log->size != 0) {
+      fwrite(stderr_log->data, 1, stderr_log->size, stderr);
+      fflush(stderr);
+    }
+  } else if (stderr_log != NULL && stderr_log->size != 0) {
+    fputs("warning: worker wrote to stderr:\n", stderr);
+    fwrite(stderr_log->data, 1, stderr_log->size, stderr);
+    if (stderr_log->data[stderr_log->size - 1] != '\n') {
+      fputc('\n', stderr);
+    }
+  }
+}
+
 static void hash_view(npunlock_view view, char text[65]) {
   static const char digits[] = "0123456789abcdef";
   uint8_t digest[32];
@@ -711,6 +731,7 @@ static int run_build(const build_arguments *build) {
       (npunlock_view){(const uint8_t *)build->build_flags, strlen(build->build_flags)};
   status = ir2blob_compile(&ir_options, (npunlock_view){ir.data, ir.size},
                            (npunlock_view){weights.data, weights.size}, &ir_result);
+  report_worker_streams(&ir_result.stdout_log, &ir_result.stderr_log, status);
   if (status != NPUNLOCK_STATUS_OK) {
     print_diagnostic(&ir_result.diagnostic);
     goto cleanup;
@@ -733,6 +754,7 @@ static int run_build(const build_arguments *build) {
   shave_options.timeout_ms = build->timeout_ms;
   status =
       shavecc_compile(&shave_options, (npunlock_view){source.data, source.size}, &shave_result);
+  report_worker_streams(&shave_result.stdout_log, &shave_result.stderr_log, status);
   if (status != NPUNLOCK_STATUS_OK) {
     print_diagnostic(&shave_result.diagnostic);
     goto cleanup;
@@ -799,6 +821,7 @@ static int run_build(const build_arguments *build) {
     status = graphinfer_infer(
         &infer_options, (npunlock_view){patch_result.graph_blob.data, patch_result.graph_blob.size},
         &infer_input, 1, &run_result);
+    report_worker_streams(&run_result.stdout_log, &run_result.stderr_log, status);
     if (status != NPUNLOCK_STATUS_OK) {
       if (run_result.diagnostic.json.data != NULL) {
         fwrite(run_result.diagnostic.json.data, 1, run_result.diagnostic.json.size, stderr);

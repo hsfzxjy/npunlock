@@ -40,6 +40,9 @@ typedef struct ir2blob_result {
   uint32_t runtime_version_minor;
   uint32_t runtime_version_patch;
   npunlock_buffer graph_blob;
+  /* Verbatim output captured from the bounded graph-compiler worker. */
+  npunlock_buffer stdout_log;
+  npunlock_buffer stderr_log;
   npunlock_diagnostic diagnostic;
 } ir2blob_result;
 

@@ -27,6 +27,9 @@ typedef struct shavecc_options {
 typedef struct shavecc_result {
   uint32_t struct_size;
   npunlock_buffer elf;
+  /* Verbatim output captured across compiler, assembler, and linker workers. */
+  npunlock_buffer stdout_log;
+  npunlock_buffer stderr_log;
   npunlock_diagnostic diagnostic;
 } shavecc_result;
 

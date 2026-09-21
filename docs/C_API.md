@@ -93,6 +93,23 @@ if (result.diagnostic.json.data != NULL) {
 }
 ```
 
+The worker-backed result structures—`shavecc_result`, `ir2blob_result`, and
+`graphinfer_result`—also own `stdout_log` and `stderr_log` buffers. These are
+the worker process's two operating-system streams, captured separately and
+available on success or failure. They are arbitrary byte spans, not quoted
+JSON and not necessarily NUL-terminated:
+
+```c
+if (status != NPUNLOCK_STATUS_OK) {
+  fwrite(result.stdout_log.data, 1, result.stdout_log.size, stdout);
+  fwrite(result.stderr_log.data, 1, result.stderr_log.size, stderr);
+}
+```
+
+The matching result-release function releases both streams. The structured
+diagnostic remains separate: for example, MoviTools can return compiler errors
+through its own diagnostic buffer without writing them to process stderr.
+
 ## `shavecc`
 
 `shavecc_compile()` accepts source bytes, an absolute caller-supplied
@@ -192,8 +209,10 @@ matters.
 ## Concurrency and timeouts
 
 Calls to `shavecc`, `ir2blob`, and `graphinfer` launch independent worker
-processes and do not share mutable execution state. `patchblob` operates on
-caller and result buffers without global mutable parser state. Each caller is
+processes through one shared Win32 launcher. Request, protocol response,
+stdout, and stderr use separate bounded pipes, and process trees are terminated
+through a Job Object when a deadline expires. `patchblob` operates on caller
+and result buffers without global mutable parser state. Each caller is
 responsible for setting a finite timeout on worker-backed operations.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and

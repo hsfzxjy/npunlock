@@ -62,6 +62,10 @@ npunlock_status ir2blob_compile(const ir2blob_options *options, npunlock_view ir
   status = npunlock_run_ir_worker(options->worker_executable_utf8, options->driver_index,
                                   options->device_index, ir_xml, weights, options->build_flags,
                                   options->timeout_ms, &worker);
+  result->stdout_log = worker.stdout_log;
+  memset(&worker.stdout_log, 0, sizeof(worker.stdout_log));
+  result->stderr_log = worker.stderr_log;
+  memset(&worker.stderr_log, 0, sizeof(worker.stderr_log));
   if (status != NPUNLOCK_STATUS_OK) {
     status = worker_failure(result, status, &worker);
     goto done;
@@ -94,6 +98,8 @@ void ir2blob_result_release(ir2blob_result *result) {
     return;
   }
   npunlock_buffer_release(&result->graph_blob);
+  npunlock_buffer_release(&result->stdout_log);
+  npunlock_buffer_release(&result->stderr_log);
   npunlock_diagnostic_release(&result->diagnostic);
   memset(result, 0, sizeof(*result));
 }

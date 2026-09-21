@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.24)
 cmake_policy(SET CMP0091 NEW)
 project(npunlock VERSION 0.1.0 LANGUAGES C)
 
+if(NOT WIN32)
+  message(FATAL_ERROR "npunlock currently supports Windows only")
+endif()
+
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -34,27 +38,20 @@ add_library(npunlock_common_objects OBJECT
   src/common/elf32.c
   src/common/sha256.c
   src/common/status.c
+  src/common/worker_process_win32.c
 )
 target_include_directories(npunlock_common_objects PRIVATE include src/common)
 target_link_libraries(npunlock_common_objects PRIVATE npunlock_warnings)
 
-if(WIN32)
-  set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_win32.c)
-  set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_win32.c)
-  set(NPUNLOCK_INFER_WORKER_SOURCE src/graphinfer/infer_worker_win32.c)
-  add_executable(npunlock_worker
-    src/workers/worker.c
-    src/workers/movi_worker.c
-    src/workers/ir_worker.c
-    src/workers/infer_worker.c
-  )
-  target_include_directories(npunlock_worker PRIVATE src/workers)
-  target_link_libraries(npunlock_worker PRIVATE npunlock_warnings)
-else()
-  set(NPUNLOCK_MOVI_STAGE_SOURCE src/shavecc/movi_stage_stub.c)
-  set(NPUNLOCK_IR_WORKER_SOURCE src/ir2blob/ir_worker_stub.c)
-  set(NPUNLOCK_INFER_WORKER_SOURCE src/graphinfer/infer_worker_stub.c)
-endif()
+add_executable(npunlock_worker
+  src/workers/worker.c
+  src/workers/worker_io.c
+  src/workers/movi_worker.c
+  src/workers/ir_worker.c
+  src/workers/infer_worker.c
+)
+target_include_directories(npunlock_worker PRIVATE src/common src/workers)
+target_link_libraries(npunlock_worker PRIVATE npunlock_warnings)
 
 set(NPUNLOCK_DEFAULT_LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/src/shavecc/shave_kernel.ld")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NPUNLOCK_DEFAULT_LINKER_SCRIPT}")
@@ -70,7 +67,7 @@ configure_file(
 
 add_library(npunlock_shavecc_objects OBJECT
   src/shavecc/shavecc.c
-  ${NPUNLOCK_MOVI_STAGE_SOURCE}
+  src/shavecc/movi_stage_win32.c
   ${CMAKE_CURRENT_BINARY_DIR}/generated/default_linker_script.c
 )
 target_include_directories(npunlock_shavecc_objects PRIVATE include src/common src src/shavecc)
@@ -78,7 +75,7 @@ target_link_libraries(npunlock_shavecc_objects PRIVATE npunlock_warnings)
 
 add_library(npunlock_ir2blob_objects OBJECT
   src/ir2blob/ir2blob.c
-  ${NPUNLOCK_IR_WORKER_SOURCE}
+  src/ir2blob/ir_worker_win32.c
 )
 target_include_directories(npunlock_ir2blob_objects PRIVATE include src/common src src/ir2blob)
 target_link_libraries(npunlock_ir2blob_objects PRIVATE npunlock_warnings)
@@ -92,7 +89,7 @@ target_link_libraries(npunlock_patchblob_objects PRIVATE npunlock_warnings)
 
 add_library(npunlock_graphinfer_objects OBJECT
   src/graphinfer/graphinfer.c
-  ${NPUNLOCK_INFER_WORKER_SOURCE}
+  src/graphinfer/infer_worker_win32.c
 )
 target_include_directories(npunlock_graphinfer_objects PRIVATE include src src/common src/graphinfer)
 target_link_libraries(npunlock_graphinfer_objects PRIVATE npunlock_warnings)
@@ -162,13 +159,14 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/common/internal.h
   src/common/sha256.c
   src/common/status.c
+  src/common/worker_process.h
+  src/common/worker_process_win32.c
+  src/common/worker_protocol.h
   src/ir2blob/ir2blob.c
   src/ir2blob/ir_worker.h
-  src/ir2blob/ir_worker_stub.c
   src/ir2blob/ir_worker_win32.c
   src/graphinfer/graphinfer.c
   src/graphinfer/infer_worker.h
-  src/graphinfer/infer_worker_stub.c
   src/graphinfer/infer_worker_win32.c
   src/npurun/main.c
   src/patchblob/patchblob.c
@@ -176,12 +174,13 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/patchblob/graph_blob.h
   src/shavecc/shavecc.c
   src/shavecc/movi_stage.h
-  src/shavecc/movi_stage_stub.c
   src/shavecc/movi_stage_win32.c
   src/workers/movi_protocol.h
   src/workers/movi_worker.c
   src/workers/worker.c
   src/workers/worker_entry.h
+  src/workers/worker_io.c
+  src/workers/worker_io.h
   src/workers/ir_protocol.h
   src/workers/ir_worker.c
   src/workers/level_zero_min.h
@@ -235,9 +234,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   add_test(NAME common COMMAND npunlock_test_common)
 
   add_executable(npunlock_test_api tests/unit/test_api.c)
-  if(WIN32)
-    add_dependencies(npunlock_test_api npunlock_worker)
-  endif()
+  add_dependencies(npunlock_test_api npunlock_worker)
   target_link_libraries(
     npunlock_test_api PRIVATE shavecc ir2blob patchblob graphinfer npunlock_common npunlock_warnings
   )
@@ -286,9 +283,6 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   )
 
   if(NPUNLOCK_ENABLE_MOVITOOLS_TESTS)
-    if(NOT WIN32)
-      message(FATAL_ERROR "MoviTools integration tests require Windows")
-    endif()
     add_executable(npunlock_test_shavecc_integration tests/integration/test_shavecc.c)
     target_link_libraries(
       npunlock_test_shavecc_integration PRIVATE shavecc npunlock_common npunlock_warnings
@@ -301,9 +295,6 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   endif()
 
   if(NPUNLOCK_ENABLE_NPU_TESTS)
-    if(NOT WIN32)
-      message(FATAL_ERROR "NPU integration tests require Windows")
-    endif()
     add_executable(npunlock_test_ir2blob_integration tests/integration/test_ir2blob.c)
     target_link_libraries(
       npunlock_test_ir2blob_integration PRIVATE ir2blob npunlock_common npunlock_warnings
@@ -316,9 +307,6 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   endif()
 
   if(NPUNLOCK_ENABLE_GRAPHINFER_TESTS)
-    if(NOT WIN32)
-      message(FATAL_ERROR "graphinfer integration tests require Windows")
-    endif()
     add_executable(npunlock_test_graphinfer_integration tests/integration/test_graphinfer.c)
     target_link_libraries(
       npunlock_test_graphinfer_integration PRIVATE graphinfer npunlock_common npunlock_warnings
@@ -337,12 +325,10 @@ install(TARGETS npunlock_native
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PythonRuntime
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
 )
-if(WIN32)
-  install(TARGETS npunlock_worker
-    EXPORT npunlockTargets
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PythonRuntime
-  )
-endif()
+install(TARGETS npunlock_worker
+  EXPORT npunlockTargets
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PythonRuntime
+)
 install(TARGETS npurun
   EXPORT npunlockTargets
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime

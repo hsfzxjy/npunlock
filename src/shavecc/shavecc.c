@@ -102,6 +102,38 @@ static npunlock_status make_path(npunlock_view directory, const char *filename,
   return npunlock_buffer_adopt_malloc(data, size, path);
 }
 
+static npunlock_status append_log(npunlock_buffer *destination, npunlock_view source) {
+  size_t combined_size;
+  uint8_t *combined;
+  if (source.size == 0) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (!npunlock_checked_add_size(destination->size, source.size, &combined_size)) {
+    return NPUNLOCK_STATUS_OVERFLOW;
+  }
+  combined = (uint8_t *)malloc(combined_size);
+  if (combined == NULL) {
+    return NPUNLOCK_STATUS_OUT_OF_MEMORY;
+  }
+  if (destination->size != 0) {
+    memcpy(combined, destination->data, destination->size);
+  }
+  memcpy(combined + destination->size, source.data, source.size);
+  npunlock_buffer_release(destination);
+  return npunlock_buffer_adopt_malloc(combined, combined_size, destination);
+}
+
+static npunlock_status collect_worker_logs(shavecc_result *result,
+                                           const npunlock_movi_result *worker) {
+  npunlock_status status = append_log(
+      &result->stdout_log, (npunlock_view){worker->stdout_log.data, worker->stdout_log.size});
+  if (status == NPUNLOCK_STATUS_OK) {
+    status = append_log(&result->stderr_log,
+                        (npunlock_view){worker->stderr_log.data, worker->stderr_log.size});
+  }
+  return status;
+}
+
 static npunlock_status stage_failure(shavecc_result *result, npunlock_status status,
                                      const char *stage, const npunlock_movi_result *worker) {
   char fallback[160];
@@ -263,6 +295,14 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
                                    (npunlock_view){compiler_path.data, compiler_path.size},
                                    NPUNLOCK_MOVI_STAGE_COMPILE, compile_arguments, compile_count,
                                    inputs, 1, options->timeout_ms, &compiled);
+  {
+    npunlock_status log_status = collect_worker_logs(result, &compiled);
+    if (log_status != NPUNLOCK_STATUS_OK) {
+      status = npunlock_set_diagnostic(&result->diagnostic, log_status, "shavecc.compile",
+                                       "failed to retain worker output");
+      goto done;
+    }
+  }
   if (status != NPUNLOCK_STATUS_OK) {
     status = stage_failure(result, status, "shavecc.compile", &compiled);
     goto done;
@@ -276,6 +316,14 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
                                    NPUNLOCK_MOVI_STAGE_ASSEMBLE, assemble_arguments,
                                    sizeof(assemble_arguments) / sizeof(assemble_arguments[0]),
                                    inputs, 1, options->timeout_ms, &assembled);
+  {
+    npunlock_status log_status = collect_worker_logs(result, &assembled);
+    if (log_status != NPUNLOCK_STATUS_OK) {
+      status = npunlock_set_diagnostic(&result->diagnostic, log_status, "shavecc.assemble",
+                                       "failed to retain worker output");
+      goto done;
+    }
+  }
   if (status != NPUNLOCK_STATUS_OK) {
     status = stage_failure(result, status, "shavecc.assemble", &assembled);
     goto done;
@@ -299,6 +347,14 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
       options->worker_executable_utf8, (npunlock_view){linker_path.data, linker_path.size},
       NPUNLOCK_MOVI_STAGE_LINK, link_arguments, sizeof(link_arguments) / sizeof(link_arguments[0]),
       inputs, 2, options->timeout_ms, &linked);
+  {
+    npunlock_status log_status = collect_worker_logs(result, &linked);
+    if (log_status != NPUNLOCK_STATUS_OK) {
+      status = npunlock_set_diagnostic(&result->diagnostic, log_status, "shavecc.link",
+                                       "failed to retain worker output");
+      goto done;
+    }
+  }
   if (status != NPUNLOCK_STATUS_OK) {
     if (linked.diagnostic.size == 0) {
       char message[192];
@@ -343,6 +399,8 @@ void shavecc_result_release(shavecc_result *result) {
     return;
   }
   npunlock_buffer_release(&result->elf);
+  npunlock_buffer_release(&result->stdout_log);
+  npunlock_buffer_release(&result->stderr_log);
   npunlock_diagnostic_release(&result->diagnostic);
   memset(result, 0, sizeof(*result));
 }

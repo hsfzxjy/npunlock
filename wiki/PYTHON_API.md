@@ -162,6 +162,22 @@ flags are otherwise empty. Caller-supplied flags for such a graph must include
 Compilation returns a `Program` containing the final graph bytes, serialized
 IR, driver/compiler provenance, and patch reports.
 
+## Worker output and errors
+
+Graph compilation, custom C compilation, and execution run in bounded native
+worker processes. Their stdout and stderr streams are captured separately.
+
+If a worker-backed operation fails, Python writes captured stdout to the
+process stdout and captured stderr to the process stderr **verbatim**, without
+embedding or quoting either stream inside the exception message. It then
+raises `npu.NativeError`, whose `stdout_log` and `stderr_log` attributes retain
+the original bytes alongside the structured `diagnostic` bytes.
+
+If the native operation succeeds but its worker wrote to stderr, Python emits
+a `RuntimeWarning`. Successful stdout remains captured internally and does not
+add noise to normal program output. A vendor tool's structured diagnostic
+buffer is distinct from its operating-system stderr stream.
+
 ## Execution
 
 `Program.run()` accepts a mapping from every declared input name to a NumPy

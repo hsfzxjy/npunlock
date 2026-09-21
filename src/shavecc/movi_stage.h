@@ -11,6 +11,8 @@
 typedef struct npunlock_movi_result {
   npunlock_buffer output;
   npunlock_buffer diagnostic;
+  npunlock_buffer stdout_log;
+  npunlock_buffer stderr_log;
   int32_t tool_return;
   uint32_t worker_status;
   uint32_t process_exit_code;

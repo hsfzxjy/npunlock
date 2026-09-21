@@ -10,6 +10,15 @@
 
 #include "movi_protocol.h"
 #include "worker_entry.h"
+#include "worker_io.h"
+#include "worker_protocol.h"
+
+#define checked_add npunlock_worker_checked_add
+#define load_u32 npunlock_worker_load_u32
+#define load_u64 npunlock_worker_load_u64
+#define store_u32 npunlock_worker_store_u32
+#define store_u64 npunlock_worker_store_u64
+#define write_all npunlock_worker_write_all
 
 typedef struct movi_buffer {
   void *data;
@@ -56,35 +65,6 @@ typedef struct worker_result {
   size_t diagnostic_size;
 } worker_result;
 
-static uint32_t load_u32(const uint8_t *data) {
-  return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) |
-         ((uint32_t)data[3] << 24);
-}
-
-static uint64_t load_u64(const uint8_t *data) {
-  return (uint64_t)load_u32(data) | ((uint64_t)load_u32(data + 4) << 32);
-}
-
-static void store_u32(uint8_t *data, uint32_t value) {
-  data[0] = (uint8_t)value;
-  data[1] = (uint8_t)(value >> 8);
-  data[2] = (uint8_t)(value >> 16);
-  data[3] = (uint8_t)(value >> 24);
-}
-
-static void store_u64(uint8_t *data, uint64_t value) {
-  store_u32(data, (uint32_t)value);
-  store_u32(data + 4, (uint32_t)(value >> 32));
-}
-
-static bool checked_add(size_t left, size_t right, size_t *result) {
-  if (left > SIZE_MAX - right) {
-    return false;
-  }
-  *result = left + right;
-  return true;
-}
-
 static bool cursor_read(request_cursor *cursor, size_t size, const uint8_t **value) {
   size_t end;
   if (!checked_add(cursor->offset, size, &end) || end > cursor->size) {
@@ -110,66 +90,6 @@ static bool cursor_u64(request_cursor *cursor, uint64_t *value) {
     return false;
   }
   *value = load_u64(data);
-  return true;
-}
-
-static bool write_all(HANDLE handle, const uint8_t *data, size_t size) {
-  while (size != 0) {
-    DWORD chunk = size > MAXDWORD ? MAXDWORD : (DWORD)size;
-    DWORD written = 0;
-    if (!WriteFile(handle, data, chunk, &written, NULL) || written == 0) {
-      return false;
-    }
-    data += written;
-    size -= written;
-  }
-  return true;
-}
-
-static bool read_request(HANDLE handle, uint8_t **data, size_t *size) {
-  uint8_t *buffer = NULL;
-  size_t used = 0;
-  size_t capacity = 0;
-  for (;;) {
-    uint8_t chunk[16384];
-    DWORD received = 0;
-    if (!ReadFile(handle, chunk, sizeof(chunk), &received, NULL)) {
-      if (GetLastError() == ERROR_BROKEN_PIPE) {
-        break;
-      }
-      free(buffer);
-      return false;
-    }
-    if (received == 0) {
-      break;
-    }
-    if (used > NPUNLOCK_MOVI_MAX_MESSAGE_SIZE - received) {
-      free(buffer);
-      return false;
-    }
-    if (used + received > capacity) {
-      size_t next = capacity == 0 ? 16384 : capacity;
-      uint8_t *replacement;
-      while (next < used + received) {
-        if (next > NPUNLOCK_MOVI_MAX_MESSAGE_SIZE / 2) {
-          next = NPUNLOCK_MOVI_MAX_MESSAGE_SIZE;
-          break;
-        }
-        next *= 2;
-      }
-      replacement = (uint8_t *)realloc(buffer, next);
-      if (replacement == NULL) {
-        free(buffer);
-        return false;
-      }
-      buffer = replacement;
-      capacity = next;
-    }
-    memcpy(buffer + used, chunk, received);
-    used += received;
-  }
-  *data = buffer;
-  *size = used;
   return true;
 }
 
@@ -469,9 +389,7 @@ static bool send_response(HANDLE handle, const worker_result *result) {
 }
 
 int npunlock_movi_worker_main(int argc, char **argv) {
-  char *handle_end = NULL;
-  uint64_t handle_value;
-  HANDLE response;
+  HANDLE response = NULL;
   HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
   uint8_t *request_data = NULL;
   size_t request_size = 0;
@@ -481,14 +399,9 @@ int npunlock_movi_worker_main(int argc, char **argv) {
   int exit_code = 2;
 
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
-  if (argc != 3 || strcmp(argv[1], "--response-handle") != 0) {
+  if (!npunlock_worker_response_handle(argc, argv, &response)) {
     return 2;
   }
-  handle_value = _strtoui64(argv[2], &handle_end, 10);
-  if (handle_value == 0 || handle_end == argv[2] || *handle_end != '\0') {
-    return 2;
-  }
-  response = (HANDLE)(uintptr_t)handle_value;
   memset(&request, 0, sizeof(request));
   memset(&result, 0, sizeof(result));
   result.status = NPUNLOCK_MOVI_WORKER_BAD_REQUEST;
@@ -496,7 +409,8 @@ int npunlock_movi_worker_main(int argc, char **argv) {
   if (input == NULL || input == INVALID_HANDLE_VALUE) {
     goto done;
   }
-  if (!read_request(input, &request_data, &request_size)) {
+  if (!npunlock_worker_read_all(input, NPUNLOCK_MOVI_MAX_MESSAGE_SIZE, &request_data,
+                                &request_size)) {
     set_internal_diagnostic(&result, "failed to read the Movi worker request");
   } else if (!parse_request(request_data, request_size, &request)) {
     set_internal_diagnostic(&result, "malformed Movi worker request");

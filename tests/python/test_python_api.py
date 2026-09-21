@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+import io
 import sys
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
@@ -150,9 +152,9 @@ class NativeLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(_native._Buffer), 32)
         self.assertEqual(ctypes.sizeof(_native._Diagnostic), 40)
         self.assertEqual(ctypes.sizeof(_native._ShaveOptions), 112)
-        self.assertEqual(ctypes.sizeof(_native._ShaveResult), 80)
+        self.assertEqual(ctypes.sizeof(_native._ShaveResult), 144)
         self.assertEqual(ctypes.sizeof(_native._IrOptions), 48)
-        self.assertEqual(ctypes.sizeof(_native._IrResult), 136)
+        self.assertEqual(ctypes.sizeof(_native._IrResult), 200)
         self.assertEqual(ctypes.sizeof(_native._PatchOptions), 12)
         self.assertEqual(ctypes.sizeof(_native._PatchTarget), 40)
         self.assertEqual(ctypes.sizeof(_native._PatchDiscoveredTarget), 48)
@@ -161,7 +163,27 @@ class NativeLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(_native._InferOptions), 32)
         self.assertEqual(ctypes.sizeof(_native._InferInput), 40)
         self.assertEqual(ctypes.sizeof(_native._InferOutput), 104)
-        self.assertEqual(ctypes.sizeof(_native._InferResult), 80)
+        self.assertEqual(ctypes.sizeof(_native._InferResult), 144)
+
+    def test_failed_worker_streams_are_written_verbatim(self) -> None:
+        class BinaryStream:
+            def __init__(self) -> None:
+                self.buffer = io.BytesIO()
+
+        stdout = BinaryStream()
+        stderr = BinaryStream()
+        with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
+            _native._report_worker_streams(b"plain stdout\n", b"plain stderr\n", failed=True)
+        self.assertEqual(stdout.buffer.getvalue(), b"plain stdout\n")
+        self.assertEqual(stderr.buffer.getvalue(), b"plain stderr\n")
+
+    def test_successful_worker_stderr_raises_warning(self) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            _native._report_worker_streams(b"ignored stdout\n", b"worker warning\n", failed=False)
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(str(captured[0].message), "worker warning\n")
+        self.assertIs(captured[0].category, RuntimeWarning)
 
     def test_patch_target_integer_bounds(self) -> None:
         with self.assertRaises(ValueError):

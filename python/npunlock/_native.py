@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 
 class NativeError(RuntimeError):
-    def __init__(self, stage: str, status: int, status_name: str, diagnostic: bytes):
+    def __init__(
+        self,
+        stage: str,
+        status: int,
+        status_name: str,
+        diagnostic: bytes,
+        stdout_log: bytes = b"",
+        stderr_log: bytes = b"",
+    ):
         detail = diagnostic.decode("utf-8", errors="replace") if diagnostic else ""
         message = f"{stage} failed: {status_name} ({status})"
         if detail:
@@ -18,6 +28,8 @@ class NativeError(RuntimeError):
         self.status = status
         self.status_name = status_name
         self.diagnostic = diagnostic
+        self.stdout_log = stdout_log
+        self.stderr_log = stderr_log
 
 
 class _View(ctypes.Structure):
@@ -57,7 +69,13 @@ class _ShaveOptions(ctypes.Structure):
 
 
 class _ShaveResult(ctypes.Structure):
-    _fields_ = [("struct_size", ctypes.c_uint32), ("elf", _Buffer), ("diagnostic", _Diagnostic)]
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("elf", _Buffer),
+        ("stdout_log", _Buffer),
+        ("stderr_log", _Buffer),
+        ("diagnostic", _Diagnostic),
+    ]
 
 
 class _IrOptions(ctypes.Structure):
@@ -90,6 +108,8 @@ class _IrResult(ctypes.Structure):
         ("runtime_version_minor", ctypes.c_uint32),
         ("runtime_version_patch", ctypes.c_uint32),
         ("graph_blob", _Buffer),
+        ("stdout_log", _Buffer),
+        ("stderr_log", _Buffer),
         ("diagnostic", _Diagnostic),
     ]
 
@@ -182,6 +202,8 @@ class _InferResult(ctypes.Structure):
         ("device_id", ctypes.c_uint32),
         ("outputs", ctypes.POINTER(_InferOutput)),
         ("output_count", ctypes.c_size_t),
+        ("stdout_log", _Buffer),
+        ("stderr_log", _Buffer),
         ("diagnostic", _Diagnostic),
     ]
 
@@ -274,6 +296,26 @@ def _buffer_bytes(buffer: _Buffer) -> bytes:
     return ctypes.string_at(buffer.data, buffer.size) if buffer.data and buffer.size else b""
 
 
+def _write_verbatim(stream: object, data: bytes) -> None:
+    if not data:
+        return
+    binary = getattr(stream, "buffer", None)
+    if binary is not None:
+        binary.write(data)
+        binary.flush()
+    else:
+        stream.write(data.decode("utf-8", errors="replace"))  # type: ignore[attr-defined]
+        stream.flush()  # type: ignore[attr-defined]
+
+
+def _report_worker_streams(stdout_log: bytes, stderr_log: bytes, *, failed: bool) -> None:
+    if failed:
+        _write_verbatim(sys.stdout, stdout_log)
+        _write_verbatim(sys.stderr, stderr_log)
+    elif stderr_log:
+        warnings.warn(stderr_log.decode("utf-8", errors="replace"), RuntimeWarning, stacklevel=3)
+
+
 def _native_directory(directory: str | os.PathLike[str] | None) -> Path:
     if directory is not None:
         return Path(directory).resolve()
@@ -342,10 +384,27 @@ class NativeLibraries:
         self.infer.graphinfer_infer.restype = ctypes.c_int
         self.infer.graphinfer_result_release.argtypes = [ctypes.POINTER(_InferResult)]
 
-    def _raise(self, stage: str, status: int, diagnostic: _Diagnostic) -> None:
+    def _raise(
+        self,
+        stage: str,
+        status: int,
+        diagnostic: _Diagnostic,
+        stdout_log: _Buffer | None = None,
+        stderr_log: _Buffer | None = None,
+    ) -> None:
         raw_name = self.common.npunlock_status_name(status)
         name = raw_name.decode("ascii", errors="replace") if raw_name else "unknown"
-        raise NativeError(stage, status, name, _buffer_bytes(diagnostic.json))
+        stdout_bytes = _buffer_bytes(stdout_log) if stdout_log is not None else b""
+        stderr_bytes = _buffer_bytes(stderr_log) if stderr_log is not None else b""
+        _report_worker_streams(stdout_bytes, stderr_bytes, failed=True)
+        raise NativeError(
+            stage,
+            status,
+            name,
+            _buffer_bytes(diagnostic.json),
+            stdout_bytes,
+            stderr_bytes,
+        )
 
     def compile_ir(
         self,
@@ -367,7 +426,14 @@ class NativeLibraries:
         status = self.ir.ir2blob_compile(ctypes.byref(options), xml_view, weights_view, ctypes.byref(result))
         try:
             if status != 0:
-                self._raise("ir2blob", status, result.diagnostic)
+                self._raise(
+                    "ir2blob", status, result.diagnostic, result.stdout_log, result.stderr_log
+                )
+            _report_worker_streams(
+                _buffer_bytes(result.stdout_log),
+                _buffer_bytes(result.stderr_log),
+                failed=False,
+            )
             return IrCompileResult(
                 _buffer_bytes(result.graph_blob),
                 result.selected_driver_index,
@@ -424,7 +490,14 @@ class NativeLibraries:
         status = self.shave.shavecc_compile(ctypes.byref(options), source_view, ctypes.byref(result))
         try:
             if status != 0:
-                self._raise("shavecc", status, result.diagnostic)
+                self._raise(
+                    "shavecc", status, result.diagnostic, result.stdout_log, result.stderr_log
+                )
+            _report_worker_streams(
+                _buffer_bytes(result.stdout_log),
+                _buffer_bytes(result.stderr_log),
+                failed=False,
+            )
             return _buffer_bytes(result.elf)
         finally:
             self.shave.shavecc_result_release(ctypes.byref(result))
@@ -547,7 +620,14 @@ class NativeLibraries:
         )
         try:
             if status != 0:
-                self._raise("graphinfer", status, result.diagnostic)
+                self._raise(
+                    "graphinfer", status, result.diagnostic, result.stdout_log, result.stderr_log
+                )
+            _report_worker_streams(
+                _buffer_bytes(result.stdout_log),
+                _buffer_bytes(result.stderr_log),
+                failed=False,
+            )
             outputs = tuple(
                 InferenceOutput(
                     output.argument_index,

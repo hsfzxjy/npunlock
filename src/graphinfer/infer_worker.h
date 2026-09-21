@@ -12,6 +12,8 @@ typedef struct npunlock_infer_worker_result {
   graphinfer_output *outputs;
   size_t output_count;
   npunlock_buffer diagnostic;
+  npunlock_buffer stdout_log;
+  npunlock_buffer stderr_log;
   uint32_t worker_status;
   uint32_t driver_result;
   uint32_t process_exit_code;

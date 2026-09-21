@@ -68,6 +68,8 @@ void graphinfer_result_release(graphinfer_result *result) {
     npunlock_buffer_release(&result->outputs[index].data);
   }
   free(result->outputs);
+  npunlock_buffer_release(&result->stdout_log);
+  npunlock_buffer_release(&result->stderr_log);
   npunlock_diagnostic_release(&result->diagnostic);
   memset(result, 0, sizeof(*result));
 }
@@ -115,6 +117,10 @@ npunlock_status graphinfer_infer(const graphinfer_options *options, npunlock_vie
   status = npunlock_run_infer_worker(options->worker_executable_utf8, options->driver_index,
                                      options->device_index, graph_blob, inputs, input_count,
                                      options->timeout_ms, &worker);
+  result->stdout_log = worker.stdout_log;
+  memset(&worker.stdout_log, 0, sizeof(worker.stdout_log));
+  result->stderr_log = worker.stderr_log;
+  memset(&worker.stderr_log, 0, sizeof(worker.stderr_log));
   if (status != NPUNLOCK_STATUS_OK) {
     status = worker_failure(result, status, &worker);
     npunlock_infer_worker_result_release(&worker);

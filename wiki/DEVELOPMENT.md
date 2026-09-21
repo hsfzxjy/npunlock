@@ -39,6 +39,17 @@ The worker communicates with the libraries through bounded, versioned pipe
 messages. Stage buffers remain in memory; no temporary files connect native
 library stages.
 
+The three library clients share one Win32 process-launch implementation. It
+owns worker discovery, inheritable handles, request writing, response draining,
+stdout/stderr capture, deadlines, and Job Object cleanup. Each mode retains
+only its protocol-specific request builder and response parser. The worker
+executable similarly shares byte encoding, bounded input, complete output, and
+response-handle helpers among its three modes.
+
+Protocol responses, stdout, and stderr are independent byte streams. The C
+results expose both captured process streams. `npurun` writes both verbatim
+when a worker fails and reports nonempty stderr as a warning after success.
+
 ## Build requirements
 
 - Windows x64

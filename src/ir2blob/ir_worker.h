@@ -9,6 +9,8 @@
 typedef struct npunlock_ir_worker_result {
   npunlock_buffer graph_blob;
   npunlock_buffer diagnostic;
+  npunlock_buffer stdout_log;
+  npunlock_buffer stderr_log;
   uint32_t worker_status;
   uint32_t driver_result;
   uint32_t process_exit_code;

@@ -62,6 +62,9 @@ typedef struct graphinfer_result {
   uint32_t device_id;
   graphinfer_output *outputs;
   size_t output_count;
+  /* Verbatim output captured from the bounded execution worker. */
+  npunlock_buffer stdout_log;
+  npunlock_buffer stderr_log;
   npunlock_diagnostic diagnostic;
 } graphinfer_result;
 
