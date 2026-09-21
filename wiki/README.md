@@ -18,6 +18,9 @@ and where the current compatibility boundary lies.
 
 - [Intel NPU architecture](INTEL_NPU_ARCHITECTURE.md) — an approachable view
   of the NPU resources relevant to custom kernels.
+- [From neural network to machine binary](MODEL_TO_MACHINE_CODE.md) — the
+  step-by-step graph serialization, Intel lowering, native binary, and runtime
+  execution pipeline, including every major software and hardware component.
 - [How npunlock works](HOW_NPUNLOCK_WORKS.md) — carrier graphs, driver graph
   compilation, MoviTools, code substitution, and execution.
 - [Development](DEVELOPMENT.md) — native components, building, testing,

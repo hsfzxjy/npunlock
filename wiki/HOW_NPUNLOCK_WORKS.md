@@ -12,6 +12,11 @@ existing capabilities:
 
 The project connects them without reimplementing Intel's graph compiler.
 
+For a step-by-step account of how an ordinary neural-network graph is lowered
+into DPU, ACT-SHAVE, DMA, and synchronization records, first see
+[From neural network to machine binary](MODEL_TO_MACHINE_CODE.md). This page
+focuses on the additional custom-kernel path provided by `npunlock`.
+
 ## Pipeline overview
 
 ```text

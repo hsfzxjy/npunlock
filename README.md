@@ -189,6 +189,14 @@ preserving that execution environment. [How npunlock works](wiki/HOW_NPUNLOCK_WO
 explains the complete pipeline and separates confirmed behavior from current
 inferences.
 
+### How does a neural network become an NPU machine binary?
+
+The graph passes through serialization, Intel's device compiler, resource
+mapping, partitioning, memory planning, scheduling, and binary packaging before
+the driver can execute it. [From neural network to machine binary](wiki/MODEL_TO_MACHINE_CODE.md)
+walks through each stage and identifies the Python, Level Zero, driver,
+compiler, runtime, firmware, and hardware components involved.
+
 ### What are DPU and ACT-SHAVE processors?
 
 The DPU handles regular tensor computation, while ACT-SHAVE provides the
