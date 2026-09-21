@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<net name="direct_ir_abs" version="11">
+	<layers>
+		<layer id="0" name="input" type="Parameter" version="opset1">
+			<data shape="1,32" element_type="f16" />
+			<output>
+				<port id="0" precision="FP16" names="input">
+					<dim>1</dim>
+					<dim>32</dim>
+				</port>
+			</output>
+		</layer>
+		<layer id="1" name="output" type="Abs" version="opset1">
+			<input>
+				<port id="0" precision="FP16">
+					<dim>1</dim>
+					<dim>32</dim>
+				</port>
+			</input>
+			<output>
+				<port id="1" precision="FP16" names="Result_3">
+					<dim>1</dim>
+					<dim>32</dim>
+				</port>
+			</output>
+		</layer>
+		<layer id="2" name="Result_3" type="Result" version="opset1" output_names="Result_3">
+			<input>
+				<port id="0" precision="FP16">
+					<dim>1</dim>
+					<dim>32</dim>
+				</port>
+			</input>
+		</layer>
+	</layers>
+	<edges>
+		<edge from-layer="0" from-port="0" to-layer="1" to-port="0" />
+		<edge from-layer="1" from-port="1" to-layer="2" to-port="0" />
+	</edges>
+	<rt_info />
+</net>
