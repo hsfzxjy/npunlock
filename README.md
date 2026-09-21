@@ -535,6 +535,9 @@ npu.configure(movi_dll_dir=r"D:\path\containing\MoviTools\DLLs")
 
 An explicit `movi_dll_dir=` passed to `npu.compile()` overrides both settings;
 the process-local `configure()` value overrides the environment.
+The directory contains the three MoviTools DLLs. Math functions are resolved
+from the same distribution's sibling `..\lib\mlibm.a`; `npunlock` does not
+redistribute that proprietary archive.
 `Program.run()` validates named NumPy FP16 inputs against the symbolic graph,
 calls `graphinfer`, and returns copied NumPy outputs without implementing a
 second Level Zero execution path in Python.

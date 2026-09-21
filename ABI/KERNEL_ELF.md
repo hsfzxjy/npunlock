@@ -60,8 +60,10 @@ ELFs, the complete `.text` section matched the selected graph `KernelText`
 slice byte-for-byte and its size matched the range extent.
 
 The current supported path requires `.arg.data` to be empty. Placement of
-nonempty kernel data, runtime archives, unresolved fixups, or multiple loadable
-images is open and must not be approximated by concatenating sections.
+nonempty kernel data, unresolved fixups, or multiple loadable images is open
+and must not be approximated by concatenating sections. A narrow `mlibm.a`
+case is supported only when section garbage collection leaves a self-contained
+`.text` image and empty `.arg.data`.
 
 ## Build recipe proven for the MVP
 
@@ -77,6 +79,7 @@ moviAsm64!process
 
 moviLLD64!process
   moviLLD.dll -flavor gnu -EL -e <entry> -z max-page-size=0x10
+  --gc-sections <movi-dll-directory>\..\lib\mlibm.a
   inputs: assembled ELF object, then shave_kernel.ld
 ```
 
@@ -87,6 +90,11 @@ bytes; this changes configuration, not the observed linker ABI above.
 Compiler definitions used by the generalized local-window sources were
 restricted to explicit uppercase `NAME=DECIMAL` arguments. No runtime archive
 was needed for the confirmed add-one, local-neighbor, or two-input kernels.
+The caller-selected MoviTools tree now supplies `mlibm.a` for math symbols.
+For the executed tanh-GELU control, linking without `--gc-sections` retained
+unrelated `fegetround` code and its four-byte `roundMode` global in
+`.arg.data`; garbage collection reduced `.text` from `0x6e70` to `0x3a0`,
+removed that data dependency, and preserved an empty `.arg.data`.
 
 ## Effective ACT entry contract
 
@@ -215,8 +223,9 @@ preflight and a host semantic oracle remain necessary.
 ## Open ABI surface
 
 No supported claim is made for nonempty `.arg.data`, global/static mutable
-data, helper libraries, unresolved or dynamic relocations, multiple code
-images, alternate entry addresses, high pointer bits, dynamic dimensions,
+data, arbitrary helper libraries or library closures that retain kernel data,
+unresolved or dynamic relocations, multiple code images, alternate entry
+addresses, high pointer bits, dynamic dimensions,
 non-dense strides, layouts other than the calibrated carriers, other dtypes,
 arbitrary arity, graph-global neighborhoods, larger stack use, exceptions, C++
 runtime behavior, or other SHAVE targets.

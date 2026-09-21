@@ -79,8 +79,8 @@ static bool is_compiler_definition(npunlock_view definition) {
   return have_digit;
 }
 
-static npunlock_status make_dll_path(npunlock_view directory, const char *filename,
-                                     npunlock_buffer *path) {
+static npunlock_status make_path(npunlock_view directory, const char *filename,
+                                 npunlock_buffer *path) {
   size_t filename_size = strlen(filename);
   bool add_separator =
       directory.data[directory.size - 1] != '\\' && directory.data[directory.size - 1] != '/';
@@ -132,6 +132,7 @@ static npunlock_status stage_failure(shavecc_result *result, npunlock_status sta
 
 npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_source,
                                 shavecc_result *result) {
+  enum { LINK_ENTRY_INDEX = 5, LINK_MATH_LIBRARY_INDEX = 9 };
   static const char *compile_base[] = {"moviCompile.dll",
                                        "-cc1",
                                        "-triple",
@@ -147,8 +148,10 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
                                        "-fdata-sections"};
   static const char *compile_tail[] = {"-o", "-"};
   static const char *assemble_args[] = {"moviAsm.dll", "--cv", "3720xx", "--noSPrefixing"};
-  static const char *link_base[] = {"moviLLD.dll", "-flavor", "gnu", "-EL",
-                                    "-e",          NULL,      "-z",  "max-page-size=0x10"};
+  static const char *link_base[] = {
+      "moviLLD.dll",        "-flavor",       "gnu", "-EL", "-e", NULL, "-z",
+      "max-page-size=0x10", "--gc-sections", NULL,
+  };
   npunlock_view target;
   npunlock_view entry;
   npunlock_view linker_script;
@@ -159,7 +162,8 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
   npunlock_buffer compiler_path = {0};
   npunlock_buffer assembler_path = {0};
   npunlock_buffer linker_path = {0};
-  npunlock_buffer *paths[] = {&compiler_path, &assembler_path, &linker_path};
+  npunlock_buffer math_library_path = {0};
+  npunlock_buffer *paths[] = {&compiler_path, &assembler_path, &linker_path, &math_library_path};
   npunlock_movi_result compiled = {0};
   npunlock_movi_result assembled = {0};
   npunlock_movi_result linked = {0};
@@ -209,12 +213,15 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
           "compiler definitions must use the confirmed uppercase NAME=DECIMAL form");
     }
   }
-  status = make_dll_path(options->movi_dll_directory_utf8, "moviCompile64.dll", &compiler_path);
+  status = make_path(options->movi_dll_directory_utf8, "moviCompile64.dll", &compiler_path);
   if (status == NPUNLOCK_STATUS_OK) {
-    status = make_dll_path(options->movi_dll_directory_utf8, "moviAsm64.dll", &assembler_path);
+    status = make_path(options->movi_dll_directory_utf8, "moviAsm64.dll", &assembler_path);
   }
   if (status == NPUNLOCK_STATUS_OK) {
-    status = make_dll_path(options->movi_dll_directory_utf8, "moviLLD64.dll", &linker_path);
+    status = make_path(options->movi_dll_directory_utf8, "moviLLD64.dll", &linker_path);
+  }
+  if (status == NPUNLOCK_STATUS_OK) {
+    status = make_path(options->movi_dll_directory_utf8, "..\\lib\\mlibm.a", &math_library_path);
   }
   if (status != NPUNLOCK_STATUS_OK) {
     npunlock_set_diagnostic(&result->diagnostic, status, "shavecc.validate",
@@ -274,7 +281,17 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
     goto done;
   }
   for (index = 0; index < sizeof(link_base) / sizeof(link_base[0]); ++index) {
-    link_arguments[index] = link_base[index] == NULL ? entry : literal_view(link_base[index]);
+    if (link_base[index] != NULL) {
+      link_arguments[index] = literal_view(link_base[index]);
+    } else if (index == LINK_ENTRY_INDEX) {
+      link_arguments[index] = entry;
+    } else if (index == LINK_MATH_LIBRARY_INDEX) {
+      link_arguments[index] = (npunlock_view){math_library_path.data, math_library_path.size};
+    } else {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "shavecc.link", "invalid linker argument template");
+      goto done;
+    }
   }
   inputs[0] = (npunlock_view){assembled.output.data, assembled.output.size};
   inputs[1] = linker_script;

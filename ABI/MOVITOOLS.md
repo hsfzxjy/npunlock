@@ -176,7 +176,16 @@ script from the buffer contents. Successful arguments are:
 
 ```text
 moviLLD.dll -flavor gnu -EL -e <entry-symbol> -z max-page-size=0x10
+  --gc-sections <movi-dll-directory>\..\lib\mlibm.a
 ```
+
+The fixed archive path is derived from the caller-supplied DLL directory; it
+is not a machine-local project default. The archive remains an external
+MoviTools dependency and is not redistributed. `--gc-sections` is required:
+the observed `math_lite.o` groups many functions, and retaining the whole
+object pulled `shave_fenv.o` plus its writable `roundMode` symbol into
+`.arg.data`. With garbage collection, the executed tanh-GELU kernel retained
+only its reachable math closure and produced an empty `.arg.data`.
 
 Linker diagnostics were emitted through captured process stdout/stderr rather
 than a separate diagnostic result pair.

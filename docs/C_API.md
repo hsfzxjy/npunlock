@@ -98,6 +98,10 @@ not release or modify it.
 
 The MoviTools binaries are proprietary caller dependencies. They are not
 searched for globally or distributed with `npunlock`.
+The supplied directory must contain the three MoviTools DLLs. For C sources
+that reference math functions, `shavecc` also resolves the distribution's
+`..\lib\mlibm.a` sibling archive and links it with section garbage collection;
+the resulting ELF is still rejected unless its `.arg.data` is empty.
 
 ## `ir2blob`
 
