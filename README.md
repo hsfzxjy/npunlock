@@ -101,23 +101,15 @@ package, so normal Python use does not require a separate native path.
 ## Get MoviTools
 
 Custom C compilation uses Intel/Movidius MoviTools, which `npunlock` does not
-redistribute or download. Extract the `MVC_DEPEND` payload from Lenovo's older
-Intel NPU driver package `31.0.100.1688`, but **do not install or downgrade to
-that driver**.
+redistribute or download. 
 
-Keep the two roles separate:
+A MoviTools package verified to work was found in a legacy Lenovo driver pack. See [Getting MoviTools](wiki/GET_MOVITOOLS.md) for the official download,
+hash, extraction command, and expected layout. 
 
-```text
-installed Intel NPU driver
-  -> graph compilation, Level Zero, and hardware execution
+Extract the `MVC_DEPEND` payload from Lenovo's older
+Intel NPU driver package `31.0.100.1688`, but remember, **DO NOT install or downgrade to
+that driver**. All we need is the bundled MoviTools.
 
-extracted Lenovo 31.0.100.1688 package
-  -> MoviTools compiler files only
-  -> not installed
-```
-
-See [Getting MoviTools](wiki/GET_MOVITOOLS.md) for the official download,
-hash, extraction command, and expected layout.
 
 ## Run an example
 
