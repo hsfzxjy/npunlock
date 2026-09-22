@@ -17,7 +17,7 @@ weighted_mix_c: bytes = b"""
  */
 void controlled_act(unsigned layerParams) {
     act_abi_invocation invocation;
-    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 32u, invocation);
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
     const __fp16 *a = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
     const __fp16 *b = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 1u);
     __fp16 *out = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 2u);

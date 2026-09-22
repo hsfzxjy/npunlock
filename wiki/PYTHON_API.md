@@ -86,7 +86,7 @@ y = npu.custom(
 
 void controlled_act(unsigned layerParams) {
     act_abi_invocation invocation;
-    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 1024u, invocation);
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
     /* Use the INPUT_PTR32/OUTPUT_PTR32 helpers, then compute the result. */
 }
 """,

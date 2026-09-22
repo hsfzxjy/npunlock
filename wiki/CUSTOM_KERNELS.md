@@ -57,7 +57,7 @@ This complete kernel adds one to every element in its invocation-local chunk:
 
 void controlled_act(unsigned layerParams) {
     act_abi_invocation invocation;
-    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 2048u, invocation);
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
     const __fp16 *input =
         ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
     __fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);

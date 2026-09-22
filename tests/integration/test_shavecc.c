@@ -61,7 +61,7 @@ int main(void) {
       "#include <npunlock/npu3720_kernel.h>\n"
       "void controlled_act(unsigned layerParams) {\n"
       "  act_abi_invocation invocation;\n"
-      "  ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 16u, invocation);\n"
+      "  ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);\n"
       "  const __fp16 *in = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);\n"
       "  __fp16 *out = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);\n"
       "  for (unsigned i = 0; i < invocation.element_count; ++i) out[i] = in[i] + 1.0f;\n"

@@ -31,7 +31,6 @@ ACT_ABI_ALWAYS_INLINE unsigned act_abi_load_le_u32(const unsigned char *address)
 }
 
 ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
-                                                    unsigned maximum_elements,
                                                     act_abi_invocation *invocation) {
   const unsigned char *params32;
   const unsigned char *dims32;
@@ -39,7 +38,7 @@ ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
   unsigned count = 1;
   unsigned dimension_index;
 
-  if (layer_params32 == 0 || maximum_elements == 0 || invocation == 0) {
+  if (layer_params32 == 0 || invocation == 0) {
     return 0;
   }
   params32 = (const unsigned char *)layer_params32;
@@ -50,7 +49,7 @@ ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
   }
   for (dimension_index = 0; dimension_index < rank; ++dimension_index) {
     unsigned dimension = act_abi_load_le_u32(dims32 + dimension_index * 4u);
-    if (dimension == 0 || dimension > maximum_elements / count) {
+    if (dimension == 0) {
       return 0;
     }
     count *= dimension;
@@ -62,9 +61,9 @@ ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
   return 1;
 }
 
-#define ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layer_params32, maximum_elements, invocation)          \
+#define ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layer_params32, invocation)                            \
   do {                                                                                             \
-    if (!act_abi_load_invocation32((layer_params32), (maximum_elements), &(invocation))) {         \
+    if (!act_abi_load_invocation32((layer_params32), &(invocation))) {                             \
       return;                                                                                      \
     }                                                                                              \
   } while (0)
