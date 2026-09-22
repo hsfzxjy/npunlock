@@ -55,6 +55,28 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             npu.Unknown(x)
 
+    def test_custom_infers_single_output_contract_from_first_input(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        inherited = npu.custom(x, source=b"kernel", carrier="Abs")
+        shape_override = npu.custom(
+            x,
+            source=b"kernel",
+            carrier="Abs",
+            _shape=(2, 16),
+        )
+        dtype_override = npu.custom(
+            x,
+            source=b"kernel",
+            carrier="Abs",
+            _dtype="f32",
+        )
+
+        self.assertEqual(inherited.spec, x.spec)
+        self.assertEqual(shape_override.shape, (2, 16))
+        self.assertEqual(shape_override.dtype, "f16")
+        self.assertEqual(dtype_override.shape, (1, 32))
+        self.assertEqual(dtype_override.dtype, "f32")
+
     def test_undeclared_graph_input_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")
         hidden = npu.input("hidden", shape=(1,), dtype="f16")
@@ -97,8 +119,6 @@ class SerializationTests(unittest.TestCase):
             x,
             source=b"void controlled_act(void) {}",
             carrier="Abs",
-            _shape=x.shape,
-            _dtype=x.dtype,
             _patch_targets=[target],
         )
         serialized = npu.serialize_ir(npu.Graph([x], [y]))
@@ -113,8 +133,6 @@ class SerializationTests(unittest.TestCase):
             x,
             source=b"void controlled_act(void) {}",
             carrier="Abs",
-            _shape=x.shape,
-            _dtype=x.dtype,
             _name="custom_f32",
         )
         serialized = npu.serialize_ir(npu.Graph([x], [y]))

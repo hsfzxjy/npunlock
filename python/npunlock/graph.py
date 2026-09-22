@@ -120,6 +120,8 @@ def custom(
     _patch_targets: Sequence[object] | None = None,
     **attributes: object,
 ) -> Tensor | tuple[Tensor, ...]:
+    """Create a custom node, inheriting a single output from its first input."""
+
     metadata: dict[str, object] = {
         "_kernel": source,
         "_carrier": _validate_operator_name(carrier),
@@ -128,6 +130,17 @@ def custom(
     if _outputs is not None:
         metadata["_outputs"] = _outputs
     else:
+        if _shape is None or _dtype is None:
+            if not inputs:
+                raise ValueError(
+                    "custom() requires an input to infer omitted _shape or _dtype"
+                )
+            if not isinstance(inputs[0], Tensor):
+                raise TypeError("custom() inputs must be symbolic Tensor objects")
+            if _shape is None:
+                _shape = inputs[0].shape
+            if _dtype is None:
+                _dtype = inputs[0].dtype
         metadata["_shape"] = _shape
         metadata["_dtype"] = _dtype
     if _patch_targets is not None:

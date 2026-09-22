@@ -91,11 +91,16 @@ void controlled_act(unsigned layerParams) {
 }
 """,
     carrier="Abs",
-    _shape=x.shape,
-    _dtype=x.dtype,
     _name="y",
 )
 ```
+
+Unlike ordinary dynamic operators, a single-output custom operation inherits
+any omitted `_shape` or `_dtype` from its first input. The common same-shape,
+same-dtype case therefore needs neither argument. Supply an explicit override
+only for a carrier contract you have independently validated, or use `_outputs`
+for multiple outputs. Metadata expressiveness does not establish hardware
+support for a different shape, dtype, or output count.
 
 The carrier is serialized into the graph sent to Intel. The C source is
 compiled separately and installed after the native graph is returned. See

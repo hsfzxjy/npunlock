@@ -42,8 +42,6 @@ def main() -> None:
         x,
         source=gelu_c,
         carrier="Abs",
-        _shape=x.shape,
-        _dtype=x.dtype,
         _name="y",
     )
     program = npu.compile(npu.Graph(inputs=[x], outputs=[y], name="gelu_f32_example"))

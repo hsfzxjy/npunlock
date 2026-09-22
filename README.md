@@ -45,8 +45,6 @@ y = npu.custom(
     x,
     source=gelu_c,
     carrier="Abs",
-    _shape=x.shape,
-    _dtype=x.dtype,
     _name="y",
 )
 

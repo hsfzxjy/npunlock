@@ -136,11 +136,15 @@ y = npu.custom(
     x,
     source=kernel_c,
     carrier="Abs",
-    _shape=x.shape,
-    _dtype=x.dtype,
     _name="y",
 )
 ```
+
+For a single-output custom operation, omitted `_shape` and `_dtype` values are
+inherited from the first input. Supply either override only when that part of
+the output contract differs and the carrier layout has been independently
+validated, or use `_outputs` to describe multiple outputs. The established
+automatic path remains same-shape and same-dtype.
 
 The carrier's compiled arity and tensor layout must match the C entry. `Abs`
 is used by the validated unary examples. The validated two-input example uses

@@ -55,8 +55,6 @@ def main() -> None:
         abs_y,
         source=weighted_mix_c,
         carrier="Maximum",
-        _shape=shape,
-        _dtype="f16",
         _name="weighted_mix",
     )
     output = npu.Sqrt(mixed, _shape=shape, _dtype="f16", _name="output")
