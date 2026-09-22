@@ -9,7 +9,9 @@
 This complete FP32 GELU example embeds the C kernel in Python, places it in an
 NPU graph, and checks the result against NumPy. The bundled
 `npunlock/npu3720_kernel.h` target header supplies the NPU3720 invocation and
-tensor-address helpers.
+tensor-address helpers. The tested MoviTools toolchain makes most conventional
+`libm` functions available to kernels without including `<math.h>`; this
+example calls `tanhf` directly.
 
 ```python
 import numpy as np

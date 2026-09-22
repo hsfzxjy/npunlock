@@ -50,6 +50,13 @@ moviLLD64.dll
 The linker also uses `mlibm.a` from the root's `lib` directory when a
 kernel references supported math functions.
 
+With the tested compiler and archive, most conventional `libm` functions can
+be referenced by their normal C names without including `<math.h>` in the
+kernel source. This is observed toolchain behavior, not a claim that every host
+`libm` symbol is present. A function is usable only when MoviTools accepts the
+call, `mlibm.a` resolves it, and the linked ELF remains within the validated
+kernel contract.
+
 The public interfaces accept this directory through:
 
 - the C `shavecc_options` structure;

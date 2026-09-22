@@ -155,6 +155,13 @@ one-to-one to validated ACT groups. See
 MoviTools' `mlibm.a` supplies functions such as `tanhf`. `shavecc` links the
 archive with section garbage collection so only reachable code remains.
 
+The tested MoviTools compiler and `mlibm.a` combination allows most
+conventional `libm` functions to be called by their normal C names without
+including `<math.h>`. The GELU examples call `tanhf` this way. There is no
+complete supported-symbol catalog, so a host platform's `libm` is not the
+contract: the function must be accepted by MoviTools, resolve from `mlibm.a`,
+and produce a kernel ELF that passes the restrictions below.
+
 The observed archive also leaves references to `strtof`, `__truncdfsf2`, and
 `__fixsfdi`. A kernel using this math path should enable the bundled definitions
 before including the header:
