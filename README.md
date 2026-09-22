@@ -177,6 +177,9 @@ and a suggested test plan.
 - **[Development and native APIs](wiki/DEVELOPMENT.md)** — CMake, testing, packaging, CLI, and C interfaces
 - **[Full documentation index](wiki/README.md)**
 
+> [!WARNING]
+> **A note on AI use:** I did use AI while building this project--for scaffolding, repetitive implementation work, converting my reverse-engineered results into organized documentation, and fixing my English. The reverse engineering, experiments, debugging, and technical conclusions came from hands-on work. If that doesn’t bother you, there’s a pretty deep and surprisingly satisfying rabbit hole ahead.
+
 ## License
 
 `npunlock` is licensed under the [Apache License 2.0](LICENSE). MoviTools and
