@@ -2,16 +2,14 @@
 
 **Custom C kernels for Intel Core Ultra NPUs.**
 
-`npunlock` lets you place user-written C computation inside an Intel NPU graph
-and run it on the NPU's programmable ACT-SHAVE processors. Intel's normal
-software stack exposes the NPU at the model level; `npunlock` adds a narrow,
-validated path for custom kernels that the graph API does not otherwise expose.
+`npunlock` lets you write custom operations in C and run them inside a graph on
+an Intel Core Ultra NPU. Intel normally exposes the NPU through model- and
+graph-level APIs; `npunlock` opens a path to the programmable processors behind
+some of those graph operations.
 
-The project is experimental and currently targets Windows x64 with Meteor Lake
-/ NPU3720. It does not require OpenVINO as an application runtime or Python
-dependency. It does use OpenVINO-format IR when talking to the installed Intel
-NPU driver, which remains responsible for graph compilation and hardware
-execution.
+The currently verified platform is Windows x64 with Meteor Lake / NPU3720. The
+current Intel NPU driver still compiles the surrounding graph and handles
+hardware execution—`npunlock` adds the custom code path.
 
 ```text
 Python graph + C kernel
@@ -20,35 +18,28 @@ Python graph + C kernel
        npunlock
           |
           v
- current Intel NPU driver
+ Intel NPU driver
           |
           v
          NPU
 ```
 
-## Why npunlock?
-
-OpenVINO exposes the Intel NPU as a graph of operations understood by Intel's
-compiler. It does not expose a public interface that says, in effect, “compile
-this C function and run it as a custom NPU kernel.” If the compiler does not
-support an operation, users normally have to rewrite the model or run that work
-somewhere else.
-
-The hardware is more programmable than that public interface suggests. Alongside
-its dedicated tensor engines, the NPU contains ACT-SHAVE processors that execute
-software kernels. Intel's own compiler and driver use an undocumented NPU kernel
-interface to place such code inside graphs, but that interface is not offered as
-a normal application API.
-
-`npunlock` turns this existing capability into a narrow, validated workflow:
-write an operation in C, keep it inside the NPU graph, and run it through the
-current Intel driver.
-
 ## Quick example
 
-From the repository root, this example creates an FP16 graph whose custom
-operation runs a C GELU kernel on ACT-SHAVE. The full kernel source lives in the
-runnable example file, keeping the graph code small:
+This is the computation at the heart of the runnable GELU kernel:
+
+```c
+/* Abbreviated computation body: not a complete ACT entry point. */
+for (unsigned i = 0; i < count; ++i) {
+    float x = (float)in[i];
+    float w = x + 0.044715f * x * x * x;
+    w = tanhf(w * 0.79788456f);
+    out[i] = (__fp16)(0.5f * x * (1.0f + w));
+}
+```
+
+The complete source wraps this loop in the required entry point and tensor
+descriptor handling. Python places that C kernel inside an NPU graph:
 
 ```python
 import numpy as np
@@ -68,160 +59,114 @@ y = npu.custom(
     _name="gelu",
 )
 
-program = npu.compile(npu.Graph([x], [y], name="gelu_example"))
+program = npu.compile(npu.Graph(inputs=[x], outputs=[y], name="gelu_example"))
 input_value = np.linspace(-4, 4, 2048, dtype=np.float16).reshape(1, -1)
 output = program.run({"x": input_value})["gelu"]
 ```
 
-Ordinary graph nodes are serialized for the Intel compiler as usual. A custom
-node carries user C; `npunlock` compiles it, integrates it with a compatible
-ACT operation, and executes the resulting graph through the current NPU driver.
+In short: the C computation becomes NPU machine code and runs as part of the
+graph. See the complete, runnable [FP16 GELU example](examples/example_gelu.py),
+plus the [FP32 GELU](examples/example_gelu_f32.py) and
+[multi-layer two-input](examples/example_multilayer_multi_input.py) examples.
 
-See the complete [FP16 GELU example](examples/example_gelu.py), the
-[FP32 GELU example](examples/example_gelu_f32.py), and the
-[multi-layer two-input example](examples/example_multilayer_multi_input.py).
+## Why npunlock?
+
+OpenVINO and Intel's public graph APIs let applications submit operations that
+the graph compiler understands. They do not provide a normal user-facing path
+equivalent to:
+
+```text
+kernel.c -> custom ACT-SHAVE kernel -> NPU graph
+```
+
+ACT-SHAVE processors are the programmable part of the NPU used for software
+kernels. `npunlock` compiles user C for those processors and integrates it into
+a compatible graph, while Intel's existing compiler and driver remain
+responsible for the graph's execution environment.
 
 ## Requirements
 
 - Windows x64
-- Meteor Lake / Intel NPU3720 (the currently confirmed hardware)
+- Meteor Lake / Intel NPU3720
 - a current Intel NPU driver
 - Python 3.10 or newer
 - CMake 3.24 or newer and an installed MSVC toolchain for source installation
 - the extracted MoviTools `MVC_DEPEND` toolchain for custom C compilation
 
-OpenVINO is not required.
+OpenVINO is not required as a runtime, Python package, or compiler frontend.
+`npunlock` does emit OpenVINO-format IR for the current Intel driver.
 
 ## Install
 
-`npunlock` is currently installed from a source checkout; no PyPI release is
-documented yet. From the repository root:
+`npunlock` is currently installed from a source checkout:
 
 ```powershell
 python -m pip install .
 ```
 
-The build compiles and bundles `npunlock.dll` and `npunlock_worker.exe` inside
-the Python package. Normal Python use does not require a separate native path.
-
-For native C development and offline tests, see
-[Development](wiki/DEVELOPMENT.md).
+The build bundles `npunlock.dll` and `npunlock_worker.exe` inside the Python
+package, so normal Python use does not require a separate native path.
 
 ## Get MoviTools
 
-Custom C compilation currently relies on Intel/Movidius MoviTools. `npunlock`
-does not redistribute or automatically download these proprietary files.
+Custom C compilation uses Intel/Movidius MoviTools, which `npunlock` does not
+redistribute or download. Extract the `MVC_DEPEND` payload from Lenovo's older
+Intel NPU driver package `31.0.100.1688`, but **do not install or downgrade to
+that driver**.
 
-The known-good tools can be extracted from Lenovo's original Intel NPU driver
-package version `31.0.100.1688`. Do **not** install or downgrade to that driver;
-only extract its `MVC_DEPEND` compiler payload. Keep the current Intel NPU
-driver installed for graph compilation and execution.
+Keep the two roles separate:
 
-See **[Getting MoviTools](wiki/GET_MOVITOOLS.md)** for the official Lenovo
-links, exact SHA-256, tested extraction command, and expected directory layout.
+```text
+current installed Intel NPU driver
+  -> graph compilation, Level Zero, and hardware execution
+
+extracted Lenovo 31.0.100.1688 package
+  -> MoviTools compiler files only
+  -> not installed
+```
+
+See [Getting MoviTools](wiki/GET_MOVITOOLS.md) for the official download,
+hash, extraction command, and expected layout.
 
 ## Run an example
 
-After extracting MoviTools, set its root for the current PowerShell session and
-run the FP16 GELU example:
+Point `npunlock` at the extracted `MVC_DEPEND` root and run GELU:
 
 ```powershell
 $env:NPUNLOCK_MOVITOOLS_DIR = 'C:\path\to\MVC_DEPEND'
 python examples\example_gelu.py
 ```
 
-The example compiles the graph and C kernel, executes them on the NPU, and
-prints the maximum error against a NumPy reference.
+The example runs on the NPU and reports its maximum error against a NumPy
+reference.
 
 ## What currently works
 
-- C source to a validated `3720xx` SHAVE executable
-- integration with an Intel-driver-compiled native NPU graph
-- bounded graph execution with NumPy inputs and outputs
-- static dense FP16 unary and validated two-input custom kernels
-- nonlinear kernels, including GELU with MoviTools math code
-- a narrow precision-preserved unary FP32 path
-- automatic positional selection for unambiguous one-to-one ACT graphs
-- Python, CLI, and independent C17 component APIs
+- compile user-written C into ACT-SHAVE machine code
+- run custom kernels inside Intel NPU graphs
+- static dense FP16 unary and two-input custom kernels
+- a verified unary FP32 path
+- nonlinear math such as GELU and `tanhf`
+- Python, CLI, and native C APIs
 
 ## Current limitations
 
-The validated scope is intentionally narrow: Windows x64, Meteor Lake /
-NPU3720, static shapes, compatible ACT carriers, and observed dense tensor
-layouts. Dynamic shapes, broadcasting, arbitrary layouts and precisions,
-arbitrary graph-to-ACT mapping, and other NPU generations are not currently
-supported. Ambiguous or unfamiliar native graphs are rejected rather than
-patched speculatively.
-
-See [Current limitations](wiki/LIMITATIONS.md) for the detailed boundary.
+Support is experimental and currently limited to Windows x64, Meteor Lake /
+NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
+Other NPU generations have not been verified. See
+[Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 
 ## Documentation
 
-The [documentation index](wiki/README.md) links all technical guides. Start
-with whichever question matches what you need:
-
-### How do I obtain MoviTools safely?
-
-Extract the compiler payload from the known Lenovo package without installing
-its legacy driver. [Getting MoviTools](wiki/GET_MOVITOOLS.md) provides the
-official links, expected hash, extraction command, layout, and provenance
-notes.
-
-### How do I construct and run a graph from Python?
-
-The Python frontend builds symbolic graphs, accepts custom C operations,
-compiles them, and runs NumPy tensors through the bundled native runtime. See
-the [Python API guide](wiki/PYTHON_API.md) for the actual graph, configuration,
-compilation, and execution interfaces.
-
-### What does a custom C kernel look like?
-
-Custom kernels use a narrow C entry-point and tensor-descriptor contract rather
-than an unrestricted hosted C environment. [Writing custom kernels](wiki/CUSTOM_KERNELS.md)
-documents the entry point, observed tensor layouts, supported precisions,
-multi-input behavior, math linkage, and examples.
-
-### How does npunlock put custom code into an NPU graph?
-
-Intel's compiler first creates a valid graph around a compatible carrier
-operation; `npunlock` then substitutes the selected ACT-SHAVE executable while
-preserving that execution environment. [How npunlock works](wiki/HOW_NPUNLOCK_WORKS.md)
-explains the complete pipeline and separates confirmed behavior from current
-inferences.
-
-### How does a neural network become an NPU machine binary?
-
-The graph passes through serialization, Intel's device compiler, resource
-mapping, partitioning, memory planning, scheduling, and binary packaging before
-the driver can execute it. [From neural network to machine binary](wiki/MODEL_TO_MACHINE_CODE.md)
-walks through each stage and identifies the Python, Level Zero, driver,
-compiler, runtime, firmware, and hardware components involved.
-
-### What are DPU and ACT-SHAVE processors?
-
-The DPU handles regular tensor computation, while ACT-SHAVE provides the
-programmable path used by custom kernels. The
-[Intel NPU architecture overview](wiki/INTEL_NPU_ARCHITECTURE.md) introduces
-those roles without assuming prior NPU knowledge.
-
-### Which hardware, shapes, and data types are supported?
-
-The confirmed contract is intentionally smaller than the capabilities of the
-underlying hardware. [Current limitations](wiki/LIMITATIONS.md) lists the
-validated platform, tensor, carrier, mapping, ELF, and graph-patching boundaries.
-
-### Can I use the native libraries without Python?
-
-Yes. The project exposes separate C17 interfaces for kernel compilation, graph
-compilation, patching, and execution. The [C API guide](docs/C_API.md) covers
-ownership, deployment, diagnostics, and component-level use; the detailed
-binary observations remain under [`ABI/`](ABI/).
-
-### How do I build, test, or contribute to the native project?
-
-The [development guide](wiki/DEVELOPMENT.md) describes the CMake presets,
-native targets, unified worker, CLI, package layout, offline tests, and opt-in
-hardware tests.
+- **[Getting MoviTools](wiki/GET_MOVITOOLS.md)** — obtain the compiler toolchain without installing the legacy driver
+- **[Python API](wiki/PYTHON_API.md)** — construct, compile, and execute graphs from Python
+- **[Writing custom kernels](wiki/CUSTOM_KERNELS.md)** — C entry point, tensor contract, and examples
+- **[How npunlock works](wiki/HOW_NPUNLOCK_WORKS.md)** — graph compilation and custom-kernel integration
+- **[From model to machine code](wiki/MODEL_TO_MACHINE_CODE.md)** — step-by-step lowering and the components involved
+- **[Intel NPU architecture](wiki/INTEL_NPU_ARCHITECTURE.md)** — DPU and ACT-SHAVE overview
+- **[Current limitations](wiki/LIMITATIONS.md)** — verified hardware and ABI scope
+- **[Development and native APIs](wiki/DEVELOPMENT.md)** — CMake, testing, packaging, CLI, and C interfaces
+- **[Full documentation index](wiki/README.md)**
 
 ## License
 
