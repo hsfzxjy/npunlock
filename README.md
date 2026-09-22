@@ -2,11 +2,7 @@
 
 ![How npunlock adds custom C kernels to an Intel NPU graph](docs/npunlock-intro.svg)
 
-`npunlock` lets you write custom operations in C and run them inside a graph on
-an Intel Core Ultra NPU. It works alongside the installed Intel NPU driver,
-which still compiles the surrounding graph and executes the final binary.
-
-The verified target is Windows x64 with Meteor Lake / NPU3720.
+`npunlock` lets you run operations on Intel Core Ultra NPUs that are not supported by the normal software stack. You write the operation in C, use it alongside a regular neural-network graph, and `npunlock` turns the result into an NPU program that runs on the device. `npunlock` has been verified for Windows x64 with Meteor Lake / NPU3720. 
 
 ## Quick example
 
