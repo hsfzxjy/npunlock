@@ -3,20 +3,18 @@ import npunlock as npu
 
 
 gelu_c: bytes = b"""
+#define MLIBM_DEFINE_LINK_COMPAT 1
 #include <npunlock/npu3720_kernel.h>
 
 /* Calibrated contiguous/static FP16 ACT entry, derived from marker-dims.c.
  * Metadata validation/general stride/layout handling are not established.
  * Reads the ACT input (already DPU add(x,bias)), not the graph's host input.
  */
-NPUNLOCK_NPU3720_MLIBM_DEFINE_LINK_COMPAT()
-
 void controlled_act(unsigned layerParams) {
-    npunlock_npu3720_act_abi_invocation invocation;
-    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 2048u, invocation);
-    const __fp16 *in =
-        NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
-    __fp16 *out = NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);
+    act_abi_invocation invocation;
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 2048u, invocation);
+    const __fp16 *in = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
+    __fp16 *out = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);
     const float SQRT_2_DIV_PI = 0.7978845608028654f;
     for (unsigned i = 0; i < invocation.element_count; ++i) {
       float x = (float) in[i];

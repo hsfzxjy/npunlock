@@ -16,13 +16,11 @@ weighted_mix_c: bytes = b"""
  * partitions its binary carrier into four invocations of eight elements.
  */
 void controlled_act(unsigned layerParams) {
-    npunlock_npu3720_act_abi_invocation invocation;
-    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 32u, invocation);
-    const __fp16 *a =
-        NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
-    const __fp16 *b =
-        NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 1u);
-    __fp16 *out = NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 2u);
+    act_abi_invocation invocation;
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 32u, invocation);
+    const __fp16 *a = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
+    const __fp16 *b = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 1u);
+    __fp16 *out = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 2u);
     for (unsigned i = 0; i < invocation.element_count; ++i) {
         float lhs = (float)a[i];
         float rhs = (float)b[i];

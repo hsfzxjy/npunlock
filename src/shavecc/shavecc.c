@@ -126,10 +126,12 @@ static npunlock_status append_log(npunlock_buffer *destination, npunlock_view so
 static npunlock_status expand_npu3720_kernel_include(npunlock_view source,
                                                      npunlock_buffer *expanded,
                                                      npunlock_view *compiler_source) {
+  static const char feature[] = "#define MLIBM_DEFINE_LINK_COMPAT 1";
   static const char directive[] = "#include <npunlock/npu3720_kernel.h>";
   npunlock_view header = shavecc_npu3720_kernel_header();
   char line_marker[64];
   size_t offset = 0;
+  size_t include_start;
   size_t next_line = 1;
   size_t marker_size;
   size_t expanded_size;
@@ -144,6 +146,33 @@ static npunlock_status expand_npu3720_kernel_include(npunlock_view source,
     }
     ++offset;
   }
+  if (source.size - offset >= sizeof(feature) - 1 &&
+      memcmp(source.data + offset, feature, sizeof(feature) - 1) == 0) {
+    offset += sizeof(feature) - 1;
+    while (offset < source.size && (source.data[offset] == ' ' || source.data[offset] == '\t')) {
+      ++offset;
+    }
+    if (offset < source.size && source.data[offset] == '\r') {
+      ++offset;
+      if (offset < source.size && source.data[offset] == '\n') {
+        ++offset;
+      }
+      ++next_line;
+    } else if (offset < source.size && source.data[offset] == '\n') {
+      ++offset;
+      ++next_line;
+    } else {
+      return NPUNLOCK_STATUS_OK;
+    }
+    while (offset < source.size && (source.data[offset] == ' ' || source.data[offset] == '\t' ||
+                                    source.data[offset] == '\r' || source.data[offset] == '\n')) {
+      if (source.data[offset] == '\n') {
+        ++next_line;
+      }
+      ++offset;
+    }
+  }
+  include_start = offset;
   if (source.size - offset < sizeof(directive) - 1 ||
       memcmp(source.data + offset, directive, sizeof(directive) - 1) != 0) {
     return NPUNLOCK_STATUS_OK;
@@ -170,7 +199,8 @@ static npunlock_status expand_npu3720_kernel_include(npunlock_view source,
     return NPUNLOCK_STATUS_INTERNAL_ERROR;
   }
   marker_size = (size_t)marker_length;
-  if (!npunlock_checked_add_size(header.size, marker_size, &expanded_size) ||
+  if (!npunlock_checked_add_size(include_start, header.size, &expanded_size) ||
+      !npunlock_checked_add_size(expanded_size, marker_size, &expanded_size) ||
       !npunlock_checked_add_size(expanded_size, source.size - offset, &expanded_size)) {
     return NPUNLOCK_STATUS_OVERFLOW;
   }
@@ -178,9 +208,11 @@ static npunlock_status expand_npu3720_kernel_include(npunlock_view source,
   if (data == NULL) {
     return NPUNLOCK_STATUS_OUT_OF_MEMORY;
   }
-  memcpy(data, header.data, header.size);
-  memcpy(data + header.size, line_marker, marker_size);
-  memcpy(data + header.size + marker_size, source.data + offset, source.size - offset);
+  memcpy(data, source.data, include_start);
+  memcpy(data + include_start, header.data, header.size);
+  memcpy(data + include_start + header.size, line_marker, marker_size);
+  memcpy(data + include_start + header.size + marker_size, source.data + offset,
+         source.size - offset);
   if (npunlock_buffer_adopt_malloc(data, expanded_size, expanded) != NPUNLOCK_STATUS_OK) {
     free(data);
     return NPUNLOCK_STATUS_INTERNAL_ERROR;

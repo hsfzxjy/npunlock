@@ -85,9 +85,8 @@ y = npu.custom(
 #include <npunlock/npu3720_kernel.h>
 
 void controlled_act(unsigned layerParams) {
-    npunlock_npu3720_act_abi_invocation invocation;
-    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(
-        layerParams, 1024u, invocation);
+    act_abi_invocation invocation;
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 1024u, invocation);
     /* Use the INPUT_PTR32/OUTPUT_PTR32 helpers, then compute the result. */
 }
 """,

@@ -3,6 +3,7 @@ import npunlock as npu
 
 
 gelu_c: bytes = b"""
+#define MLIBM_DEFINE_LINK_COMPAT 1
 #include <npunlock/npu3720_kernel.h>
 
 /* Calibrated contiguous/static FP32 ACT entry, derived from marker-dims.c.
@@ -10,13 +11,11 @@ gelu_c: bytes = b"""
  * The carrier is marked precision-sensitive and compiled in ACCURACY mode so
  * the UMD retains one FP32 ACT group instead of FP32->FP16->FP32 conversion.
  */
-NPUNLOCK_NPU3720_MLIBM_DEFINE_LINK_COMPAT()
-
 void controlled_act(unsigned layerParams) {
-    npunlock_npu3720_act_abi_invocation invocation;
-    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 2048u, invocation);
-    const float *in = NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
-    float *out = NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(float, invocation, 1u);
+    act_abi_invocation invocation;
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 2048u, invocation);
+    const float *in = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
+    float *out = ACT_ABI_OUTPUT_PTR32(float, invocation, 1u);
     const float SQRT_2_DIV_PI = 0.7978845608028654f;
     for (unsigned i = 0; i < invocation.element_count; ++i) {
       float x = in[i];

@@ -21,24 +21,24 @@ default entry function:
 void controlled_act(unsigned layerParams);
 ```
 
-`shavecc` recognizes that exact include as the first non-whitespace directive
-and expands it from bytes embedded in `npunlock.dll`. No temporary file or
-installed include search path is involved. The physical header is also
-installed by the native package and included in Python wheels for source
-browsing and editor support.
+`shavecc` recognizes that exact include as the first non-whitespace directive,
+or immediately after the math feature switch documented below, and expands it
+from bytes embedded in `npunlock.dll`. No temporary file or installed include
+search path is involved. The physical header is also installed by the native
+package and included in Python wheels for source browsing and editor support.
 
-The filename and helper names deliberately contain `npu3720`: the header
-encodes the observed NPU3720 ACT layout, including low-32-bit pointers and
-0x28-byte tensor records. It is not a portable SHAVE or future-NPU ABI.
+The filename carries the NPU generation namespace. The header encodes the
+observed NPU3720 ACT layout, including low-32-bit pointers and 0x28-byte tensor
+records. It is not a portable SHAVE or future-NPU ABI.
 
 The main helpers are:
 
-- `npunlock_npu3720_act_abi_load_le_u32()` for raw little-endian fields;
-- `NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN()` for guarded rank,
+- `act_abi_load_le_u32()` for raw little-endian fields;
+- `ACT_ABI_LOAD_INVOCATION32_OR_RETURN()` for guarded rank,
   dimensions, and element-count loading;
-- `NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32()` and
-  `NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32()` for tensor addresses; and
-- `NPUNLOCK_NPU3720_MLIBM_DEFINE_LINK_COMPAT()` for the link-compatibility
+- `ACT_ABI_INPUT_PTR32()` and `ACT_ABI_OUTPUT_PTR32()` for tensor addresses;
+  and
+- `MLIBM_DEFINE_LINK_COMPAT` as the opt-in switch for link-compatibility
   symbols required by the observed `mlibm.a` math path.
 
 `layerParams` is the low 32-bit address of the current invocation's parameter
@@ -56,13 +56,11 @@ This complete kernel adds one to every element in its invocation-local chunk:
 #include <npunlock/npu3720_kernel.h>
 
 void controlled_act(unsigned layerParams) {
-    npunlock_npu3720_act_abi_invocation invocation;
-    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(
-        layerParams, 2048u, invocation);
+    act_abi_invocation invocation;
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 2048u, invocation);
     const __fp16 *input =
-        NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
-    __fp16 *output =
-        NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);
+        ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
+    __fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);
 
     for (unsigned i = 0; i < invocation.element_count; ++i) {
         output[i] = (__fp16)((float)input[i] + 1.0f);
@@ -158,11 +156,12 @@ MoviTools' `mlibm.a` supplies functions such as `tanhf`. `shavecc` links the
 archive with section garbage collection so only reachable code remains.
 
 The observed archive also leaves references to `strtof`, `__truncdfsf2`, and
-`__fixsfdi`. A kernel using this math path should invoke the bundled definition
-once, outside any function:
+`__fixsfdi`. A kernel using this math path should enable the bundled definitions
+before including the header:
 
 ```c
-NPUNLOCK_NPU3720_MLIBM_DEFINE_LINK_COMPAT()
+#define MLIBM_DEFINE_LINK_COMPAT 1
+#include <npunlock/npu3720_kernel.h>
 ```
 
 The macro supplies the correct symbol signatures, deterministic unused stubs,

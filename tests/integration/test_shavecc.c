@@ -57,13 +57,13 @@ static void release_file(file_buffer *buffer) {
 
 int main(void) {
   static const uint8_t included_source[] =
+      "#define MLIBM_DEFINE_LINK_COMPAT 1\n"
       "#include <npunlock/npu3720_kernel.h>\n"
       "void controlled_act(unsigned layerParams) {\n"
-      "  npunlock_npu3720_act_abi_invocation invocation;\n"
-      "  NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 16u, invocation);\n"
-      "  const __fp16 *in = "
-      "NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);\n"
-      "  __fp16 *out = NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);\n"
+      "  act_abi_invocation invocation;\n"
+      "  ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 16u, invocation);\n"
+      "  const __fp16 *in = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);\n"
+      "  __fp16 *out = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);\n"
       "  for (unsigned i = 0; i < invocation.element_count; ++i) out[i] = in[i] + 1.0f;\n"
       "}\n";
   static const uint8_t target[] = "3720xx";

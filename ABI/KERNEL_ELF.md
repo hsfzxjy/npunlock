@@ -147,7 +147,7 @@ validated.
 
 Kernel source may start with the virtual include
 `#include <npunlock/npu3720_kernel.h>`. `shavecc` expands it from an embedded
-copy before compilation. Its NPU3720-prefixed helpers implement the descriptor
+copy before compilation. Its target-scoped helpers implement the descriptor
 loads and guarded element-count calculation described below; they are a
 convenience over this observed contract, not evidence of a broader ABI.
 

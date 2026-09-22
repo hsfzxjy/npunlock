@@ -120,12 +120,14 @@ unified worker. The returned ELF has already passed the project's narrow SHAVE
 validation contract.
 
 Kernel source may begin with the exact virtual include
-`#include <npunlock/npu3720_kernel.h>`. `shavecc` expands that first directive
-from embedded bytes before invoking MoviTools, so the public API remains
-buffer-only and does not depend on an include directory. The installed header
-provides NPU3720-prefixed metadata, pointer, tensor-record, and `mlibm.a`
-link-compatibility helpers. `shavecc_npu3720_kernel_header()` returns the same
-immutable library-owned bytes for inspection or provenance hashing.
+`#include <npunlock/npu3720_kernel.h>`. `shavecc` expands it from embedded bytes
+before invoking MoviTools, so the public API remains buffer-only and does not
+depend on an include directory. The optional
+`#define MLIBM_DEFINE_LINK_COMPAT 1` feature switch may immediately precede the
+include. The installed target-scoped header provides metadata, pointer,
+tensor-record, and `mlibm.a` link-compatibility helpers.
+`shavecc_npu3720_kernel_header()` returns the same immutable library-owned bytes
+for inspection or provenance hashing.
 
 An empty `shavecc_options.linker_script` view selects the Apache-2.0 NPU3720
 script embedded in the library. A non-empty view is used verbatim as a caller
