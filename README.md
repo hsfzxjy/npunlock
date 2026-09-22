@@ -1,28 +1,12 @@
 # npunlock
 
-**Custom C kernels for Intel Core Ultra NPUs.**
+![How npunlock adds custom C kernels to an Intel NPU graph](docs/npunlock-intro.svg)
 
 `npunlock` lets you write custom operations in C and run them inside a graph on
-an Intel Core Ultra NPU. Intel normally exposes the NPU through model- and
-graph-level APIs; `npunlock` opens a path to the programmable processors behind
-some of those graph operations.
+an Intel Core Ultra NPU. It works alongside the installed Intel NPU driver,
+which still compiles the surrounding graph and executes the final binary.
 
-The currently verified platform is Windows x64 with Meteor Lake / NPU3720. The
-installed Intel NPU driver still compiles the surrounding graph and handles
-hardware execution—`npunlock` adds the custom code path.
-
-```text
-Python graph + C kernel
-          |
-          v
-       npunlock
-          |
-          v
- Intel NPU driver
-          |
-          v
-         NPU
-```
+The verified target is Windows x64 with Meteor Lake / NPU3720.
 
 ## Quick example
 
@@ -66,25 +50,18 @@ input_value = np.linspace(-4, 4, 2048, dtype=np.float16).reshape(1, -1)
 output = program.run({"x": input_value})["gelu"]
 ```
 
-In short: the C computation becomes NPU machine code and runs as part of the
-graph. See the complete, runnable [FP16 GELU example](examples/example_gelu.py),
-plus the [FP32 GELU](examples/example_gelu_f32.py) and
+See the complete, runnable [FP16 GELU example](examples/example_gelu.py), plus
+the [FP32 GELU](examples/example_gelu_f32.py) and
 [multi-layer two-input](examples/example_multilayer_multi_input.py) examples.
 
 ## Why npunlock?
 
-OpenVINO and Intel's public graph APIs let applications submit operations that
-the graph compiler understands. They do not provide a normal user-facing path
-equivalent to:
-
-```text
-kernel.c -> custom ACT-SHAVE kernel -> NPU graph
-```
-
-ACT-SHAVE processors are the programmable part of the NPU used for software
-kernels. `npunlock` compiles user C for those processors and integrates it into
-a compatible graph, while Intel's existing compiler and driver remain
-responsible for the graph's execution environment.
+Intel's normal NPU software accepts graphs made from operations its compiler
+supports; it does not expose a public workflow for supplying a C implementation
+for an operation. The NPU's ACT-SHAVE processors are programmable and run
+software kernels. `npunlock` makes those processors usable for compatible
+custom graph operations while retaining Intel's compiler and driver for the
+surrounding graph and hardware execution.
 
 ## Requirements
 
