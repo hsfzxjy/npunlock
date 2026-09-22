@@ -6,48 +6,64 @@
 
 ## Quick example
 
-This is the computation at the heart of the runnable GELU kernel:
-
-```c
-/* Abbreviated computation body: not a complete ACT entry point. */
-for (unsigned i = 0; i < count; ++i) {
-    float x = (float)in[i];
-    float w = x + 0.044715f * x * x * x;
-    w = tanhf(w * 0.79788456f);
-    out[i] = (__fp16)(0.5f * x * (1.0f + w));
-}
-```
-
-The bundled `npunlock/npu3720_kernel.h` target header supplies invocation
-metadata loading, tensor-address helpers, and MoviTools math compatibility
-code. The complete source uses those helpers around this loop. Python then
-places the C kernel inside an NPU graph:
+This complete FP32 GELU example embeds the C kernel in Python, places it in an
+NPU graph, and checks the result against NumPy. The bundled
+`npunlock/npu3720_kernel.h` target header supplies the NPU3720 invocation and
+tensor-address helpers.
 
 ```python
 import numpy as np
 import npunlock as npu
 
-from examples.example_gelu import gelu_c
-
 npu.configure(movi_dll_dir=r"C:\path\to\MVC_DEPEND")
 
-x = npu.input("x", shape=(1, 2048), dtype="f16")
+gelu_c: bytes = b"""
+#define MLIBM_DEFINE_LINK_COMPAT 1
+#include <npunlock/npu3720_kernel.h>
+
+void controlled_act(unsigned layerParams) {
+    act_abi_invocation invocation;
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
+    const float *in = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
+    float *out = ACT_ABI_OUTPUT_PTR32(float, invocation, 1u);
+    const float SQRT_2_DIV_PI = 0.7978845608028654f;
+    for (unsigned i = 0; i < invocation.element_count; ++i) {
+        float x = in[i];
+        float w = x + 0.044715f * x * x * x;
+        w = tanhf(w * SQRT_2_DIV_PI);
+        out[i] = 0.5f * x * (1.0f + w);
+    }
+}
+"""
+
+N = 2048
+x = npu.input("x", shape=(1, N), dtype="f32")
 y = npu.custom(
     x,
     source=gelu_c,
     carrier="Abs",
     _shape=x.shape,
     _dtype=x.dtype,
-    _name="gelu",
+    _name="y",
 )
 
-program = npu.compile(npu.Graph(inputs=[x], outputs=[y], name="gelu_example"))
-input_value = np.linspace(-4, 4, 2048, dtype=np.float16).reshape(1, -1)
-output = program.run({"x": input_value})["gelu"]
+program = npu.compile(npu.Graph(inputs=[x], outputs=[y], name="gelu_f32_example"))
+
+input_value = np.linspace(-4, 4, N, dtype=np.float32).reshape(1, -1)
+output = program.run({"x": input_value})["y"]
+reference = 0.5 * input_value * (
+    1.0
+    + np.tanh(
+        np.sqrt(2.0 / np.pi)
+        * (input_value + 0.044715 * input_value**3)
+    )
+)
+print(f"maximum absolute error: {np.max(np.abs(output - reference)):g}")
 ```
 
-See the complete, runnable [FP16 GELU example](examples/example_gelu.py), plus
-the [FP32 GELU](examples/example_gelu_f32.py) and
+The same code is available as the runnable
+[FP32 GELU example](examples/example_gelu_f32.py). See also the
+[FP16 GELU](examples/example_gelu.py) and
 [multi-layer two-input](examples/example_multilayer_multi_input.py) examples.
 
 ## Why npunlock?
