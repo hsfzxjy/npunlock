@@ -35,6 +35,7 @@ These pages are intended for readers working on the native implementation:
 - [Native graph ELF ABI](../ABI/GRAPH_ELF.md)
 - [ACT kernel ELF ABI](../ABI/KERNEL_ELF.md)
 - [MoviTools DLL contract](../ABI/MOVITOOLS.md)
+- [MoviTools math-library symbols](../ABI/MLIBM_SYMBOLS.md)
 - [C API guide](../docs/C_API.md)
 
 [Back to the project README](../README.md)

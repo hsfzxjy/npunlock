@@ -57,6 +57,12 @@ kernel source. This is observed toolchain behavior, not a claim that every host
 call, `mlibm.a` resolves it, and the linked ELF remains within the validated
 kernel contract.
 
+The separate [`mlibm.a` symbol inventory](MLIBM_SYMBOLS.md) contains all
+externally defined names observed in the tested archive. These are symbols
+that may be referenced, not confirmed prototypes. The archive does not encode
+C signatures; likely signatures can be inferred from conventional function
+names or existing `libm` implementations and then verified experimentally.
+
 The public interfaces accept this directory through:
 
 - the C `shavecc_options` structure;
@@ -289,6 +295,7 @@ execution path.
 ## Related public documentation
 
 - [KERNEL_ELF.md](KERNEL_ELF.md) describes the ELF that the linker must return.
+- [MLIBM_SYMBOLS.md](MLIBM_SYMBOLS.md) inventories the tested math archive.
 - [GRAPH_ELF.md](GRAPH_ELF.md) describes how its `.text` image is installed in
   a native graph.
 - [C API](../docs/C_API.md) documents the public `shavecc` interface.

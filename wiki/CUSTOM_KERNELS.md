@@ -162,6 +162,12 @@ complete supported-symbol catalog, so a host platform's `libm` is not the
 contract: the function must be accepted by MoviTools, resolve from `mlibm.a`,
 and produce a kernel ELF that passes the restrictions below.
 
+The [observed `mlibm.a` symbol inventory](../ABI/MLIBM_SYMBOLS.md) lists the
+names that may be referenced. The archive does not determine their C
+signatures. A likely signature can be inferred from the conventional function
+name or an existing `libm` implementation, but it must be treated as inferred
+until compilation and execution against a host oracle confirm it.
+
 The observed archive also leaves references to `strtof`, `__truncdfsf2`, and
 `__fixsfdi`. A kernel using this math path should enable the bundled definitions
 before including the header:

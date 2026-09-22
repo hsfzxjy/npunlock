@@ -11,7 +11,8 @@ NPU graph, and checks the result against NumPy. The bundled
 `npunlock/npu3720_kernel.h` target header supplies the NPU3720 invocation and
 tensor-address helpers. The tested MoviTools toolchain makes most conventional
 `libm` functions available to kernels without including `<math.h>`; this
-example calls `tanhf` directly.
+example calls `tanhf` directly. See the
+[`mlibm.a` symbol inventory](ABI/MLIBM_SYMBOLS.md) for the observed candidates.
 
 ```python
 import numpy as np
