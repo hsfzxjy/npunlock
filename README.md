@@ -8,7 +8,7 @@ graph-level APIs; `npunlock` opens a path to the programmable processors behind
 some of those graph operations.
 
 The currently verified platform is Windows x64 with Meteor Lake / NPU3720. The
-current Intel NPU driver still compiles the surrounding graph and handles
+installed Intel NPU driver still compiles the surrounding graph and handles
 hardware execution—`npunlock` adds the custom code path.
 
 ```text
@@ -88,7 +88,7 @@ responsible for the graph's execution environment.
 
 - Windows x64
 - Meteor Lake / Intel NPU3720
-- a current Intel NPU driver
+- an installed Intel NPU driver for the device
 - Python 3.10 or newer
 - CMake 3.24 or newer and an installed MSVC toolchain for source installation
 - the extracted MoviTools `MVC_DEPEND` toolchain for custom C compilation
@@ -117,7 +117,7 @@ that driver**.
 Keep the two roles separate:
 
 ```text
-current installed Intel NPU driver
+installed Intel NPU driver
   -> graph compilation, Level Zero, and hardware execution
 
 extracted Lenovo 31.0.100.1688 package
