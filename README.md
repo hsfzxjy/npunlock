@@ -38,8 +38,10 @@ for (unsigned i = 0; i < count; ++i) {
 }
 ```
 
-The complete source wraps this loop in the required entry point and tensor
-descriptor handling. Python places that C kernel inside an NPU graph:
+The bundled `npunlock/npu3720_kernel.h` target header supplies invocation
+metadata loading, tensor-address helpers, and MoviTools math compatibility
+code. The complete source uses those helpers around this loop. Python then
+places the C kernel inside an NPU graph:
 
 ```python
 import numpy as np
@@ -94,7 +96,7 @@ responsible for the graph's execution environment.
 - the extracted MoviTools `MVC_DEPEND` toolchain for custom C compilation
 
 OpenVINO is not required as a runtime, Python package, or compiler frontend.
-`npunlock` does emit OpenVINO-format IR for the current Intel driver.
+`npunlock` does emit OpenVINO-format IR for the installed Intel driver.
 
 ## Install
 

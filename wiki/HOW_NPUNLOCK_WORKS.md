@@ -26,7 +26,7 @@ Python graph description
 carrier graph in OpenVINO-format IR
         |
         v
-current Intel NPU driver compiles a native graph
+installed Intel NPU driver compiles a native graph
         |
         +-------------------------------+
                                         |
@@ -42,7 +42,7 @@ user C                                  |
                 patched native graph
                         |
                         v
-              current Intel NPU driver
+              installed Intel NPU driver
                         |
                         v
                        NPU
@@ -85,7 +85,7 @@ then sends it to the Intel NPU Level Zero graph extension. The current NPU
 driver selects its installed graph compiler, creates all native scheduling and
 memory structures, and exports the complete native graph blob.
 
-This step uses the machine's current NPU driver. It does not use the old Lenovo
+This step uses the machine's installed NPU driver. It does not use the old Lenovo
 driver package from which MoviTools is extracted.
 
 ## 3. Compile the custom C separately
@@ -141,7 +141,7 @@ validated contract.
 
 ## 6. Execute and validate semantics
 
-`graphinfer` loads the patched native graph through the current Intel driver,
+`graphinfer` loads the patched native graph through the installed Intel driver,
 binds caller-provided tensors, executes with a finite deadline, and returns
 owned output buffers. Python's `Program.run()` converts those buffers into
 NumPy arrays.

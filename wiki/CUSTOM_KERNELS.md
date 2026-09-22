@@ -12,22 +12,38 @@ is not a general Intel SHAVE ABI.
 
 ## Entry point
 
-The default entry function is:
+Start NPU3720 kernel source with the bundled target header, then define the
+default entry function:
 
 ```c
+#include <npunlock/npu3720_kernel.h>
+
 void controlled_act(unsigned layerParams);
 ```
 
-`layerParams` is the low 32-bit address of the current invocation's parameter
-block. Pointer-bearing fields should be loaded explicitly as little-endian
-32-bit values:
+`shavecc` recognizes that exact include as the first non-whitespace directive
+and expands it from bytes embedded in `npunlock.dll`. No temporary file or
+installed include search path is involved. The physical header is also
+installed by the native package and included in Python wheels for source
+browsing and editor support.
 
-```c
-static __attribute__((always_inline)) inline unsigned load32(const unsigned char *p) {
-    return (unsigned)p[0] | ((unsigned)p[1] << 8) |
-           ((unsigned)p[2] << 16) | ((unsigned)p[3] << 24);
-}
-```
+The filename and helper names deliberately contain `npu3720`: the header
+encodes the observed NPU3720 ACT layout, including low-32-bit pointers and
+0x28-byte tensor records. It is not a portable SHAVE or future-NPU ABI.
+
+The main helpers are:
+
+- `npunlock_npu3720_act_abi_load_le_u32()` for raw little-endian fields;
+- `NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN()` for guarded rank,
+  dimensions, and element-count loading;
+- `NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32()` and
+  `NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32()` for tensor addresses; and
+- `NPUNLOCK_NPU3720_MLIBM_DEFINE_LINK_COMPAT()` for the link-compatibility
+  symbols required by the observed `mlibm.a` math path.
+
+`layerParams` is the low 32-bit address of the current invocation's parameter
+block. The header makes that assumption visible but does not turn it into a
+cross-generation contract.
 
 The dimensions array contains one 32-bit value per rank dimension. Always
 validate rank and dimension multiplication before entering the element loop.
@@ -37,27 +53,18 @@ validate rank and dimension multiplication before entering the element loop.
 This complete kernel adds one to every element in its invocation-local chunk:
 
 ```c
-static __attribute__((always_inline)) inline unsigned load32(const unsigned char *p) {
-    return (unsigned)p[0] | ((unsigned)p[1] << 8) |
-           ((unsigned)p[2] << 16) | ((unsigned)p[3] << 24);
-}
+#include <npunlock/npu3720_kernel.h>
 
 void controlled_act(unsigned layerParams) {
-    const unsigned char *params = (const unsigned char *)layerParams;
-    unsigned rank = load32(params + 0x0c);
-    const unsigned char *dims = (const unsigned char *)load32(params + 0x10);
-    unsigned count = 1;
+    npunlock_npu3720_act_abi_invocation invocation;
+    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(
+        layerParams, 2048u, invocation);
+    const __fp16 *input =
+        NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
+    __fp16 *output =
+        NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);
 
-    if (rank == 0 || rank > 15 || !dims) return;
-    for (unsigned d = 0; d < rank; ++d) {
-        unsigned dim = load32(dims + d * 4);
-        if (dim == 0 || dim > 2048u / count) return;
-        count *= dim;
-    }
-
-    const __fp16 *input = (const __fp16 *)load32(params + 0x00);
-    __fp16 *output = (__fp16 *)load32(params + 0x28);
-    for (unsigned i = 0; i < count; ++i) {
+    for (unsigned i = 0; i < invocation.element_count; ++i) {
         output[i] = (__fp16)((float)input[i] + 1.0f);
     }
 }
@@ -149,6 +156,18 @@ one-to-one to validated ACT groups. See
 
 MoviTools' `mlibm.a` supplies functions such as `tanhf`. `shavecc` links the
 archive with section garbage collection so only reachable code remains.
+
+The observed archive also leaves references to `strtof`, `__truncdfsf2`, and
+`__fixsfdi`. A kernel using this math path should invoke the bundled definition
+once, outside any function:
+
+```c
+NPUNLOCK_NPU3720_MLIBM_DEFINE_LINK_COMPAT()
+```
+
+The macro supplies the correct symbol signatures, deterministic unused stubs,
+and the tested binary32-to-integer helper. These are NPU3720/MoviTools
+link-compatibility definitions, not a general C runtime.
 
 The resulting kernel must be self-contained in `.text`. The current validator
 requires `.arg.data` to be empty, so mutable globals, retained writable library

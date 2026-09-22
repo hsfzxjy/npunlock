@@ -123,6 +123,72 @@ static npunlock_status append_log(npunlock_buffer *destination, npunlock_view so
   return npunlock_buffer_adopt_malloc(combined, combined_size, destination);
 }
 
+static npunlock_status expand_npu3720_kernel_include(npunlock_view source,
+                                                     npunlock_buffer *expanded,
+                                                     npunlock_view *compiler_source) {
+  static const char directive[] = "#include <npunlock/npu3720_kernel.h>";
+  npunlock_view header = shavecc_npu3720_kernel_header();
+  char line_marker[64];
+  size_t offset = 0;
+  size_t next_line = 1;
+  size_t marker_size;
+  size_t expanded_size;
+  uint8_t *data;
+  int marker_length;
+
+  *compiler_source = source;
+  while (offset < source.size && (source.data[offset] == ' ' || source.data[offset] == '\t' ||
+                                  source.data[offset] == '\r' || source.data[offset] == '\n')) {
+    if (source.data[offset] == '\n') {
+      ++next_line;
+    }
+    ++offset;
+  }
+  if (source.size - offset < sizeof(directive) - 1 ||
+      memcmp(source.data + offset, directive, sizeof(directive) - 1) != 0) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  offset += sizeof(directive) - 1;
+  while (offset < source.size && (source.data[offset] == ' ' || source.data[offset] == '\t')) {
+    ++offset;
+  }
+  if (offset < source.size && source.data[offset] == '\r') {
+    ++offset;
+    if (offset < source.size && source.data[offset] == '\n') {
+      ++offset;
+    }
+    ++next_line;
+  } else if (offset < source.size && source.data[offset] == '\n') {
+    ++offset;
+    ++next_line;
+  } else if (offset != source.size) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  marker_length =
+      snprintf(line_marker, sizeof(line_marker), "\n#line %zu \"entry.c\"\n", next_line);
+  if (marker_length < 0 || (size_t)marker_length >= sizeof(line_marker)) {
+    return NPUNLOCK_STATUS_INTERNAL_ERROR;
+  }
+  marker_size = (size_t)marker_length;
+  if (!npunlock_checked_add_size(header.size, marker_size, &expanded_size) ||
+      !npunlock_checked_add_size(expanded_size, source.size - offset, &expanded_size)) {
+    return NPUNLOCK_STATUS_OVERFLOW;
+  }
+  data = (uint8_t *)malloc(expanded_size);
+  if (data == NULL) {
+    return NPUNLOCK_STATUS_OUT_OF_MEMORY;
+  }
+  memcpy(data, header.data, header.size);
+  memcpy(data + header.size, line_marker, marker_size);
+  memcpy(data + header.size + marker_size, source.data + offset, source.size - offset);
+  if (npunlock_buffer_adopt_malloc(data, expanded_size, expanded) != NPUNLOCK_STATUS_OK) {
+    free(data);
+    return NPUNLOCK_STATUS_INTERNAL_ERROR;
+  }
+  *compiler_source = (npunlock_view){expanded->data, expanded->size};
+  return NPUNLOCK_STATUS_OK;
+}
+
 static npunlock_status collect_worker_logs(shavecc_result *result,
                                            const npunlock_movi_result *worker) {
   npunlock_status status = append_log(
@@ -195,6 +261,7 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
   npunlock_buffer assembler_path = {0};
   npunlock_buffer linker_path = {0};
   npunlock_buffer math_library_path = {0};
+  npunlock_buffer expanded_source = {0};
   npunlock_buffer *paths[] = {&compiler_path, &assembler_path, &linker_path, &math_library_path};
   npunlock_movi_result compiled = {0};
   npunlock_movi_result assembled = {0};
@@ -244,6 +311,12 @@ npunlock_status shavecc_compile(const shavecc_options *options, npunlock_view c_
           &result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT, "shavecc.validate",
           "compiler definitions must use the confirmed uppercase NAME=DECIMAL form");
     }
+  }
+  status = expand_npu3720_kernel_include(c_source, &expanded_source, &c_source);
+  if (status != NPUNLOCK_STATUS_OK) {
+    status = npunlock_set_diagnostic(&result->diagnostic, status, "shavecc.validate",
+                                     "failed to expand the bundled NPU3720 kernel header");
+    goto done;
   }
   status = make_path(options->movi_dll_directory_utf8, "bin\\moviCompile64.dll", &compiler_path);
   if (status == NPUNLOCK_STATUS_OK) {
@@ -385,6 +458,7 @@ done:
     }
   }
   free(compile_arguments);
+  npunlock_buffer_release(&expanded_source);
   for (index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index) {
     npunlock_buffer_release(paths[index]);
   }

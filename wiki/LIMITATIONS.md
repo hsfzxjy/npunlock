@@ -18,7 +18,7 @@ output does not match that contract.
 | FP32 | validated unary accuracy-mode carrier only |
 | binary custom kernel | one static dense FP16 carrier family, including independent host inputs |
 | kernel image | one linked executable image, shareable by selected ranges |
-| execution | current installed Intel NPU driver through Level Zero |
+| execution | installed Intel NPU driver through Level Zero |
 
 No other Intel NPU generation is claimed to work merely because it exposes a
 similar driver interface.

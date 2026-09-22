@@ -1,0 +1,10 @@
+#include "npunlock/shavecc.h"
+
+static const uint8_t npunlock_npu3720_kernel_header_data[] = {
+    @NPUNLOCK_NPU3720_KERNEL_HEADER_BYTES@
+};
+
+npunlock_view shavecc_npu3720_kernel_header(void) {
+  return (npunlock_view){npunlock_npu3720_kernel_header_data,
+                         sizeof(npunlock_npu3720_kernel_header_data)};
+}

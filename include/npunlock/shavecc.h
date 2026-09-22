@@ -39,6 +39,8 @@ NPUNLOCK_SHAVECC_API npunlock_status shavecc_compile(const shavecc_options *opti
 NPUNLOCK_SHAVECC_API void shavecc_result_release(shavecc_result *result);
 /* Immutable library-owned bytes valid for the lifetime of the loaded library. */
 NPUNLOCK_SHAVECC_API npunlock_view shavecc_default_linker_script(void);
+/* Source for the built-in <npunlock/npu3720_kernel.h> virtual include. */
+NPUNLOCK_SHAVECC_API npunlock_view shavecc_npu3720_kernel_header(void);
 
 #ifdef __cplusplus
 }

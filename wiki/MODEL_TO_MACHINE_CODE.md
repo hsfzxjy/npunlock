@@ -39,7 +39,7 @@ Intel NPU firmware and hardware
 ```
 
 `npunlock` does not replace the Intel graph compiler. It supplies the graph in
-the format accepted by the current driver, receives the resulting native
+the format accepted by the installed driver, receives the resulting native
 binary, and—only for selected custom operations—substitutes validated
 ACT-SHAVE code before the graph is loaded again.
 
@@ -205,7 +205,7 @@ Examples and new kernels therefore compare NPU output with a host-side oracle.
 
 The following boundaries are directly exercised by `npunlock`:
 
-- IR XML and weights enter through the current driver's `NGRAPH_LITE` graph
+- IR XML and weights enter through the installed driver's `NGRAPH_LITE` graph
   interface;
 - a complete native ELF graph can be exported, saved, reloaded, and executed;
 - its observed sections describe DPU, ACT, DMA, barrier, parameter, and

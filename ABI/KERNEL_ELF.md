@@ -145,6 +145,12 @@ the current graph invocation. Successful kernels read pointer-bearing fields
 with explicit little-endian 32-bit loads. High address bits have not been
 validated.
 
+Kernel source may start with the virtual include
+`#include <npunlock/npu3720_kernel.h>`. `shavecc` expands it from an embedded
+copy before compilation. Its NPU3720-prefixed helpers implement the descriptor
+loads and guarded element-count calculation described below; they are a
+convenience over this observed contract, not evidence of a broader ABI.
+
 ## Reading tensor descriptors
 
 The parameter block starts with one or more 0x28-byte tensor descriptors. A

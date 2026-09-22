@@ -8,8 +8,8 @@ and are not downloaded automatically.
 
 The known-good files are available inside an older Lenovo Intel NPU driver
 package. You only extract that package to obtain its compiler payload. **Do not
-install the legacy driver and do not replace or downgrade your current Intel
-NPU driver.** The current installed driver remains responsible for Level Zero,
+install the legacy driver and do not replace or downgrade your installed Intel
+NPU driver.** The installed driver remains responsible for Level Zero,
 graph compilation, and NPU execution.
 
 ## Package details
@@ -114,7 +114,7 @@ kernels such as GELU.
 ## Keep the two driver roles separate
 
 ```text
-current installed Intel NPU driver
+installed Intel NPU driver
   -> graph compilation, Level Zero, and hardware execution
 
 extracted Lenovo 31.0.100.1688 package

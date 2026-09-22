@@ -47,10 +47,15 @@ int main(void) {
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
   npunlock_view default_script = shavecc_default_linker_script();
+  npunlock_view kernel_header = shavecc_npu3720_kernel_header();
 
   CHECK(default_script.data != NULL && default_script.size != 0);
   CHECK(default_script.size >= sizeof("OUTPUT_FORMAT") - 1);
   CHECK(memcmp(default_script.data, "OUTPUT_FORMAT", sizeof("OUTPUT_FORMAT") - 1) == 0);
+  CHECK(kernel_header.data != NULL && kernel_header.size != 0);
+  CHECK(kernel_header.size >= sizeof("#ifndef NPUNLOCK_NPU3720_KERNEL_H") - 1);
+  CHECK(memcmp(kernel_header.data, "#ifndef NPUNLOCK_NPU3720_KERNEL_H",
+               sizeof("#ifndef NPUNLOCK_NPU3720_KERNEL_H") - 1) == 0);
 
   shave_options.struct_size = sizeof(shave_options);
   shave_options.movi_dll_directory_utf8 = (npunlock_view){path, sizeof(path) - 1};

@@ -65,10 +65,25 @@ configure_file(
   @ONLY
 )
 
+set(NPUNLOCK_NPU3720_KERNEL_HEADER
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/npunlock/npu3720_kernel.h"
+)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NPUNLOCK_NPU3720_KERNEL_HEADER}")
+file(READ "${NPUNLOCK_NPU3720_KERNEL_HEADER}" NPUNLOCK_NPU3720_KERNEL_HEADER_HEX HEX)
+string(REGEX REPLACE "([0-9a-fA-F][0-9a-fA-F])" "0x\\1,"
+  NPUNLOCK_NPU3720_KERNEL_HEADER_BYTES "${NPUNLOCK_NPU3720_KERNEL_HEADER_HEX}"
+)
+configure_file(
+  cmake/npu3720_kernel_header.c.in
+  generated/npu3720_kernel_header.c
+  @ONLY
+)
+
 add_library(npunlock_shavecc_objects OBJECT
   src/shavecc/shavecc.c
   src/shavecc/movi_stage_win32.c
   ${CMAKE_CURRENT_BINARY_DIR}/generated/default_linker_script.c
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/npu3720_kernel_header.c
 )
 target_include_directories(npunlock_shavecc_objects PRIVATE include src/common src src/shavecc)
 target_link_libraries(npunlock_shavecc_objects PRIVATE npunlock_warnings)
@@ -148,6 +163,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   include/npunlock/error.h
   include/npunlock/graphinfer.h
   include/npunlock/ir2blob.h
+  include/npunlock/npu3720_kernel.h
   include/npunlock/patchblob.h
   include/npunlock/shavecc.h
   include/npunlock/version.h

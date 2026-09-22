@@ -17,5 +17,5 @@ package-dir = {"" = "python"}
 where = ["python"]
 
 [tool.setuptools.package-data]
-npunlock = ["py.typed", "*.pyi"]
+npunlock = ["py.typed", "*.pyi", "include/npunlock/*.h"]
 "npunlock._bin" = ["*.dll", "*.exe"]

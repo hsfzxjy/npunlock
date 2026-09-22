@@ -3,6 +3,8 @@ import npunlock as npu
 
 
 weighted_mix_c: bytes = b"""
+#include <npunlock/npu3720_kernel.h>
+
 /* Calibrated static dense FP16 binary ACT entry.
  *
  * For the validated two-input carrier, the tensor records are:
@@ -13,28 +15,15 @@ weighted_mix_c: bytes = b"""
  * This example is intentionally fixed to the (1, 32) graph below. The UMD
  * partitions its binary carrier into four invocations of eight elements.
  */
-static __attribute__((always_inline)) inline unsigned load32(const unsigned char *p) {
-    return (unsigned)p[0] | ((unsigned)p[1] << 8) |
-           ((unsigned)p[2] << 16) | ((unsigned)p[3] << 24);
-}
-
 void controlled_act(unsigned layerParams) {
-    const unsigned char *params = (const unsigned char *)layerParams;
-    unsigned rank = load32(params + 0x0c);
-    const unsigned char *dims = (const unsigned char *)load32(params + 0x10);
-    if (rank == 0 || rank > 15 || !dims) return;
-
-    unsigned count = 1;
-    for (unsigned d = 0; d < rank; ++d) {
-        unsigned dim = load32(dims + d * 4);
-        if (dim == 0 || dim > 32u / count) return;
-        count *= dim;
-    }
-
-    const __fp16 *a = (const __fp16 *)load32(params + 0x00);
-    const __fp16 *b = (const __fp16 *)load32(params + 0x28);
-    __fp16 *out = (__fp16 *)load32(params + 0x50);
-    for (unsigned i = 0; i < count; ++i) {
+    npunlock_npu3720_act_abi_invocation invocation;
+    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 32u, invocation);
+    const __fp16 *a =
+        NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
+    const __fp16 *b =
+        NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 1u);
+    __fp16 *out = NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 2u);
+    for (unsigned i = 0; i < invocation.element_count; ++i) {
         float lhs = (float)a[i];
         float rhs = (float)b[i];
         out[i] = (__fp16)(lhs * 0.75f + rhs * 0.25f);

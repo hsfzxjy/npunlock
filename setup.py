@@ -69,6 +69,12 @@ class BuildPy(build_py):
         package_bin.mkdir(parents=True, exist_ok=True)
         for filename in ("npunlock.dll", "npunlock_worker.exe"):
             shutil.copy2(native_stage / "bin" / filename, package_bin / filename)
+        package_include = Path(self.build_lib) / "npunlock/include/npunlock"
+        package_include.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(
+            ROOT / "include/npunlock/npu3720_kernel.h",
+            package_include / "npu3720_kernel.h",
+        )
 
 
 class BdistWheel(bdist_wheel):

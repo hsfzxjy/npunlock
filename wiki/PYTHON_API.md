@@ -81,7 +81,16 @@ Attach C source bytes or a source-file path with `npu.custom()`:
 ```python
 y = npu.custom(
     x,
-    source=b"void controlled_act(unsigned layerParams) { /* ... */ }",
+    source=b"""
+#include <npunlock/npu3720_kernel.h>
+
+void controlled_act(unsigned layerParams) {
+    npunlock_npu3720_act_abi_invocation invocation;
+    NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(
+        layerParams, 1024u, invocation);
+    /* Use the INPUT_PTR32/OUTPUT_PTR32 helpers, then compute the result. */
+}
+""",
     carrier="Abs",
     _shape=x.shape,
     _dtype=x.dtype,
@@ -91,7 +100,8 @@ y = npu.custom(
 
 The carrier is serialized into the graph sent to Intel. The C source is
 compiled separately and installed after the native graph is returned. See
-[Custom kernels](CUSTOM_KERNELS.md) before writing a new entry function.
+[Custom kernels](CUSTOM_KERNELS.md) for the bundled NPU3720 include, entry
+function, tensor helpers, and math-link compatibility macro.
 
 Advanced callers may supply `_patch_targets`, but invocation and range indices
 are native compiler-output details. Normal code should rely on automatic

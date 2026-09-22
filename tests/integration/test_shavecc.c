@@ -8,6 +8,7 @@
 
 #define FIXTURE_ROOT "tests/fixtures/npu3720/"
 #define LINKER_SCRIPT_PATH "src/shavecc/shave_kernel.ld"
+#define KERNEL_HEADER_PATH "include/npunlock/npu3720_kernel.h"
 
 typedef struct file_buffer {
   uint8_t *data;
@@ -55,10 +56,21 @@ static void release_file(file_buffer *buffer) {
 }
 
 int main(void) {
+  static const uint8_t included_source[] =
+      "#include <npunlock/npu3720_kernel.h>\n"
+      "void controlled_act(unsigned layerParams) {\n"
+      "  npunlock_npu3720_act_abi_invocation invocation;\n"
+      "  NPUNLOCK_NPU3720_ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, 16u, invocation);\n"
+      "  const __fp16 *in = "
+      "NPUNLOCK_NPU3720_ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);\n"
+      "  __fp16 *out = NPUNLOCK_NPU3720_ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);\n"
+      "  for (unsigned i = 0; i < invocation.element_count; ++i) out[i] = in[i] + 1.0f;\n"
+      "}\n";
   static const uint8_t target[] = "3720xx";
   static const uint8_t entry[] = "controlled_act";
   file_buffer source = {0};
   file_buffer script = {0};
+  file_buffer kernel_header = {0};
   file_buffer expected = {0};
   shavecc_options options = {0};
   shavecc_result result = {0};
@@ -69,7 +81,7 @@ int main(void) {
 
   if (_dupenv_s(&movi_dll_directory, &movi_dll_directory_size, "NPUNLOCK_MOVITOOLS_DIR") != 0 ||
       movi_dll_directory_size <= 1 || !read_file(FIXTURE_ROOT "add1-fp16.c", &source) ||
-      !read_file(LINKER_SCRIPT_PATH, &script) ||
+      !read_file(LINKER_SCRIPT_PATH, &script) || !read_file(KERNEL_HEADER_PATH, &kernel_header) ||
       !read_file(FIXTURE_ROOT "add1-fp16.elf", &expected)) {
     fprintf(stderr, "NPUNLOCK_MOVITOOLS_DIR must name the MVC_DEPEND root\n");
     goto done;
@@ -83,6 +95,11 @@ int main(void) {
   if (shavecc_default_linker_script().size != script.size ||
       memcmp(shavecc_default_linker_script().data, script.data, script.size) != 0) {
     fprintf(stderr, "embedded linker script differs from its vendored source\n");
+    goto done;
+  }
+  if (shavecc_npu3720_kernel_header().size != kernel_header.size ||
+      memcmp(shavecc_npu3720_kernel_header().data, kernel_header.data, kernel_header.size) != 0) {
+    fprintf(stderr, "embedded NPU3720 kernel header differs from its installed source\n");
     goto done;
   }
   status = shavecc_compile(&options, (npunlock_view){source.data, source.size}, &result);
@@ -108,13 +125,25 @@ int main(void) {
     fprintf(stderr, "caller linker-script override did not reproduce the retained ELF\n");
     goto done;
   }
-  printf("validated built-in and caller-supplied linker scripts: %zu-byte identical ELF\n",
-         result.elf.size);
+  shavecc_result_release(&result);
+  options.linker_script = (npunlock_view){0};
+  status = shavecc_compile(&options, (npunlock_view){included_source, sizeof(included_source) - 1},
+                           &result);
+  if (status != NPUNLOCK_STATUS_OK || result.elf.size == 0) {
+    fprintf(stderr, "bundled NPU3720 kernel include did not compile\n");
+    if (result.diagnostic.json.data != NULL) {
+      fwrite(result.diagnostic.json.data, 1, result.diagnostic.json.size, stderr);
+    }
+    goto done;
+  }
+  printf("validated linker scripts and bundled %zu-byte NPU3720 kernel header\n",
+         kernel_header.size);
   return_code = 0;
 
 done:
   shavecc_result_release(&result);
   release_file(&expected);
+  release_file(&kernel_header);
   release_file(&script);
   release_file(&source);
   free(movi_dll_directory);
