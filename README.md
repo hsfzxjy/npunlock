@@ -1,8 +1,13 @@
 # npunlock
 
+Intel ships programmable SHAVE cores inside its NPUs, but the public stack
+exposes only graph-level programming. `npunlock` reconstructs the missing path
+from custom C code to a runnable NPU kernel.
+
 ![How npunlock adds custom C kernels to an Intel NPU graph](docs/npunlock-intro.svg)
 
-`npunlock` lets you run operations on Intel Core Ultra NPUs that are not supported by the normal software stack. You write the operation in C, use it alongside a regular neural-network graph, and `npunlock` turns the result into an NPU program that runs on the device. `npunlock` has been verified for Windows x64 with Meteor Lake / NPU3720. 
+The current implementation has been verified on Windows x64 with Meteor Lake /
+NPU3720.
 
 ## Quick example
 
