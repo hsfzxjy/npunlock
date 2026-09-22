@@ -147,6 +147,23 @@ NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
 Other NPU generations have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 
+## Help test Linux and newer NPUs
+
+Have an NPU3720 Linux system or a newer Intel NPU? Contributions are welcome.
+Two routes look especially promising but remain untested:
+
+- a patched NPU3720 graph produced on Windows may run on Linux because the NPU
+  firmware executes the custom machine code; building SHAVE code on Linux would
+  additionally require a way to load the Windows MoviTools DLLs;
+- newer NPUs may execute the existing `3720xx` SHAVE image, or an older OEM
+  driver package for that generation may provide matching MoviTools components.
+
+Both need hardware validation, driver/firmware version records, and output
+comparison against a host oracle. If you can test either path, feedback, failure
+reports, and code contributions are welcome. See
+[Porting to Linux and newer NPUs](wiki/PORTING.md) for the hypotheses, caveats,
+and a suggested test plan.
+
 ## Documentation
 
 - **[Getting MoviTools](wiki/GET_MOVITOOLS.md)** — obtain the compiler toolchain without installing the legacy driver
@@ -156,6 +173,7 @@ Other NPU generations have not been verified. See
 - **[From model to machine code](wiki/MODEL_TO_MACHINE_CODE.md)** — step-by-step lowering and the components involved
 - **[Intel NPU architecture](wiki/INTEL_NPU_ARCHITECTURE.md)** — DPU and ACT-SHAVE overview
 - **[Current limitations](wiki/LIMITATIONS.md)** — verified hardware and ABI scope
+- **[Porting to Linux and newer NPUs](wiki/PORTING.md)** — experimental routes and contribution guide
 - **[Development and native APIs](wiki/DEVELOPMENT.md)** — CMake, testing, packaging, CLI, and C interfaces
 - **[Full documentation index](wiki/README.md)**
 

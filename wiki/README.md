@@ -13,6 +13,8 @@ and where the current compatibility boundary lies.
   unary and binary ACT contracts.
 - [Current limitations](LIMITATIONS.md) — supported platform, tensor, graph,
   and kernel boundaries.
+- [Porting to Linux and newer NPUs](PORTING.md) — unverified compatibility
+  hypotheses, suggested experiments, and how to contribute results.
 
 ## How it works
 

@@ -113,6 +113,10 @@ The observed binary formats and DLL entry points are not published stable
 vendor ABIs. Changes to MoviTools, the Intel graph compiler, or the native graph
 format may require new validation.
 
+Possible Linux and newer-generation paths are documented separately as
+unverified hypotheses in [Porting to Linux and newer NPUs](PORTING.md). They do
+not expand the supported baseline above.
+
 For implementation details, see [How npunlock works](HOW_NPUNLOCK_WORKS.md)
 and the [binary-format references](README.md#binary-format-references).
 
