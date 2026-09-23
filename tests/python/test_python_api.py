@@ -138,9 +138,7 @@ class SerializationTests(unittest.TestCase):
         )
         serialized = npu.serialize_ir(npu.Graph([x], [y]))
         root = ET.fromstring(serialized.xml)
-        attribute = root.find(
-            "./layers/layer[@name='custom_f32']/rt_info/attribute"
-        )
+        attribute = root.find("./layers/layer[@name='custom_f32']/rt_info/attribute")
         self.assertIsNotNone(attribute)
         self.assertEqual(
             attribute.attrib,
@@ -158,11 +156,10 @@ class NativeLayoutTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(_native._native_directory(None), bundled)
         with patch.dict("os.environ", {"NPUNLOCK_NATIVE_DIR": "environment-native"}, clear=True):
+            self.assertEqual(_native._native_directory(None), Path("environment-native").resolve())
             self.assertEqual(
-                _native._native_directory(None), Path("environment-native").resolve()
-            )
-            self.assertEqual(
-                _native._native_directory("explicit-native"), Path("explicit-native").resolve()
+                _native._native_directory("explicit-native"),
+                Path("explicit-native").resolve(),
             )
 
     @unittest.skipUnless(ctypes.sizeof(ctypes.c_void_p) == 8, "MVP ABI is Windows x64")
@@ -346,9 +343,7 @@ class CompilationFlowTests(unittest.TestCase):
     def test_large_custom_op_accepts_exact_cover_partition_groups(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f32")
         y = npu.custom(x, source=b"kernel", carrier="Abs")
-        targets = tuple(
-            npu.PatchTarget(index, index, 1, 8, 32, 0x3B) for index in range(4)
-        )
+        targets = tuple(npu.PatchTarget(index, index, 1, 8, 32, 0x3B) for index in range(4))
         fake = FakeNative()
         fake.discovery_groups = ((targets[0], targets[1]), (targets[2], targets[3]))
 
@@ -572,9 +567,7 @@ class CompilationFlowTests(unittest.TestCase):
 
         np.add(values, np.float16(2), out=shared_input)
         squared = np.square(shared_input)
-        result = program.run(
-            {"x": shared_input}, outputs={"Result_0": shared_output}
-        )
+        result = program.run({"x": shared_input}, outputs={"Result_0": shared_output})
 
         self.assertIs(result["Result_0"], shared_output)
         np.testing.assert_array_equal(shared_input, values + np.float16(2))
@@ -598,9 +591,7 @@ class CompilationFlowTests(unittest.TestCase):
             from_bytes = npu.load_native(
                 bytearray(program.to_bytes()), graph=graph, libraries=fake  # type: ignore[arg-type]
             )
-            from_file = npu.load_native_file(
-                path, graph=graph, libraries=fake  # type: ignore[arg-type]
-            )
+            from_file = npu.load_native_file(path, graph=graph, libraries=fake)  # type: ignore[arg-type]
 
         self.assertIsNone(from_bytes.serialized_ir)
         self.assertIsNone(from_bytes.ir_provenance)

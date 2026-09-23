@@ -25,11 +25,7 @@ void controlled_act(unsigned layerParams) {
 
 def gelu_reference(value: np.ndarray) -> np.ndarray:
     value_f32 = value.astype(np.float32)
-    return (
-        0.5
-        * value_f32
-        * (1.0 + np.tanh(np.sqrt(2.0 / np.pi) * (value_f32 + 0.044715 * value_f32**3)))
-    )
+    return 0.5 * value_f32 * (1.0 + np.tanh(np.sqrt(2.0 / np.pi) * (value_f32 + 0.044715 * value_f32**3)))
 
 
 def main() -> None:

@@ -36,9 +36,7 @@ class _View(ctypes.Structure):
     _fields_ = [("data", ctypes.POINTER(ctypes.c_uint8)), ("size", ctypes.c_size_t)]
 
 
-_ReleaseFn = ctypes.CFUNCTYPE(
-    None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t
-)
+_ReleaseFn = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t)
 
 
 class _Buffer(ctypes.Structure):
@@ -343,9 +341,7 @@ class NativeSharedBuffer:
 
     def release(self) -> None:
         if not self._released:
-            self._session._libraries.infer.graphinfer_shared_buffer_release(
-                ctypes.byref(self._native)
-            )
+            self._session._libraries.infer.graphinfer_shared_buffer_release(ctypes.byref(self._native))
             self._released = True
 
     def __del__(self) -> None:
@@ -366,7 +362,11 @@ class InferenceSession:
         self._libraries = libraries
         graph_view, graph_owner = _owned_view(graph_blob)
         options = _InferOptions(
-            ctypes.sizeof(_InferOptions), 0xFFFFFFFF, 0xFFFFFFFF, timeout_ms, _View(None, 0)
+            ctypes.sizeof(_InferOptions),
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+            timeout_ms,
+            _View(None, 0),
         )
         self._result = _InferSessionResult()
         self._result.struct_size = ctypes.sizeof(_InferSessionResult)
@@ -388,9 +388,7 @@ class InferenceSession:
             raise ValueError("shared buffer size must be a positive integer")
         native = _InferSharedBuffer()
         native.struct_size = ctypes.sizeof(_InferSharedBuffer)
-        status = self._libraries.infer.graphinfer_shared_buffer_create(
-            self._result.session, size, ctypes.byref(native)
-        )
+        status = self._libraries.infer.graphinfer_shared_buffer_create(self._result.session, size, ctypes.byref(native))
         if status != 0:
             try:
                 self._libraries._raise("graphinfer_shared_buffer", status, native.diagnostic)
@@ -532,10 +530,19 @@ class NativeLibraries:
     def _bind(self) -> None:
         self.common.npunlock_status_name.argtypes = [ctypes.c_int]
         self.common.npunlock_status_name.restype = ctypes.c_char_p
-        self.shave.shavecc_compile.argtypes = [ctypes.POINTER(_ShaveOptions), _View, ctypes.POINTER(_ShaveResult)]
+        self.shave.shavecc_compile.argtypes = [
+            ctypes.POINTER(_ShaveOptions),
+            _View,
+            ctypes.POINTER(_ShaveResult),
+        ]
         self.shave.shavecc_compile.restype = ctypes.c_int
         self.shave.shavecc_result_release.argtypes = [ctypes.POINTER(_ShaveResult)]
-        self.ir.ir2blob_compile.argtypes = [ctypes.POINTER(_IrOptions), _View, _View, ctypes.POINTER(_IrResult)]
+        self.ir.ir2blob_compile.argtypes = [
+            ctypes.POINTER(_IrOptions),
+            _View,
+            _View,
+            ctypes.POINTER(_IrResult),
+        ]
         self.ir.ir2blob_compile.restype = ctypes.c_int
         self.ir.ir2blob_result_release.argtypes = [ctypes.POINTER(_IrResult)]
         self.patch.patchblob_patch.argtypes = [
@@ -553,9 +560,7 @@ class NativeLibraries:
             ctypes.POINTER(_PatchDiscoveryResult),
         ]
         self.patch.patchblob_discover_targets.restype = ctypes.c_int
-        self.patch.patchblob_discovery_result_release.argtypes = [
-            ctypes.POINTER(_PatchDiscoveryResult)
-        ]
+        self.patch.patchblob_discovery_result_release.argtypes = [ctypes.POINTER(_PatchDiscoveryResult)]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -571,18 +576,14 @@ class NativeLibraries:
             ctypes.POINTER(_InferSessionResult),
         ]
         self.infer.graphinfer_session_create.restype = ctypes.c_int
-        self.infer.graphinfer_session_result_release.argtypes = [
-            ctypes.POINTER(_InferSessionResult)
-        ]
+        self.infer.graphinfer_session_result_release.argtypes = [ctypes.POINTER(_InferSessionResult)]
         self.infer.graphinfer_shared_buffer_create.argtypes = [
             ctypes.c_void_p,
             ctypes.c_size_t,
             ctypes.POINTER(_InferSharedBuffer),
         ]
         self.infer.graphinfer_shared_buffer_create.restype = ctypes.c_int
-        self.infer.graphinfer_shared_buffer_release.argtypes = [
-            ctypes.POINTER(_InferSharedBuffer)
-        ]
+        self.infer.graphinfer_shared_buffer_release.argtypes = [ctypes.POINTER(_InferSharedBuffer)]
         self.infer.graphinfer_session_infer.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(_InferSharedTensor),
@@ -592,9 +593,7 @@ class NativeLibraries:
             ctypes.POINTER(_InferSessionRunResult),
         ]
         self.infer.graphinfer_session_infer.restype = ctypes.c_int
-        self.infer.graphinfer_session_infer_result_release.argtypes = [
-            ctypes.POINTER(_InferSessionRunResult)
-        ]
+        self.infer.graphinfer_session_infer_result_release.argtypes = [ctypes.POINTER(_InferSessionRunResult)]
 
     def _raise(
         self,
@@ -632,14 +631,25 @@ class NativeLibraries:
         flags_view, flags_owner = _owned_view(build_flags.encode("utf-8"))
         worker_view, worker_owner = _owned_view(worker.encode("utf-8") if worker else b"")
         _ = (xml_owner, weights_owner, flags_owner, worker_owner)
-        options = _IrOptions(ctypes.sizeof(_IrOptions), 0xFFFFFFFF, 0xFFFFFFFF, timeout_ms, worker_view, flags_view)
+        options = _IrOptions(
+            ctypes.sizeof(_IrOptions),
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+            timeout_ms,
+            worker_view,
+            flags_view,
+        )
         result = _IrResult()
         result.struct_size = ctypes.sizeof(_IrResult)
         status = self.ir.ir2blob_compile(ctypes.byref(options), xml_view, weights_view, ctypes.byref(result))
         try:
             if status != 0:
                 self._raise(
-                    "ir2blob", status, result.diagnostic, result.stdout_log, result.stderr_log
+                    "ir2blob",
+                    status,
+                    result.diagnostic,
+                    result.stdout_log,
+                    result.stderr_log,
                 )
             _report_worker_streams(
                 _buffer_bytes(result.stdout_log),
@@ -703,7 +713,11 @@ class NativeLibraries:
         try:
             if status != 0:
                 self._raise(
-                    "shavecc", status, result.diagnostic, result.stdout_log, result.stderr_log
+                    "shavecc",
+                    status,
+                    result.diagnostic,
+                    result.stdout_log,
+                    result.stderr_log,
                 )
             _report_worker_streams(
                 _buffer_bytes(result.stdout_log),
@@ -818,22 +832,32 @@ class NativeLibraries:
                 name_view, name_owner = _owned_view(b"")
             data_view, data_owner = _owned_view(value.data)
             owners.extend((name_owner, data_owner))
-            native_inputs[index] = _InferInput(
-                ctypes.sizeof(_InferInput), argument_index, name_view, data_view
-            )
+            native_inputs[index] = _InferInput(ctypes.sizeof(_InferInput), argument_index, name_view, data_view)
         _ = owners
         options = _InferOptions(
-            ctypes.sizeof(_InferOptions), 0xFFFFFFFF, 0xFFFFFFFF, timeout_ms, worker_view
+            ctypes.sizeof(_InferOptions),
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+            timeout_ms,
+            worker_view,
         )
         result = _InferResult()
         result.struct_size = ctypes.sizeof(_InferResult)
         status = self.infer.graphinfer_infer(
-            ctypes.byref(options), graph_view, native_inputs, len(input_values), ctypes.byref(result)
+            ctypes.byref(options),
+            graph_view,
+            native_inputs,
+            len(input_values),
+            ctypes.byref(result),
         )
         try:
             if status != 0:
                 self._raise(
-                    "graphinfer", status, result.diagnostic, result.stdout_log, result.stderr_log
+                    "graphinfer",
+                    status,
+                    result.diagnostic,
+                    result.stdout_log,
+                    result.stderr_log,
                 )
             _report_worker_streams(
                 _buffer_bytes(result.stdout_log),
@@ -845,9 +869,7 @@ class NativeLibraries:
                     output.argument_index,
                     _buffer_bytes(output.argument_name_utf8).decode("utf-8", errors="strict"),
                     tuple(output.dims[: output.dims_count]),
-                    {1: "f32", 2: "f16"}.get(
-                        output.precision, f"precision-{output.precision}"
-                    ),
+                    {1: "f32", 2: "f16"}.get(output.precision, f"precision-{output.precision}"),
                     _buffer_bytes(output.data),
                 )
                 for output in result.outputs[: result.output_count]
@@ -863,7 +885,5 @@ class NativeLibraries:
         finally:
             self.infer.graphinfer_result_release(ctypes.byref(result))
 
-    def create_inference_session(
-        self, graph_blob: bytes, *, timeout_ms: int = 20_000
-    ) -> InferenceSession:
+    def create_inference_session(self, graph_blob: bytes, *, timeout_ms: int = 20_000) -> InferenceSession:
         return InferenceSession(self, graph_blob, timeout_ms=timeout_ms)

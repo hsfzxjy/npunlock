@@ -122,11 +122,7 @@ class SharedArray(np.ndarray):
             self._allocation = None
             return
         address = self.__array_interface__["data"][0]
-        self._allocation = (
-            allocation
-            if allocation.address <= address < allocation.address + allocation.size
-            else None
-        )
+        self._allocation = allocation if allocation.address <= address < allocation.address + allocation.size else None
 
 
 class _ProgramSharedState:
@@ -144,9 +140,7 @@ class Program:
     _libraries: NativeLibraries = field(repr=False, compare=False)
     _timeout_ms: int = field(repr=False, compare=False)
     _infer_worker: str | None = field(repr=False, compare=False)
-    _shared_state: _ProgramSharedState = field(
-        default_factory=_ProgramSharedState, repr=False, compare=False
-    )
+    _shared_state: _ProgramSharedState = field(default_factory=_ProgramSharedState, repr=False, compare=False)
 
     def to_bytes(self) -> bytes:
         """Return the complete native graph blob."""
@@ -162,17 +156,13 @@ class Program:
         """Allocate a NumPy-compatible host/NPU shared tensor buffer."""
 
         spec = TensorSpec(shape, dtype)
-        numpy_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(
-            spec.dtype
-        )
+        numpy_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(spec.dtype)
         if numpy_dtype is None:
             raise ValueError("shared arrays currently support only f16 and f32")
         size = prod(spec.shape) * numpy_dtype.itemsize
         session = self._shared_state.session
         if session is None:
-            session = self._libraries.create_inference_session(
-                self.graph_blob, timeout_ms=self._timeout_ms
-            )
+            session = self._libraries.create_inference_session(self.graph_blob, timeout_ms=self._timeout_ms)
             self._shared_state.session = session
         return SharedArray(session.create_buffer(size), spec.shape, numpy_dtype)
 
@@ -183,9 +173,7 @@ class Program:
         name: str,
         session: InferenceSession,
     ) -> SharedArray:
-        expected_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(
-            tensor.dtype
-        )
+        expected_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(tensor.dtype)
         if not isinstance(value, SharedArray) or value._allocation is None:
             raise TypeError(f"shared tensor {name!r} must be a live SharedArray")
         if (
@@ -196,9 +184,7 @@ class Program:
             or value.ctypes.data != value._allocation.address
             or value.nbytes != value._allocation.size
         ):
-            raise ValueError(
-                f"shared tensor {name!r} has the wrong session, shape, dtype, or memory span"
-            )
+            raise ValueError(f"shared tensor {name!r} has the wrong session, shape, dtype, or memory span")
         return value
 
     def run(
@@ -217,20 +203,16 @@ class Program:
         if any(name is None for name in expected_names):
             raise ValueError("all graph inputs must have names")
         if set(inputs) != set(expected_names):
-            raise ValueError(
-                f"input names must exactly match {list(expected_names)!r}; got {list(inputs)!r}"
-            )
+            raise ValueError(f"input names must exactly match {list(expected_names)!r}; got {list(inputs)!r}")
         if outputs is not None:
             if not isinstance(outputs, Mapping):
                 raise TypeError("Program.run() outputs must be a mapping")
             expected_outputs = tuple(
-                tensor.name or f"Result_{index}"
-                for index, tensor in enumerate(self.graph.outputs)
+                tensor.name or f"Result_{index}" for index, tensor in enumerate(self.graph.outputs)
             )
             if set(outputs) != set(expected_outputs):
                 raise ValueError(
-                    f"output names must exactly match {list(expected_outputs)!r}; "
-                    f"got {list(outputs)!r}"
+                    f"output names must exactly match {list(expected_outputs)!r}; " f"got {list(outputs)!r}"
                 )
             session = self._shared_state.session
             if session is None:
@@ -259,9 +241,7 @@ class Program:
                 raise ValueError("graphinfer currently supports only static FP16/FP32 tensors")
             array = np.asarray(inputs[name])
             if array.dtype != expected_dtype or tuple(array.shape) != tensor.shape:
-                raise ValueError(
-                    f"input {name!r} requires shape {tensor.shape!r} and dtype {expected_dtype}"
-                )
+                raise ValueError(f"input {name!r} requires shape {tensor.shape!r} and dtype {expected_dtype}")
             if not array.flags.c_contiguous:
                 array = np.ascontiguousarray(array)
             native_inputs.append(InferenceInput(name, array.tobytes(order="C")))
@@ -272,26 +252,18 @@ class Program:
             worker=self._infer_worker,
         )
         if len(inferred.outputs) != len(self.graph.outputs):
-            raise RuntimeError(
-                f"graph returned {len(inferred.outputs)} outputs; expected {len(self.graph.outputs)}"
-            )
+            raise RuntimeError(f"graph returned {len(inferred.outputs)} outputs; expected {len(self.graph.outputs)}")
         values: dict[str, object] = {}
         for index, (tensor, output) in enumerate(zip(self.graph.outputs, inferred.outputs)):
             name = tensor.name or f"Result_{index}"
             expected_dtype = numpy_dtypes.get(tensor.dtype)
             if expected_dtype is None:
-                raise RuntimeError(
-                    f"output {name!r} uses unsupported symbolic dtype {tensor.dtype!r}"
-                )
+                raise RuntimeError(f"output {name!r} uses unsupported symbolic dtype {tensor.dtype!r}")
             if output.dtype != tensor.dtype or output.shape != tensor.shape:
-                raise RuntimeError(
-                    f"output {name!r} returned shape {output.shape!r} and dtype {output.dtype}"
-                )
+                raise RuntimeError(f"output {name!r} returned shape {output.shape!r} and dtype {output.dtype}")
             expected_size = int(np.prod(tensor.shape, dtype=np.int64)) * expected_dtype.itemsize
             if len(output.data) != expected_size:
-                raise RuntimeError(
-                    f"output {name!r} returned {len(output.data)} bytes; expected {expected_size}"
-                )
+                raise RuntimeError(f"output {name!r} returned {len(output.data)} bytes; expected {expected_size}")
             values[name] = np.frombuffer(output.data, dtype=expected_dtype).copy().reshape(tensor.shape)
         return values
 
@@ -397,9 +369,7 @@ def _combined_custom_targets(
         range(first_invocation, first_invocation + len(targets))
     ):
         return None
-    if len({(target.invocation_index, target.range_index) for target in targets}) != len(
-        targets
-    ):
+    if len({(target.invocation_index, target.range_index) for target in targets}) != len(targets):
         return None
     if sum(target.element_count for target in targets) != prod(output.shape):
         return None
@@ -411,9 +381,7 @@ def _automatic_target_groups(
     custom_nodes: tuple[Node, ...],
     discovered_groups: tuple[tuple[PatchTarget, ...], ...],
 ) -> tuple[tuple[PatchTarget, ...], ...]:
-    computational_nodes = tuple(
-        node for node in graph.nodes if node.op not in {"Parameter", "Const"}
-    )
+    computational_nodes = tuple(node for node in graph.nodes if node.op not in {"Parameter", "Const"})
 
     # Keep the established positional contract unchanged when it applies.
     if len(discovered_groups) == len(computational_nodes):
@@ -453,9 +421,7 @@ def _automatic_target_groups(
                 targets = groups[0]
                 if not targets:
                     continue
-                if node in custom_nodes and any(
-                    target.input_count != len(node.inputs) for target in targets
-                ):
+                if node in custom_nodes and any(target.input_count != len(node.inputs) for target in targets):
                     continue
             else:
                 targets = _combined_custom_targets(node, groups)
@@ -496,8 +462,7 @@ def compile(
         raise TypeError("compile() requires a Graph")
     serialized = serialize_ir(graph)
     preserves_fp32_custom = any(
-        any(output.dtype == "f32" for output in node.outputs)
-        for node in serialized.custom_nodes
+        any(output.dtype == "f32" for output in node.outputs) for node in serialized.custom_nodes
     )
     if preserves_fp32_custom:
         accuracy_flag = 'EXECUTION_MODE_HINT="ACCURACY"'
@@ -506,22 +471,19 @@ def compile(
         elif accuracy_flag not in build_flags:
             raise ValueError(
                 "FP32 custom kernels require build_flags containing "
-                "EXECUTION_MODE_HINT=\"ACCURACY\" to prevent FP16 lowering"
+                'EXECUTION_MODE_HINT="ACCURACY" to prevent FP16 lowering'
             )
     resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
     explicit_target_groups: tuple[tuple[PatchTarget, ...], ...] | None = None
     if serialized.custom_nodes:
         if resolved_movi_dll_dir is None:
             raise ValueError(
-                "custom kernels require an MVC_DEPEND root from movi_dll_dir, "
-                "configure(), or NPUNLOCK_MOVITOOLS_DIR"
+                "custom kernels require an MVC_DEPEND root from movi_dll_dir, " "configure(), or NPUNLOCK_MOVITOOLS_DIR"
             )
         supplied = tuple(node.metadata.get("_patch_targets") for node in serialized.custom_nodes)
         if any(value is not None for value in supplied):
             if not all(
-                isinstance(value, tuple)
-                and value
-                and all(isinstance(target, PatchTarget) for target in value)
+                isinstance(value, tuple) and value and all(isinstance(target, PatchTarget) for target in value)
                 for value in supplied
             ):
                 raise ValueError(
@@ -531,9 +493,7 @@ def compile(
             explicit_target_groups = supplied  # type: ignore[assignment]
         else:
             if any(len(node.outputs) != 1 for node in serialized.custom_nodes):
-                raise ValueError(
-                    "automatic patch selection currently requires one output per custom node"
-                )
+                raise ValueError("automatic patch selection currently requires one output per custom node")
     native = libraries or NativeLibraries(native_dir)
     ir_result = native.compile_ir(
         serialized.xml,

@@ -62,6 +62,7 @@ when a worker fails and reports nonempty stderr as a warning after success.
 - CMake 3.24 or newer
 - an installed MSVC toolchain
 - Python 3.10 or newer with NumPy for Python tests
+- Black for Python formatting
 - `clang-format` for the formatting targets
 
 The public CMake preset expresses the Windows build but does not force a
@@ -74,6 +75,7 @@ tools\msvc-run.ps1 cmake --preset windows
 tools\msvc-run.ps1 cmake --build --preset windows-debug
 tools\msvc-run.ps1 ctest --preset windows-debug
 tools\msvc-run.ps1 cmake --build build\windows --config Debug --target format-check
+python -m black --check python examples tests\python setup.py
 ```
 
 The default test suite is offline. It does not require MoviTools, an NPU, or

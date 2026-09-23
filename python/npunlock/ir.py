@@ -97,7 +97,11 @@ def serialize_ir(graph: Graph) -> SerializedIR:
                 },
             )
         elif node.attrs:
-            ET.SubElement(layer, "data", {key: _attribute_text(value) for key, value in node.attrs.items()})
+            ET.SubElement(
+                layer,
+                "data",
+                {key: _attribute_text(value) for key, value in node.attrs.items()},
+            )
         if node.op == "Custom" and any(output.dtype == "f32" for output in node.outputs):
             rt_info = ET.SubElement(layer, "rt_info")
             ET.SubElement(

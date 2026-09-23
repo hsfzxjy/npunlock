@@ -34,10 +34,9 @@ def reference(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     # Mirror the graph's FP16 layer boundaries explicitly.
     abs_x = np.abs(x).astype(np.float16)
     abs_y = np.abs(y).astype(np.float16)
-    mixed = (
-        abs_x.astype(np.float32) * np.float32(0.75)
-        + abs_y.astype(np.float32) * np.float32(0.25)
-    ).astype(np.float16)
+    mixed = (abs_x.astype(np.float32) * np.float32(0.75) + abs_y.astype(np.float32) * np.float32(0.25)).astype(
+        np.float16
+    )
     return np.sqrt(mixed.astype(np.float32)).astype(np.float16)
 
 

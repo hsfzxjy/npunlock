@@ -46,10 +46,7 @@ def reference(
     b: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     scaled = x.astype(np.float32) * np.float32(1.5) + np.float32(0.25)
-    mixed = (
-        a.astype(np.float32) * np.float32(0.75)
-        + b.astype(np.float32) * np.float32(0.25)
-    ).astype(np.float16)
+    mixed = (a.astype(np.float32) * np.float32(0.75) + b.astype(np.float32) * np.float32(0.25)).astype(np.float16)
     return scaled, mixed
 
 
@@ -96,15 +93,12 @@ def select_group(
         for group in groups
         if group
         and all(
-            target.input_count == input_count
-            and target.span_bytes == target.element_count * item_size
+            target.input_count == input_count and target.span_bytes == target.element_count * item_size
             for target in group
         )
     )
     if len(matches) != 1:
-        raise RuntimeError(
-            f"expected one {input_count}-input/{item_size}-byte ACT group; found {len(matches)}"
-        )
+        raise RuntimeError(f"expected one {input_count}-input/{item_size}-byte ACT group; found {len(matches)}")
     return matches[0]
 
 
@@ -133,9 +127,7 @@ def main() -> None:
     actual = program.run({"x": x_value, "a": a_value, "b": b_value})
     expected_f32, expected_f16 = reference(x_value, a_value, b_value)
     f32_error = np.max(np.abs(actual["scale_f32"] - expected_f32))
-    f16_error = np.max(
-        np.abs(actual["weighted_mix_f16"].astype(np.float32) - expected_f16.astype(np.float32))
-    )
+    f16_error = np.max(np.abs(actual["weighted_mix_f16"].astype(np.float32) - expected_f16.astype(np.float32)))
     print(f"FP32 unary maximum absolute error: {f32_error:g}")
     print(f"FP16 binary maximum absolute error: {f16_error:g}")
 

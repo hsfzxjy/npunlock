@@ -6,7 +6,15 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .tensor import Tensor, TensorSpec
 
-_RESERVED = {"_shape", "_dtype", "_name", "_outputs", "_kernel", "_carrier", "_patch_targets"}
+_RESERVED = {
+    "_shape",
+    "_dtype",
+    "_name",
+    "_outputs",
+    "_kernel",
+    "_carrier",
+    "_patch_targets",
+}
 
 
 @dataclass(slots=True, eq=False)
@@ -132,9 +140,7 @@ def custom(
     else:
         if _shape is None or _dtype is None:
             if not inputs:
-                raise ValueError(
-                    "custom() requires an input to infer omitted _shape or _dtype"
-                )
+                raise ValueError("custom() requires an input to infer omitted _shape or _dtype")
             if not isinstance(inputs[0], Tensor):
                 raise TypeError("custom() inputs must be symbolic Tensor objects")
             if _shape is None:
@@ -154,7 +160,12 @@ class Graph:
     outputs: tuple[Tensor, ...]
     name: str = "npunlock_graph"
 
-    def __init__(self, inputs: Iterable[Tensor], outputs: Iterable[Tensor], name: str = "npunlock_graph"):
+    def __init__(
+        self,
+        inputs: Iterable[Tensor],
+        outputs: Iterable[Tensor],
+        name: str = "npunlock_graph",
+    ):
         input_values = tuple(inputs)
         output_values = tuple(outputs)
         if not input_values or not output_values:
@@ -173,9 +184,7 @@ class Graph:
             raise ValueError(f"Graph inputs are not connected to an output: {missing!r}")
         declared = set(input_values)
         undeclared = [
-            node.name or "<unnamed>"
-            for node in nodes
-            if node.op == "Parameter" and node.outputs[0] not in declared
+            node.name or "<unnamed>" for node in nodes if node.op == "Parameter" and node.outputs[0] not in declared
         ]
         if undeclared:
             raise ValueError(f"Graph uses undeclared inputs: {undeclared!r}")

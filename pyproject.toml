@@ -19,3 +19,7 @@ where = ["python"]
 [tool.setuptools.package-data]
 npunlock = ["py.typed", "*.pyi", "include/npunlock/*.h"]
 "npunlock._bin" = ["*.dll", "*.exe"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]
