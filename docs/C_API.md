@@ -144,13 +144,12 @@ The worker-backed `shavecc_result` and `ir2blob_result` structures own
 `stdout_log` and `stderr_log` buffers. These are the worker process's two
 operating-system streams, captured separately and available on success or
 failure. They are arbitrary byte spans, not quoted JSON and not necessarily
-NUL-terminated. The corresponding fields in `graphinfer_result` are retained
-for ABI compatibility and remain empty:
+NUL-terminated:
 
 ```c
 if (status != NPUNLOCK_STATUS_OK) {
-  fwrite(result.stdout_log.data, 1, result.stdout_log.size, stdout);
-  fwrite(result.stderr_log.data, 1, result.stderr_log.size, stderr);
+  fwrite(shave_result.stdout_log.data, 1, shave_result.stdout_log.size, stdout);
+  fwrite(shave_result.stderr_log.data, 1, shave_result.stderr_log.size, stderr);
 }
 ```
 

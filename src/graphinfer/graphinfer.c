@@ -38,8 +38,6 @@ void graphinfer_result_release(graphinfer_result *result) {
     npunlock_buffer_release(&result->outputs[index].data);
   }
   free(result->outputs);
-  npunlock_buffer_release(&result->stdout_log);
-  npunlock_buffer_release(&result->stderr_log);
   npunlock_diagnostic_release(&result->diagnostic);
   memset(result, 0, sizeof(*result));
 }
@@ -56,7 +54,6 @@ npunlock_status graphinfer_infer(const graphinfer_options *options, npunlock_vie
   memset(result, 0, sizeof(*result));
   result->struct_size = (uint32_t)sizeof(*result);
   if (options == NULL || options->struct_size < sizeof(*options) || options->timeout_ms == 0 ||
-      !npunlock_view_is_valid(options->worker_executable_utf8) ||
       !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0 || input_count == 0 ||
       input_count > GRAPHINFER_MAX_INPUTS || inputs == NULL) {
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,

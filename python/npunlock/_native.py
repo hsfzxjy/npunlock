@@ -165,7 +165,6 @@ class _InferOptions(ctypes.Structure):
         ("driver_index", ctypes.c_uint32),
         ("device_index", ctypes.c_uint32),
         ("timeout_ms", ctypes.c_uint32),
-        ("worker_executable_utf8", _View),
     ]
 
 
@@ -200,8 +199,6 @@ class _InferResult(ctypes.Structure):
         ("device_id", ctypes.c_uint32),
         ("outputs", ctypes.POINTER(_InferOutput)),
         ("output_count", ctypes.c_size_t),
-        ("stdout_log", _Buffer),
-        ("stderr_log", _Buffer),
         ("diagnostic", _Diagnostic),
     ]
 
@@ -817,9 +814,8 @@ class NativeLibraries:
         if not input_values:
             raise ValueError("at least one inference input is required")
         graph_view, graph_owner = _owned_view(graph_blob)
-        reserved_view, reserved_owner = _owned_view(b"")
         native_inputs = (_InferInput * len(input_values))()
-        owners: list[object] = [graph_owner, reserved_owner]
+        owners: list[object] = [graph_owner]
         for index, value in enumerate(input_values):
             if not isinstance(value, InferenceInput):
                 raise TypeError("inputs must contain InferenceInput values")
@@ -838,7 +834,6 @@ class NativeLibraries:
             0xFFFFFFFF,
             0xFFFFFFFF,
             timeout_ms,
-            reserved_view,
         )
         result = _InferResult()
         result.struct_size = ctypes.sizeof(_InferResult)
@@ -851,13 +846,7 @@ class NativeLibraries:
         )
         try:
             if status != 0:
-                self._raise(
-                    "graphinfer",
-                    status,
-                    result.diagnostic,
-                    result.stdout_log,
-                    result.stderr_log,
-                )
+                self._raise("graphinfer", status, result.diagnostic)
             outputs = tuple(
                 InferenceOutput(
                     output.argument_index,

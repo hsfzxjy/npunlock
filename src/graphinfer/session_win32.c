@@ -514,7 +514,6 @@ npunlock_status graphinfer_session_create(const graphinfer_options *options,
   memset(result, 0, sizeof(*result));
   result->struct_size = sizeof(*result);
   if (options == NULL || options->struct_size < sizeof(*options) || options->timeout_ms == 0 ||
-      !npunlock_view_is_valid(options->worker_executable_utf8) ||
       !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0) {
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
                                    "graphinfer.session", "invalid options or graph blob");

@@ -17,6 +17,8 @@
 
 _Static_assert(GRAPHINFER_PRECISION_FP32 == 1, "FP32 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_FP16 == 2, "FP16 precision ABI changed");
+_Static_assert(sizeof(graphinfer_options) == 16, "graphinfer options ABI changed");
+_Static_assert(sizeof(graphinfer_result) == 80, "graphinfer result ABI changed");
 _Static_assert(sizeof(graphinfer_session_result) == 72, "session result ABI changed");
 _Static_assert(sizeof(graphinfer_shared_buffer) == 72, "shared buffer ABI changed");
 _Static_assert(sizeof(graphinfer_shared_tensor) == 32, "shared tensor ABI changed");

@@ -26,8 +26,6 @@ typedef struct graphinfer_options {
   uint32_t device_index;
   /* Finite submitted-fence deadline; zero is invalid. */
   uint32_t timeout_ms;
-  /* Reserved for ABI compatibility. Ignored; callers should pass {NULL, 0}. */
-  npunlock_view worker_executable_utf8;
 } graphinfer_options;
 
 /*
@@ -62,9 +60,6 @@ typedef struct graphinfer_result {
   uint32_t device_id;
   graphinfer_output *outputs;
   size_t output_count;
-  /* Reserved for ABI compatibility; both buffers are empty. */
-  npunlock_buffer stdout_log;
-  npunlock_buffer stderr_log;
   npunlock_diagnostic diagnostic;
 } graphinfer_result;
 
@@ -127,7 +122,7 @@ NPUNLOCK_GRAPHINFER_API void graphinfer_result_release(graphinfer_result *result
 /*
  * Create an in-process graph session for explicit host/NPU shared buffers.
  * timeout_ms bounds submitted fence waits, but cannot terminate a driver call
- * that never returns. worker_executable_utf8 is ignored.
+ * that never returns.
  */
 NPUNLOCK_GRAPHINFER_API npunlock_status graphinfer_session_create(
     const graphinfer_options *options, npunlock_view graph_blob, graphinfer_session_result *result);
