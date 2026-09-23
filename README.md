@@ -83,6 +83,22 @@ software kernels. `npunlock` makes those processors usable for compatible
 custom graph operations while retaining Intel's compiler and driver for the
 surrounding graph and hardware execution.
 
+## Reverse-engineering breakthroughs
+
+The decisive discovery was that Intel's graph compiler could keep generating
+the NPU's tensor placement, scheduling, data movement, and synchronization
+while a compatible ACT operation's machine code was replaced independently.
+That made it possible to turn separately compiled C into a graph-resident
+kernel without reimplementing the graph compiler.
+
+Controlled hardware experiments then established the in-memory MoviTools
+pipeline, the ACT C entry and tensor-descriptor contract, minimal native-graph
+code substitution, shared code across work partitions, static FP16 two-input
+kernels, direct IR compilation through Level Zero, and a precision-preserved
+unary FP32 path. Read the public
+[reverse-engineering breakthroughs](wiki/REVERSE_ENGINEERING.md) for the
+chronology, evidence, negative results, and remaining unknowns.
+
 ## Requirements
 
 - Windows x64
@@ -173,6 +189,7 @@ and a suggested test plan.
 - **[Python API](wiki/PYTHON_API.md)** — construct, compile, and execute graphs from Python
 - **[Writing custom kernels](wiki/CUSTOM_KERNELS.md)** — C entry point, tensor contract, and examples
 - **[How npunlock works](wiki/HOW_NPUNLOCK_WORKS.md)** — graph compilation and custom-kernel integration
+- **[Reverse-engineering breakthroughs](wiki/REVERSE_ENGINEERING.md)** — the experiments and discoveries that made custom kernels possible
 - **[From model to machine code](wiki/MODEL_TO_MACHINE_CODE.md)** — step-by-step lowering and the components involved
 - **[Intel NPU architecture](wiki/INTEL_NPU_ARCHITECTURE.md)** — DPU and ACT-SHAVE overview
 - **[Current limitations](wiki/LIMITATIONS.md)** — verified hardware and ABI scope

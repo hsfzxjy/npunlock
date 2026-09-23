@@ -18,6 +18,9 @@ and where the current compatibility boundary lies.
 
 ## How it works
 
+- [Reverse-engineering breakthroughs](REVERSE_ENGINEERING.md) — the controlled
+  experiments that established custom code compilation, ACT invocation, graph
+  substitution, multi-input kernels, and precision-preserved FP32 execution.
 - [Intel NPU architecture](INTEL_NPU_ARCHITECTURE.md) — an approachable view
   of the NPU resources relevant to custom kernels.
 - [From neural network to machine binary](MODEL_TO_MACHINE_CODE.md) — the
