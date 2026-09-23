@@ -212,8 +212,11 @@ driver when `run()` executes, but it does not require MoviTools.
 
 ## Worker output and errors
 
-Graph compilation, custom C compilation, and execution run in bounded native
-worker processes. Their stdout and stderr streams are captured separately.
+Graph compilation, custom C compilation, and the default copied execution path
+run in bounded native worker processes. Their stdout and stderr streams are
+captured separately. The explicitly requested shared-buffer execution path is
+in-process because its Level Zero allocations must remain directly visible to
+NumPy; see [Shared input and output buffers](#shared-input-and-output-buffers).
 
 If a worker-backed operation fails, Python writes captured stdout to the
 process stdout and captured stderr to the process stderr **verbatim**, without
@@ -244,6 +247,39 @@ five dimensions.
 
 Returned arrays own their data. Native buffers are copied before the matching
 C release function is called.
+
+### Shared input and output buffers
+
+For repeated inference, allocate host/NPU shared arrays from the compiled
+program and provide every output explicitly:
+
+```python
+shared_x = program.shared_array(x.shape, x.dtype)
+shared_y = program.shared_array(y.shape, y.dtype)
+
+np.copyto(shared_x, input_value)
+np.clip(shared_x, -4, 4, out=shared_x)
+outputs = program.run({"x": shared_x}, outputs={"y": shared_y})
+assert outputs["y"] is shared_y
+```
+
+`SharedArray` is an `np.ndarray` subclass backed directly by a host-visible
+Level Zero shared allocation. Indexing, broadcasting assignments, ufuncs, and
+functions accepting NumPy arrays work normally. Use an `out=` argument when a
+NumPy operation should write back into NPU-visible storage; a function that
+creates a new result may return ordinary host storage.
+
+Every shared input and output must be a complete contiguous array allocated by
+the same `Program`, with exactly the graph tensor's shape and dtype. Shared
+execution binds those allocations directly and returns the caller's output
+objects without copying tensor bytes. Array views retain the native allocation
+owner, so the allocation is released only after the final view is gone.
+
+This mode deliberately keeps the Level Zero context and graph in the Python
+process. The fence wait still uses `timeout_ms`, but unlike the default worker
+path, a driver call that never returns cannot be terminated without ending the
+application. Use ordinary `Program.run()` when process isolation matters more
+than avoiding tensor copies.
 
 ## Serialization without execution
 

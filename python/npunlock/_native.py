@@ -208,6 +208,42 @@ class _InferResult(ctypes.Structure):
     ]
 
 
+class _InferSessionResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("selected_driver_index", ctypes.c_uint32),
+        ("selected_device_index", ctypes.c_uint32),
+        ("driver_version", ctypes.c_uint32),
+        ("device_vendor_id", ctypes.c_uint32),
+        ("device_id", ctypes.c_uint32),
+        ("session", ctypes.c_void_p),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
+class _InferSharedBuffer(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("data", ctypes.POINTER(ctypes.c_uint8)),
+        ("size", ctypes.c_size_t),
+        ("implementation", ctypes.c_void_p),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
+class _InferSharedTensor(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("argument_index", ctypes.c_uint32),
+        ("argument_name_utf8", _View),
+        ("buffer", ctypes.POINTER(_InferSharedBuffer)),
+    ]
+
+
+class _InferSessionRunResult(ctypes.Structure):
+    _fields_ = [("struct_size", ctypes.c_uint32), ("diagnostic", _Diagnostic)]
+
+
 @dataclass(frozen=True, slots=True)
 class PatchTarget:
     invocation_index: int
@@ -283,6 +319,152 @@ class InferenceResult:
     driver_version: int
     vendor_id: int
     device_id: int
+
+
+class NativeSharedBuffer:
+    def __init__(self, session: InferenceSession, native: _InferSharedBuffer):
+        self._session = session
+        self._native = native
+        self._released = False
+
+    @property
+    def address(self) -> int:
+        if self._released or not self._native.data:
+            raise RuntimeError("shared buffer has been released")
+        value = ctypes.cast(self._native.data, ctypes.c_void_p).value
+        assert value is not None
+        return value
+
+    @property
+    def size(self) -> int:
+        if self._released:
+            raise RuntimeError("shared buffer has been released")
+        return self._native.size
+
+    def release(self) -> None:
+        if not self._released:
+            self._session._libraries.infer.graphinfer_shared_buffer_release(
+                ctypes.byref(self._native)
+            )
+            self._released = True
+
+    def __del__(self) -> None:
+        try:
+            self.release()
+        except Exception:
+            pass
+
+
+class InferenceSession:
+    def __init__(
+        self,
+        libraries: NativeLibraries,
+        graph_blob: bytes,
+        *,
+        timeout_ms: int,
+    ):
+        self._libraries = libraries
+        graph_view, graph_owner = _owned_view(graph_blob)
+        options = _InferOptions(
+            ctypes.sizeof(_InferOptions), 0xFFFFFFFF, 0xFFFFFFFF, timeout_ms, _View(None, 0)
+        )
+        self._result = _InferSessionResult()
+        self._result.struct_size = ctypes.sizeof(_InferSessionResult)
+        status = libraries.infer.graphinfer_session_create(
+            ctypes.byref(options), graph_view, ctypes.byref(self._result)
+        )
+        _ = graph_owner
+        if status != 0:
+            try:
+                libraries._raise("graphinfer_session", status, self._result.diagnostic)
+            finally:
+                libraries.infer.graphinfer_session_result_release(ctypes.byref(self._result))
+        self._closed = False
+
+    def create_buffer(self, size: int) -> NativeSharedBuffer:
+        if self._closed:
+            raise RuntimeError("inference session is closed")
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+            raise ValueError("shared buffer size must be a positive integer")
+        native = _InferSharedBuffer()
+        native.struct_size = ctypes.sizeof(_InferSharedBuffer)
+        status = self._libraries.infer.graphinfer_shared_buffer_create(
+            self._result.session, size, ctypes.byref(native)
+        )
+        if status != 0:
+            try:
+                self._libraries._raise("graphinfer_shared_buffer", status, native.diagnostic)
+            finally:
+                self._libraries.infer.graphinfer_shared_buffer_release(ctypes.byref(native))
+        return NativeSharedBuffer(self, native)
+
+    @staticmethod
+    def _binding_array(
+        values: Iterable[tuple[int | str, NativeSharedBuffer]],
+    ) -> tuple[object, list[object]]:
+        items = tuple(values)
+        native = (_InferSharedTensor * len(items))()
+        owners: list[object] = []
+        for index, (selector, buffer) in enumerate(items):
+            if not isinstance(buffer, NativeSharedBuffer) or buffer._released:
+                raise TypeError("shared tensor bindings require live NativeSharedBuffer values")
+            if isinstance(selector, str):
+                if not selector:
+                    raise ValueError("shared tensor name must not be empty")
+                argument_index = 0xFFFFFFFF
+                name_view, name_owner = _owned_view(selector.encode("utf-8"))
+            elif isinstance(selector, int) and not isinstance(selector, bool):
+                if not 0 <= selector < 0xFFFFFFFF:
+                    raise ValueError("shared tensor index must fit uint32")
+                argument_index = selector
+                name_view, name_owner = _owned_view(b"")
+            else:
+                raise TypeError("shared tensor selector must be an index or name")
+            owners.extend((name_owner, buffer))
+            native[index] = _InferSharedTensor(
+                ctypes.sizeof(_InferSharedTensor),
+                argument_index,
+                name_view,
+                ctypes.pointer(buffer._native),
+            )
+        return native, owners
+
+    def infer(
+        self,
+        inputs: Iterable[tuple[int | str, NativeSharedBuffer]],
+        outputs: Iterable[tuple[int | str, NativeSharedBuffer]],
+    ) -> None:
+        if self._closed:
+            raise RuntimeError("inference session is closed")
+        native_inputs, input_owners = self._binding_array(inputs)
+        native_outputs, output_owners = self._binding_array(outputs)
+        result = _InferSessionRunResult()
+        result.struct_size = ctypes.sizeof(_InferSessionRunResult)
+        status = self._libraries.infer.graphinfer_session_infer(
+            self._result.session,
+            native_inputs,
+            len(native_inputs),
+            native_outputs,
+            len(native_outputs),
+            ctypes.byref(result),
+        )
+        _ = (input_owners, output_owners)
+        try:
+            if status != 0:
+                self._libraries._raise("graphinfer_session", status, result.diagnostic)
+        finally:
+            self._libraries.infer.graphinfer_session_infer_result_release(ctypes.byref(result))
+
+    def close(self) -> None:
+        if not self._closed:
+            self._libraries.infer.graphinfer_session_result_release(ctypes.byref(self._result))
+            self._closed = True
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 def _owned_view(data: bytes) -> tuple[_View, object | None]:
@@ -383,6 +565,36 @@ class NativeLibraries:
         ]
         self.infer.graphinfer_infer.restype = ctypes.c_int
         self.infer.graphinfer_result_release.argtypes = [ctypes.POINTER(_InferResult)]
+        self.infer.graphinfer_session_create.argtypes = [
+            ctypes.POINTER(_InferOptions),
+            _View,
+            ctypes.POINTER(_InferSessionResult),
+        ]
+        self.infer.graphinfer_session_create.restype = ctypes.c_int
+        self.infer.graphinfer_session_result_release.argtypes = [
+            ctypes.POINTER(_InferSessionResult)
+        ]
+        self.infer.graphinfer_shared_buffer_create.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(_InferSharedBuffer),
+        ]
+        self.infer.graphinfer_shared_buffer_create.restype = ctypes.c_int
+        self.infer.graphinfer_shared_buffer_release.argtypes = [
+            ctypes.POINTER(_InferSharedBuffer)
+        ]
+        self.infer.graphinfer_session_infer.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(_InferSharedTensor),
+            ctypes.c_size_t,
+            ctypes.POINTER(_InferSharedTensor),
+            ctypes.c_size_t,
+            ctypes.POINTER(_InferSessionRunResult),
+        ]
+        self.infer.graphinfer_session_infer.restype = ctypes.c_int
+        self.infer.graphinfer_session_infer_result_release.argtypes = [
+            ctypes.POINTER(_InferSessionRunResult)
+        ]
 
     def _raise(
         self,
@@ -650,3 +862,8 @@ class NativeLibraries:
             )
         finally:
             self.infer.graphinfer_result_release(ctypes.byref(result))
+
+    def create_inference_session(
+        self, graph_blob: bytes, *, timeout_ms: int = 20_000
+    ) -> InferenceSession:
+        return InferenceSession(self, graph_blob, timeout_ms=timeout_ms)

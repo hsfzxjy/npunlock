@@ -21,6 +21,7 @@
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_COMMAND_LIST_DESC 0xf
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_FENCE_DESC 0x12
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC 0x16
+#define NPUNLOCK_ZE_STRUCTURE_TYPE_DEVICE_MEM_ALLOC_DESC 0x15
 #define NPUNLOCK_ZE_STRUCTURE_TYPE_INIT_DRIVER_TYPE_DESC 0x00020021
 #define NPUNLOCK_ZE_INIT_DRIVER_TYPE_FLAG_NPU 0x2
 #define NPUNLOCK_ZE_DEVICE_TYPE_VPU 5
@@ -227,6 +228,13 @@ typedef struct npunlock_ze_host_mem_alloc_desc {
   uint32_t flags;
 } npunlock_ze_host_mem_alloc_desc;
 
+typedef struct npunlock_ze_device_mem_alloc_desc {
+  uint32_t stype;
+  const void *pNext;
+  uint32_t flags;
+  uint32_t ordinal;
+} npunlock_ze_device_mem_alloc_desc;
+
 typedef struct npunlock_ze_graph_ddi_prefix {
   void *slots[30];
 } npunlock_ze_graph_ddi_prefix;
@@ -252,6 +260,9 @@ typedef uint32_t(__cdecl *npunlock_ze_device_get_queue_groups_fn)(
 typedef uint32_t(__cdecl *npunlock_ze_mem_alloc_host_fn)(npunlock_ze_context_handle,
                                                          const npunlock_ze_host_mem_alloc_desc *,
                                                          size_t, size_t, void **);
+typedef uint32_t(__cdecl *npunlock_ze_mem_alloc_shared_fn)(
+    npunlock_ze_context_handle, const npunlock_ze_device_mem_alloc_desc *,
+    const npunlock_ze_host_mem_alloc_desc *, size_t, size_t, npunlock_ze_device_handle, void **);
 typedef uint32_t(__cdecl *npunlock_ze_mem_free_fn)(npunlock_ze_context_handle, void *);
 typedef uint32_t(__cdecl *npunlock_ze_command_queue_create_fn)(
     npunlock_ze_context_handle, npunlock_ze_device_handle, const npunlock_ze_command_queue_desc *,

@@ -33,10 +33,10 @@ The installed targets are `npunlock::shavecc`, `npunlock::ir2blob`,
 deploy additional DLLs.
 
 On Windows, deploy `npunlock_worker.exe` beside `npunlock.dll`. The executable
-dispatches private MoviTools, IR compilation, and inference modes; unsafe calls
-still receive separate finite-lived processes. A caller may instead provide an
-explicit worker path in the relevant options structure. The installed package
-places the DLL, worker, and `npurun` in its `bin` directory.
+dispatches private MoviTools, IR compilation, and ordinary inference modes;
+those calls receive separate finite-lived processes. A caller may instead
+provide an explicit worker path in the relevant options structure. The
+installed package places the DLL, worker, and `npurun` in its `bin` directory.
 
 The distributed DLL and worker use the static MSVC runtime. Public views remain
 borrowed and returned allocations must still be released through their owning
@@ -67,6 +67,54 @@ ir2blob_result_release(&result);
 patchblob_result_release(&result);
 graphinfer_result_release(&result);
 ```
+
+For reusable host/NPU shared buffers, create an in-process session, allocate
+buffers from it, and bind every graph input and output:
+
+```c
+graphinfer_session_result session = {0};
+graphinfer_shared_buffer input_buffer = {0};
+graphinfer_shared_buffer output_buffer = {0};
+graphinfer_shared_tensor input_binding = {0};
+graphinfer_shared_tensor output_binding = {0};
+graphinfer_session_infer_result inference = {0};
+
+status = graphinfer_session_create(&options, graph_blob, &session);
+if (status == NPUNLOCK_STATUS_OK) {
+  graphinfer_shared_buffer_create(session.session, input_size, &input_buffer);
+  graphinfer_shared_buffer_create(session.session, output_size, &output_buffer);
+  memcpy(input_buffer.data, input_bytes, input_size);
+
+  input_binding.struct_size = sizeof(input_binding);
+  input_binding.argument_index = input_argument_index;
+  input_binding.buffer = &input_buffer;
+  output_binding.struct_size = sizeof(output_binding);
+  output_binding.argument_index = output_argument_index;
+  output_binding.buffer = &output_buffer;
+
+  status = graphinfer_session_infer(session.session, &input_binding, 1,
+                                    &output_binding, 1, &inference);
+  /* Read output_buffer.data after successful synchronous completion. */
+}
+
+graphinfer_session_infer_result_release(&inference);
+graphinfer_session_result_release(&session);
+graphinfer_shared_buffer_release(&output_buffer);
+graphinfer_shared_buffer_release(&input_buffer);
+```
+
+Each shared buffer owns a reference to its session's Level Zero context, so it
+remains valid if the public session result is released first. The graph is
+closed at session release and no later inference is allowed; the context is
+destroyed after the last shared buffer is released. A
+`graphinfer_shared_buffer` is an owning object: do not copy it or release a
+copy. Bindings must exactly cover
+all graph inputs and outputs, use buffers from the same session, and match each
+argument's exact byte size.
+
+The in-process path uses finite fence waits but cannot forcibly terminate a
+driver call that never returns. Use `graphinfer_infer()` when killable worker
+isolation is required.
 
 Result structures should be zero-initialized. Options, target, and input
 descriptors carry `struct_size` for ABI validation; calls populate the result's
@@ -218,12 +266,14 @@ matters.
 
 ## Concurrency and timeouts
 
-Calls to `shavecc`, `ir2blob`, and `graphinfer` launch independent worker
-processes through one shared Win32 launcher. Request, protocol response,
+Calls to `shavecc`, `ir2blob`, and `graphinfer_infer()` launch independent
+worker processes through one shared Win32 launcher. Request, protocol response,
 stdout, and stderr use separate bounded pipes, and process trees are terminated
 through a Job Object when a deadline expires. `patchblob` operates on caller
-and result buffers without global mutable parser state. Each caller is
-responsible for setting a finite timeout on worker-backed operations.
+and result buffers without global mutable parser state. In-process graphinfer
+sessions serialize calls per session and use the supplied timeout for fence
+waits. Each caller is responsible for choosing the appropriate isolation and
+setting a finite timeout.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated

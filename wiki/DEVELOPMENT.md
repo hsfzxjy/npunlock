@@ -30,10 +30,10 @@ those buffer-oriented libraries.
 
 ## Worker isolation
 
-MoviTools calls, Intel graph compilation, and NPU execution can hang, fault, or
-terminate their process. One `npunlock_worker.exe` dispatches all three worker
-modes, but each unsafe request still runs in its own finite-lived process with
-a deadline and Windows Job Object cleanup.
+MoviTools calls, Intel graph compilation, and default NPU execution can hang,
+fault, or terminate their process. One `npunlock_worker.exe` dispatches all
+three worker modes, but each ordinary request still runs in its own
+finite-lived process with a deadline and Windows Job Object cleanup.
 
 The worker communicates with the libraries through bounded, versioned pipe
 messages. Stage buffers remain in memory; no temporary files connect native
@@ -45,6 +45,12 @@ stdout/stderr capture, deadlines, and Job Object cleanup. Each mode retains
 only its protocol-specific request builder and response parser. The worker
 executable similarly shares byte encoding, bounded input, complete output, and
 response-handle helpers among its three modes.
+
+`graphinfer` additionally exposes an opt-in in-process session for directly
+binding host/NPU shared Level Zero allocations. This is required for NumPy to
+view the same allocation used by the NPU. The session serializes executions and
+uses finite fence waits, but it cannot provide Job Object recovery from a
+driver call that never returns.
 
 Protocol responses, stdout, and stderr are independent byte streams. The C
 results expose both captured process streams. `npurun` writes both verbatim
@@ -172,8 +178,9 @@ relocation, count, alignment, and size calculation must be bounds- and
 overflow-checked. Unsupported structures fail before hardware execution.
 
 The four C APIs exchange only memory buffers and define matching release
-functions. A buffer must be released by the runtime that allocated it; Python
-copies native results before calling the C release function.
+functions. A buffer must be released by the runtime that allocated it. Python
+copies ordinary native results before release; shared arrays instead retain
+their native buffer owner for the lifetime of every NumPy view.
 
 ## Technical references
 

@@ -141,6 +141,7 @@ reference.
 - a verified unary FP32 path
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - nonlinear math such as GELU and `tanhf`
+- reusable NumPy-compatible host/NPU shared input and output buffers
 - Python, CLI, and native C APIs
 
 ## Current limitations

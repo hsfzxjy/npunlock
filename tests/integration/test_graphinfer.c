@@ -66,7 +66,14 @@ int main(void) {
   graphinfer_options options = {0};
   graphinfer_input graph_input = {0};
   graphinfer_result result = {0};
+  graphinfer_session_result session_result = {0};
+  graphinfer_shared_buffer shared_input = {0};
+  graphinfer_shared_buffer shared_output = {0};
+  graphinfer_shared_tensor input_binding = {0};
+  graphinfer_shared_tensor output_binding = {0};
+  graphinfer_session_infer_result shared_result = {0};
   npunlock_status status;
+  uint32_t output_index;
   int return_code = 1;
   if (!read_file(FIXTURE_ROOT "add1-shared-1x16.blob", &graph)) {
     fprintf(stderr, "failed to read bundled graph fixture\n");
@@ -96,11 +103,51 @@ int main(void) {
             result.device_vendor_id, result.output_count);
     goto done;
   }
+  output_index = result.outputs[0].argument_index;
+  status =
+      graphinfer_session_create(&options, (npunlock_view){graph.data, graph.size}, &session_result);
+  if (status != NPUNLOCK_STATUS_OK || session_result.session == NULL) {
+    fprintf(stderr, "graphinfer_session_create failed: %s\n", npunlock_status_name(status));
+    goto done;
+  }
+  status =
+      graphinfer_shared_buffer_create(session_result.session, sizeof(input_fp16), &shared_input);
+  if (status == NPUNLOCK_STATUS_OK) {
+    status = graphinfer_shared_buffer_create(session_result.session, sizeof(expected_fp16),
+                                             &shared_output);
+  }
+  if (status != NPUNLOCK_STATUS_OK) {
+    fprintf(stderr, "shared buffer creation failed: %s\n", npunlock_status_name(status));
+    goto done;
+  }
+  memcpy(shared_input.data, input_fp16, sizeof(input_fp16));
+  input_binding.struct_size = sizeof(input_binding);
+  input_binding.argument_index = 0;
+  input_binding.buffer = &shared_input;
+  output_binding.struct_size = sizeof(output_binding);
+  output_binding.argument_index = output_index;
+  output_binding.buffer = &shared_output;
+  status = graphinfer_session_infer(session_result.session, &input_binding, 1, &output_binding, 1,
+                                    &shared_result);
+  if (status != NPUNLOCK_STATUS_OK ||
+      memcmp(shared_output.data, expected_fp16, sizeof(expected_fp16)) != 0) {
+    fprintf(stderr, "shared graph inference failed: %s\n", npunlock_status_name(status));
+    goto done;
+  }
+  graphinfer_session_result_release(&session_result);
+  if (memcmp(shared_output.data, expected_fp16, sizeof(expected_fp16)) != 0) {
+    fprintf(stderr, "shared buffer did not survive public session release\n");
+    goto done;
+  }
   printf("executed caller graph and tensor: %zu input bytes, %zu output bytes; driver=0x%08x\n",
          sizeof(input_fp16), result.outputs[0].data.size, result.driver_version);
   return_code = 0;
 
 done:
+  graphinfer_session_infer_result_release(&shared_result);
+  graphinfer_shared_buffer_release(&shared_output);
+  graphinfer_shared_buffer_release(&shared_input);
+  graphinfer_session_result_release(&session_result);
   graphinfer_result_release(&result);
   release_file(&graph);
   return return_code;

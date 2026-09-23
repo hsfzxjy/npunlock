@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import ctypes
 import os
 from dataclasses import dataclass, field
 from math import prod
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import numpy as np
+
 from ._native import (
     InferenceInput,
     InferenceOutput,
     InferenceResult,
+    InferenceSession,
     IrCompileResult,
     NativeError,
     NativeLibraries,
+    NativeSharedBuffer,
     PatchResult,
     PatchTarget,
 )
@@ -35,6 +40,7 @@ __all__ = [
     "Program",
     "SerializedIR",
     "Shape",
+    "SharedArray",
     "Tensor",
     "TensorSpec",
     "compile",
@@ -93,6 +99,41 @@ def __getattr__(name: str) -> OpFactory:
     return OpFactory(name)
 
 
+class SharedArray(np.ndarray):
+    """A NumPy array backed by host/NPU shared Level Zero memory."""
+
+    _allocation: NativeSharedBuffer | None
+
+    def __new__(
+        cls,
+        allocation: NativeSharedBuffer,
+        shape: Shape,
+        dtype: np.dtype[Any],
+    ) -> SharedArray:
+        raw_type = ctypes.c_uint8 * allocation.size
+        raw = raw_type.from_address(allocation.address)
+        value = np.ctypeslib.as_array(raw).view(dtype).reshape(shape).view(cls)
+        value._allocation = allocation
+        return value
+
+    def __array_finalize__(self, source: object) -> None:
+        allocation = getattr(source, "_allocation", None)
+        if allocation is None:
+            self._allocation = None
+            return
+        address = self.__array_interface__["data"][0]
+        self._allocation = (
+            allocation
+            if allocation.address <= address < allocation.address + allocation.size
+            else None
+        )
+
+
+class _ProgramSharedState:
+    def __init__(self) -> None:
+        self.session: InferenceSession | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class Program:
     graph_blob: bytes
@@ -103,6 +144,9 @@ class Program:
     _libraries: NativeLibraries = field(repr=False, compare=False)
     _timeout_ms: int = field(repr=False, compare=False)
     _infer_worker: str | None = field(repr=False, compare=False)
+    _shared_state: _ProgramSharedState = field(
+        default_factory=_ProgramSharedState, repr=False, compare=False
+    )
 
     def to_bytes(self) -> bytes:
         """Return the complete native graph blob."""
@@ -114,9 +158,55 @@ class Program:
 
         Path(destination).write_bytes(self.graph_blob)
 
-    def run(self, inputs: Mapping[str, object]) -> Mapping[str, object]:
-        import numpy as np
+    def shared_array(self, shape: object, dtype: object) -> SharedArray:
+        """Allocate a NumPy-compatible host/NPU shared tensor buffer."""
 
+        spec = TensorSpec(shape, dtype)
+        numpy_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(
+            spec.dtype
+        )
+        if numpy_dtype is None:
+            raise ValueError("shared arrays currently support only f16 and f32")
+        size = prod(spec.shape) * numpy_dtype.itemsize
+        session = self._shared_state.session
+        if session is None:
+            session = self._libraries.create_inference_session(
+                self.graph_blob, timeout_ms=self._timeout_ms
+            )
+            self._shared_state.session = session
+        return SharedArray(session.create_buffer(size), spec.shape, numpy_dtype)
+
+    @staticmethod
+    def _validate_shared_array(
+        value: object,
+        tensor: Tensor,
+        name: str,
+        session: InferenceSession,
+    ) -> SharedArray:
+        expected_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(
+            tensor.dtype
+        )
+        if not isinstance(value, SharedArray) or value._allocation is None:
+            raise TypeError(f"shared tensor {name!r} must be a live SharedArray")
+        if (
+            value._allocation._session is not session
+            or tuple(value.shape) != tensor.shape
+            or value.dtype != expected_dtype
+            or not value.flags.c_contiguous
+            or value.ctypes.data != value._allocation.address
+            or value.nbytes != value._allocation.size
+        ):
+            raise ValueError(
+                f"shared tensor {name!r} has the wrong session, shape, dtype, or memory span"
+            )
+        return value
+
+    def run(
+        self,
+        inputs: Mapping[str, object],
+        *,
+        outputs: Mapping[str, object] | None = None,
+    ) -> Mapping[str, object]:
         numpy_dtypes = {
             "f16": np.dtype("float16"),
             "f32": np.dtype("float32"),
@@ -130,6 +220,37 @@ class Program:
             raise ValueError(
                 f"input names must exactly match {list(expected_names)!r}; got {list(inputs)!r}"
             )
+        if outputs is not None:
+            if not isinstance(outputs, Mapping):
+                raise TypeError("Program.run() outputs must be a mapping")
+            expected_outputs = tuple(
+                tensor.name or f"Result_{index}"
+                for index, tensor in enumerate(self.graph.outputs)
+            )
+            if set(outputs) != set(expected_outputs):
+                raise ValueError(
+                    f"output names must exactly match {list(expected_outputs)!r}; "
+                    f"got {list(outputs)!r}"
+                )
+            session = self._shared_state.session
+            if session is None:
+                raise ValueError("allocate shared tensors with this Program before shared inference")
+            shared_inputs = tuple(
+                (
+                    name,
+                    self._validate_shared_array(inputs[name], tensor, name, session)._allocation,
+                )
+                for tensor, name in zip(self.graph.inputs, expected_names)
+            )
+            shared_outputs = tuple(
+                (
+                    name,
+                    self._validate_shared_array(outputs[name], tensor, name, session)._allocation,
+                )
+                for tensor, name in zip(self.graph.outputs, expected_outputs)
+            )
+            session.infer(shared_inputs, shared_outputs)  # type: ignore[arg-type]
+            return dict(outputs)
         native_inputs: list[InferenceInput] = []
         for tensor, name in zip(self.graph.inputs, expected_names):
             assert name is not None

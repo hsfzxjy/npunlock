@@ -116,6 +116,16 @@ execution.
 
 ## Correctness and stability
 
+The default inference path is isolated in a finite-lived worker process.
+Host/NPU shared arrays require an opt-in in-process graph session because the
+validated NPU driver does not export its host-visible Level Zero allocations
+between processes. Fence waits remain finite, but a driver API call that never
+returns cannot be killed independently of the application in shared mode.
+
+Shared bindings require complete contiguous FP16 or FP32 arrays allocated by
+the same program. Partial views, foreign arrays, mixed copied/shared bindings,
+and resizing shared storage are rejected.
+
 Driver acceptance, graph creation, or successful command submission does not
 prove that a new custom kernel is semantically correct. Validate output against
 a host oracle.

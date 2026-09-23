@@ -183,6 +183,10 @@ class NativeLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(_native._InferInput), 40)
         self.assertEqual(ctypes.sizeof(_native._InferOutput), 104)
         self.assertEqual(ctypes.sizeof(_native._InferResult), 144)
+        self.assertEqual(ctypes.sizeof(_native._InferSessionResult), 72)
+        self.assertEqual(ctypes.sizeof(_native._InferSharedBuffer), 72)
+        self.assertEqual(ctypes.sizeof(_native._InferSharedTensor), 32)
+        self.assertEqual(ctypes.sizeof(_native._InferSessionRunResult), 48)
 
     def test_failed_worker_streams_are_written_verbatim(self) -> None:
         class BinaryStream:
@@ -251,6 +255,41 @@ class FakeNative:
             0x8086,
             0x7D1D,
         )
+
+    def create_inference_session(self, graph_blob: bytes, **kwargs: object) -> object:
+        self.shared_session_args = (graph_blob, kwargs)
+        self.shared_session = FakeInferenceSession(self)
+        return self.shared_session
+
+
+class FakeSharedBuffer:
+    def __init__(self, session: object, size: int):
+        self._session = session
+        self._storage = ctypes.create_string_buffer(size)
+        self.address = ctypes.addressof(self._storage)
+        self.size = size
+
+
+class FakeInferenceSession:
+    def __init__(self, libraries: FakeNative):
+        self._libraries = libraries
+        self.calls: list[tuple[object, object]] = []
+
+    def create_buffer(self, size: int) -> FakeSharedBuffer:
+        return FakeSharedBuffer(self, size)
+
+    def infer(self, inputs: object, outputs: object) -> None:
+        input_values = tuple(inputs)  # type: ignore[arg-type]
+        output_values = tuple(outputs)  # type: ignore[arg-type]
+        self.calls.append((input_values, output_values))
+        source_buffer = input_values[0][1]
+        output_buffer = output_values[0][1]
+        dtype = np.dtype({"f16": "float16", "f32": "float32"}[self._libraries.infer_dtype])
+        source_bytes = (ctypes.c_uint8 * source_buffer.size).from_address(source_buffer.address)
+        output_bytes = (ctypes.c_uint8 * output_buffer.size).from_address(output_buffer.address)
+        source = np.frombuffer(source_bytes, dtype=dtype)
+        destination = np.frombuffer(output_bytes, dtype=dtype)
+        destination[:] = source + dtype.type(1)
 
 
 class CompilationFlowTests(unittest.TestCase):
@@ -521,6 +560,27 @@ class CompilationFlowTests(unittest.TestCase):
         program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
         with self.assertRaises(ValueError):
             program.run({"x": np.zeros((32,), dtype=np.float16)})
+
+    def test_shared_arrays_support_numpy_and_shared_inference(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x, _shape=x.shape, _dtype=x.dtype)
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        shared_input = program.shared_array(x.shape, x.dtype)
+        shared_output = program.shared_array(y.shape, y.dtype)
+        values = np.arange(32, dtype=np.float16).reshape(1, 32)
+
+        np.add(values, np.float16(2), out=shared_input)
+        squared = np.square(shared_input)
+        result = program.run(
+            {"x": shared_input}, outputs={"Result_0": shared_output}
+        )
+
+        self.assertIs(result["Result_0"], shared_output)
+        np.testing.assert_array_equal(shared_input, values + np.float16(2))
+        np.testing.assert_array_equal(squared, np.square(values + np.float16(2)))
+        np.testing.assert_array_equal(shared_output, shared_input + np.float16(1))
+        self.assertEqual(len(fake.shared_session.calls), 1)
 
     def test_native_blob_bytes_file_and_reload(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

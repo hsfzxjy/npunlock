@@ -144,10 +144,16 @@ validated contract.
 
 ## 6. Execute and validate semantics
 
-`graphinfer` loads the patched native graph through the installed Intel driver,
-binds caller-provided tensors, executes with a finite deadline, and returns
-owned output buffers. Python's `Program.run()` converts those buffers into
-NumPy arrays.
+`graphinfer` offers two execution boundaries. The default loads the patched
+native graph in a bounded worker, copies caller inputs into Level Zero memory,
+and returns owned output buffers. Python's ordinary `Program.run()` converts
+those buffers into NumPy arrays.
+
+For repeated execution, an in-process session keeps the graph and host-visible
+Level Zero shared allocations alive. Python exposes those allocations as
+`SharedArray` objects, binds caller-supplied shared inputs and outputs directly,
+and performs no tensor copy around execution. Shared-buffer lifetime keeps the
+underlying Level Zero context alive even when the public session closes.
 
 A graph loading successfully does not prove that a new kernel computes the
 right function. New kernels and carriers should always be checked against a

@@ -194,8 +194,9 @@ initialization and execution commands in a Level Zero command list.
 
 The driver and firmware then prepare the native records for the device and
 coordinate DPU work, ACT-SHAVE invocations, DMA transfers, and barriers. After
-bounded completion, `graphinfer` copies all output tensors into caller-owned
-results.
+bounded completion, ordinary `graphinfer` execution copies output tensors into
+caller-owned results. Its opt-in in-process session can instead bind persistent
+host/NPU shared inputs and outputs directly, avoiding per-run tensor copies.
 
 Loading and executing a binary demonstrates structural compatibility; it does
 not by itself prove that a custom kernel computes the intended function.

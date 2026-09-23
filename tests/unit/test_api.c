@@ -17,6 +17,11 @@
 
 _Static_assert(GRAPHINFER_PRECISION_FP32 == 1, "FP32 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_FP16 == 2, "FP16 precision ABI changed");
+_Static_assert(sizeof(graphinfer_session_result) == 72, "session result ABI changed");
+_Static_assert(sizeof(graphinfer_shared_buffer) == 72, "shared buffer ABI changed");
+_Static_assert(sizeof(graphinfer_shared_tensor) == 32, "shared tensor ABI changed");
+_Static_assert(sizeof(graphinfer_session_infer_result) == 48,
+               "session inference result ABI changed");
 _Static_assert(PATCHBLOB_CONTRACT_FP32 == (1u << 5), "FP32 contract flag ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
@@ -46,6 +51,9 @@ int main(void) {
   graphinfer_options infer_options = {0};
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
+  graphinfer_session_result session_result = {0};
+  graphinfer_shared_buffer shared_buffer = {0};
+  graphinfer_session_infer_result session_infer_result = {0};
   npunlock_view default_script = shavecc_default_linker_script();
   npunlock_view kernel_header = shavecc_npu3720_kernel_header();
 
@@ -135,6 +143,24 @@ int main(void) {
                          &infer_result) == NPUNLOCK_STATUS_INVALID_ARGUMENT);
   CHECK(check_diagnostic(&infer_result.diagnostic, "invalid_argument"));
   graphinfer_result_release(&infer_result);
+
+  CHECK(graphinfer_session_create(NULL, (npunlock_view){blob, sizeof(blob)}, &session_result) ==
+        NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&session_result.diagnostic, "invalid_argument"));
+  graphinfer_session_result_release(&session_result);
+  graphinfer_session_result_release(&session_result);
+
+  CHECK(graphinfer_shared_buffer_create(NULL, sizeof(tensor), &shared_buffer) ==
+        NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&shared_buffer.diagnostic, "invalid_argument"));
+  graphinfer_shared_buffer_release(&shared_buffer);
+  graphinfer_shared_buffer_release(&shared_buffer);
+
+  CHECK(graphinfer_session_infer(NULL, NULL, 0, NULL, 0, &session_infer_result) ==
+        NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&session_infer_result.diagnostic, "invalid_argument"));
+  graphinfer_session_infer_result_release(&session_infer_result);
+  graphinfer_session_infer_result_release(&session_infer_result);
 
   CHECK(shavecc_compile(NULL, (npunlock_view){source, sizeof(source) - 1}, &shave_result) ==
         NPUNLOCK_STATUS_INVALID_ARGUMENT);

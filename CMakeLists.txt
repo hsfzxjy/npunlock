@@ -105,6 +105,7 @@ target_link_libraries(npunlock_patchblob_objects PRIVATE npunlock_warnings)
 add_library(npunlock_graphinfer_objects OBJECT
   src/graphinfer/graphinfer.c
   src/graphinfer/infer_worker_win32.c
+  src/graphinfer/session_win32.c
 )
 target_include_directories(npunlock_graphinfer_objects PRIVATE include src src/common src/graphinfer)
 target_link_libraries(npunlock_graphinfer_objects PRIVATE npunlock_warnings)
@@ -184,6 +185,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/graphinfer/graphinfer.c
   src/graphinfer/infer_worker.h
   src/graphinfer/infer_worker_win32.c
+  src/graphinfer/session_win32.c
   src/npurun/main.c
   src/patchblob/patchblob.c
   src/patchblob/graph_blob.c
