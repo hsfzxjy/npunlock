@@ -92,6 +92,14 @@ accuracy-mode graph compilation.
 Other dtypes, mixed-precision custom groups, FP32 binary kernels, and implicit
 dtype conversion are unsupported.
 
+One graph containing independent FP32-unary and FP16-binary custom branches
+has been executed successfully with explicit target selection. Each ACT group
+remains internally single-precision. A connected FP32-to-FP16 experiment
+compiled through the Intel graph compiler, but target discovery rejected the
+ordinary conversion group because its input and output spans differ. This does
+not establish connected mixed-precision custom pipelines or mixed-dtype ACT
+invocation contracts.
+
 ## Software dependencies
 
 The project does not depend on OpenVINO as a Python package, runtime, or graph

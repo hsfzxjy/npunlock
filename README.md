@@ -70,7 +70,9 @@ print(f"maximum absolute error: {np.max(np.abs(output - reference)):g}")
 The same code is available as the runnable
 [FP32 GELU example](examples/example_gelu_f32.py). See also the
 [FP16 GELU](examples/example_gelu.py) and
-[multi-layer two-input](examples/example_multilayer_multi_input.py) examples.
+[multi-layer two-input](examples/example_multilayer_multi_input.py) examples,
+plus a
+[mixed-precision graph with unary and binary custom branches](examples/example_mixed_precision_multi_custom.py).
 
 ## Why npunlock?
 
@@ -135,6 +137,7 @@ reference.
 - run custom kernels inside Intel NPU graphs
 - static dense FP16 unary and two-input custom kernels
 - a verified unary FP32 path
+- one graph containing independent FP32-unary and FP16-binary custom branches
 - nonlinear math such as GELU and `tanhf`
 - Python, CLI, and native C APIs
 
@@ -142,7 +145,9 @@ reference.
 
 Support is experimental and currently limited to Windows x64, Meteor Lake /
 NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
-Other NPU generations have not been verified. See
+Connected mixed-precision conversion groups are not yet patch-discoverable;
+the verified mixed-precision example uses independent branches. Other NPU
+generations have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 
 ## Help test Linux and newer NPUs

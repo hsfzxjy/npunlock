@@ -203,6 +203,7 @@ does not relax ELF validation.
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
+- [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 
 Each example includes a NumPy reference. Successful graph submission is not a
 correctness oracle; use equivalent host validation for every new kernel.
