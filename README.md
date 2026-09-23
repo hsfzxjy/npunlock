@@ -168,7 +168,9 @@ Both need hardware validation, driver/firmware version records, and output
 comparison against a host oracle. If you can test either path, feedback, failure
 reports, and code contributions are welcome. See
 [Porting to Linux and newer NPUs](wiki/PORTING.md) for the hypotheses, caveats,
-and a suggested test plan.
+and staged test plan. The offline `npunlock-inspect` utility already builds on
+Linux and can produce a reproducible structural report before hardware testing;
+this does not yet imply Linux graph execution support.
 
 ## Documentation
 

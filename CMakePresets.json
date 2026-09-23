@@ -14,6 +14,20 @@
         "NPUNLOCK_BUILD_TESTS": "ON",
         "NPUNLOCK_ENABLE_NPU_TESTS": "OFF"
       }
+    },
+    {
+      "name": "linux-inspect",
+      "displayName": "Linux offline inspector",
+      "binaryDir": "${sourceDir}/build/linux-inspect",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NPUNLOCK_BUILD_TESTS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -26,6 +40,10 @@
       "name": "windows-release",
       "configurePreset": "windows",
       "configuration": "Release"
+    },
+    {
+      "name": "linux-inspect",
+      "configurePreset": "linux-inspect"
     }
   ],
   "testPresets": [
@@ -33,6 +51,13 @@
       "name": "windows-debug",
       "configurePreset": "windows",
       "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-inspect",
+      "configurePreset": "linux-inspect",
       "output": {
         "outputOnFailure": true
       }

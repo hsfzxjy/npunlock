@@ -3,10 +3,6 @@ cmake_minimum_required(VERSION 3.24)
 cmake_policy(SET CMP0091 NEW)
 project(npunlock VERSION 0.1.0 LANGUAGES C)
 
-if(NOT WIN32)
-  message(FATAL_ERROR "npunlock currently supports Windows only")
-endif()
-
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -29,6 +25,73 @@ if(MSVC)
   target_compile_options(npunlock_warnings INTERFACE /W4 /WX /permissive-)
 else()
   target_compile_options(npunlock_warnings INTERFACE -Wall -Wextra -Werror -Wpedantic)
+endif()
+
+set(NPUNLOCK_INSPECT_SOURCES
+  src/npunlock_inspect/main.c
+  src/common/buffer.c
+  src/common/checked.c
+  src/common/diagnostic.c
+  src/common/elf32.c
+  src/common/sha256.c
+  src/common/status.c
+  src/patchblob/graph_blob.c
+  src/patchblob/patchblob.c
+)
+add_executable(npunlock_inspect ${NPUNLOCK_INSPECT_SOURCES})
+set_target_properties(npunlock_inspect PROPERTIES OUTPUT_NAME npunlock-inspect)
+target_include_directories(npunlock_inspect PRIVATE include src/common src/patchblob)
+target_link_libraries(npunlock_inspect PRIVATE npunlock_warnings)
+
+if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
+  add_test(
+    NAME porting_inspect_fixture
+    COMMAND npunlock_inspect
+      --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs-add-1x16-tile1.blob
+  )
+  set_tests_properties(
+    porting_inspect_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION "npunlock.porting.inspect.v1"
+  )
+  add_test(
+    NAME porting_inspect_rejects_empty
+    COMMAND npunlock_inspect
+      --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs.bin
+  )
+  set_tests_properties(porting_inspect_rejects_empty PROPERTIES WILL_FAIL TRUE)
+endif()
+
+install(TARGETS npunlock_inspect RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
+
+if(NOT WIN32)
+  message(STATUS "Linux milestone: building the offline npunlock-inspect utility only")
+  find_program(CLANG_FORMAT_EXECUTABLE
+    NAMES clang-format clang-format-19 clang-format-18
+  )
+  if(CLANG_FORMAT_EXECUTABLE)
+    add_custom_target(format
+      COMMAND ${CLANG_FORMAT_EXECUTABLE} -i ${NPUNLOCK_INSPECT_SOURCES}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      VERBATIM
+    )
+    add_custom_target(format-check
+      COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${NPUNLOCK_INSPECT_SOURCES}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      VERBATIM
+    )
+  else()
+    add_custom_target(format
+      COMMAND ${CMAKE_COMMAND} -E echo "clang-format not found; install it to format C sources"
+      COMMAND ${CMAKE_COMMAND} -E false
+      VERBATIM
+    )
+    add_custom_target(format-check
+      COMMAND ${CMAKE_COMMAND} -E echo "clang-format not found; install it to check C formatting"
+      COMMAND ${CMAKE_COMMAND} -E false
+      VERBATIM
+    )
+  endif()
+  return()
 endif()
 
 add_library(npunlock_common_objects OBJECT
@@ -187,6 +250,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/graphinfer/infer_worker_win32.c
   src/graphinfer/session_win32.c
   src/npurun/main.c
+  src/npunlock_inspect/main.c
   src/patchblob/patchblob.c
   src/patchblob/graph_blob.c
   src/patchblob/graph_blob.h

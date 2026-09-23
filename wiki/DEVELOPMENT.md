@@ -56,7 +56,7 @@ Protocol responses, stdout, and stderr are independent byte streams. The C
 results expose both captured process streams. `npurun` writes both verbatim
 when a worker fails and reports nonempty stderr as a warning after success.
 
-## Build requirements
+## Full Windows runtime requirements
 
 - Windows x64
 - CMake 3.24 or newer
@@ -80,6 +80,23 @@ python -m black --check python examples tests\python setup.py
 
 The default test suite is offline. It does not require MoviTools, an NPU, or
 OpenVINO.
+
+## Linux offline inspector
+
+The first Linux milestone builds only `npunlock-inspect` and its offline tests.
+It requires a C17 compiler and CMake 3.24 or newer, but does not require
+MoviTools, Level Zero, an NPU, Python, or the Windows worker:
+
+```bash
+cmake --preset linux-inspect
+cmake --build --preset linux-inspect
+ctest --preset linux-inspect
+./build/linux-inspect/npunlock-inspect --graph patched.blob
+```
+
+The full compiler, patch, and execution runtime remains Windows-only. See the
+[staged Linux roadmap](PORTING.md#porting-utilities-and-staged-roadmap) before
+adding platform backends.
 
 ## Opt-in integration tests
 

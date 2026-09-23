@@ -15,6 +15,69 @@ It helps to separate three compatibility questions:
 
 A positive answer to one does not establish the others.
 
+## Porting utilities and staged roadmap
+
+Porting is intentionally split into independently testable milestones. A
+failure in one stage must not be reported as evidence about another stage.
+
+### Milestone 1: offline native-blob inspection
+
+`npunlock-inspect` builds on Linux and Windows without MoviTools, Level Zero,
+an Intel NPU, or the worker executable. It hashes a caller-provided native blob
+and applies the same bounds-checked ACT discovery used by `patchblob`:
+
+```bash
+cmake --preset linux-inspect
+cmake --build --preset linux-inspect
+./build/linux-inspect/npunlock-inspect \
+  --graph patched.blob \
+  --report inspect.json
+```
+
+The JSON report records the blob size and SHA-256 plus every discovered ACT
+group, invocation/range index, arity, element count, byte span, precision, and
+contract flags. Discovery means only that the file matches the narrow observed
+NPU3720/compiler-8.3 structures. It does not prove that a Linux driver, newer
+firmware, or different NPU can load or execute the blob.
+
+### Milestone 2: reproducible probe bundle
+
+Define a small, redistributable probe bundle containing a patched native blob,
+raw input tensors, expected outputs, tensor selectors, hashes, and the Windows
+driver/compiler provenance that produced it. Keep the first oracle static
+dense FP16 add-one so comparison can be exact. The bundle must contain no
+MoviTools or driver binaries.
+
+### Milestone 3: minimal Linux Level Zero execution
+
+Add a Linux `graphinfer` backend that dynamically loads the system Level Zero
+loader and consumes an existing native blob. The first experiment may execute
+in-process to reduce bring-up variables, but must retain finite fence waits and
+state clearly that a stuck driver call cannot then be killed independently.
+Its report must distinguish graph creation, initialization, execution, and
+host-oracle comparison.
+
+### Milestone 4: POSIX worker isolation
+
+Once execution works, add a bounded POSIX worker launcher using pipes,
+`fork`/`exec`, process groups, and deterministic termination. Existing copied
+inference should use it by default. Shared Level Zero buffers may remain the
+explicit in-process exception, matching the Windows contract.
+
+### Milestone 5: Linux graph compilation
+
+Port the Level Zero `NGRAPH_LITE` graph-compilation path and record the compiler
+extension/version, device identity, build flags, and native-blob hash. Compare
+Linux- and Windows-produced blobs structurally, but do not require them to be
+byte-identical.
+
+### Deferred: MoviTools invocation on Linux
+
+MoviTools remains a Windows PE/DLL toolchain and is not part of the native
+Linux port. Initially compile SHAVE ELF files on Windows and transfer them. A
+future Wine-hosted worker is a separate experiment and must not be presented as
+native Linux support until validated.
+
 ## Linux with NPU3720
 
 The working hypothesis is that a patched NPU3720 graph blob generated on
