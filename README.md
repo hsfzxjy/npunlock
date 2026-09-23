@@ -9,6 +9,8 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
+> **Latest breakthrough — 2026-09-23:** One native graph can execute independent FP32-unary and FP16-binary custom branches; explicit ACT-group preflight handles the compiler's branch reordering. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#10-independent-mixed-precision-custom-branches-can-share-one-graph).
+
 ## Quick example
 
 This complete FP32 GELU example embeds the C kernel in Python, places it in an
@@ -82,22 +84,6 @@ for an operation. The NPU's ACT-SHAVE processors are programmable and run
 software kernels. `npunlock` makes those processors usable for compatible
 custom graph operations while retaining Intel's compiler and driver for the
 surrounding graph and hardware execution.
-
-## Reverse-engineering breakthroughs
-
-The decisive discovery was that Intel's graph compiler could keep generating
-the NPU's tensor placement, scheduling, data movement, and synchronization
-while a compatible ACT operation's machine code was replaced independently.
-That made it possible to turn separately compiled C into a graph-resident
-kernel without reimplementing the graph compiler.
-
-Controlled hardware experiments then established the in-memory MoviTools
-pipeline, the ACT C entry and tensor-descriptor contract, minimal native-graph
-code substitution, shared code across work partitions, static FP16 two-input
-kernels, direct IR compilation through Level Zero, and a precision-preserved
-unary FP32 path. Read the public
-[reverse-engineering breakthroughs](wiki/REVERSE_ENGINEERING.md) for the
-chronology, evidence, negative results, and remaining unknowns.
 
 ## Requirements
 

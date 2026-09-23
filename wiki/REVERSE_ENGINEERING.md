@@ -213,6 +213,30 @@ error `2.38419e-07`.
 carrier on the tested driver and NPU3720. It is not evidence for arbitrary
 FP32 graphs, FP32 binary kernels, or mixed-dtype ACT invocations.
 
+## 10. Independent mixed-precision custom branches can share one graph
+
+On 2026-09-23, a single graph executed two independent custom branches: one
+unary FP32 operation and one two-input FP16 operation. Both branches matched
+their host references exactly.
+
+The Intel compiler emitted the independent ACT groups in a different order
+from the symbolic graph's output traversal. Automatic positional mapping
+therefore rejected the graph correctly. A preflight compilation identified
+the unique groups by input arity and element width, after which explicit
+validated targets installed both kernels.
+
+**Confirmed:** One native graph can execute independent FP32-unary and
+FP16-binary custom branches; explicit ACT-group preflight handles the
+compiler's branch reordering.
+
+A connected FP32-to-FP16 experiment also reached graph compilation, but the
+current discovery validator rejected the ordinary conversion group because
+its input and output byte spans differ. This result does not establish a
+connected mixed-precision custom pipeline or mixed-dtype ACT invocation.
+
+The complete runnable case is
+[`example_mixed_precision_multi_custom.py`](../examples/example_mixed_precision_multi_custom.py).
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
