@@ -32,10 +32,10 @@ The installed targets are `npunlock::shavecc`, `npunlock::ir2blob`,
 `npunlock::native` shared runtime, so linking more than one component does not
 deploy additional DLLs.
 
-On Windows, deploy `npunlock_worker.exe` beside `npunlock.dll`. The executable
-dispatches private MoviTools, IR compilation, and ordinary inference modes;
-those calls receive separate finite-lived processes. A caller may instead
-provide an explicit worker path in the relevant options structure. The
+On Windows, deploy `npunlock_worker.exe` beside `npunlock.dll` when using
+MoviTools or IR compilation. Those unsafe compiler calls receive separate
+finite-lived processes, and callers may provide an explicit worker path in
+their options structures. Graph inference does not use the worker. The
 installed package places the DLL, worker, and `npurun` in its `bin` directory.
 
 The distributed DLL and worker use the static MSVC runtime. Public views remain
@@ -112,9 +112,8 @@ copy. Bindings must exactly cover
 all graph inputs and outputs, use buffers from the same session, and match each
 argument's exact byte size.
 
-The in-process path uses finite fence waits but cannot forcibly terminate a
-driver call that never returns. Use `graphinfer_infer()` when killable worker
-isolation is required.
+Both inference modes are in-process. They use finite fence waits but cannot
+forcibly terminate a driver call that never returns.
 
 Result structures should be zero-initialized. Options, target, and input
 descriptors carry `struct_size` for ABI validation; calls populate the result's
@@ -141,11 +140,12 @@ if (result.diagnostic.json.data != NULL) {
 }
 ```
 
-The worker-backed result structures—`shavecc_result`, `ir2blob_result`, and
-`graphinfer_result`—also own `stdout_log` and `stderr_log` buffers. These are
-the worker process's two operating-system streams, captured separately and
-available on success or failure. They are arbitrary byte spans, not quoted
-JSON and not necessarily NUL-terminated:
+The worker-backed `shavecc_result` and `ir2blob_result` structures own
+`stdout_log` and `stderr_log` buffers. These are the worker process's two
+operating-system streams, captured separately and available on success or
+failure. They are arbitrary byte spans, not quoted JSON and not necessarily
+NUL-terminated. The corresponding fields in `graphinfer_result` are retained
+for ABI compatibility and remain empty:
 
 ```c
 if (status != NPUNLOCK_STATUS_OK) {
@@ -226,8 +226,9 @@ ambiguous graph structures fail closed.
 
 ## `graphinfer`
 
-`graphinfer_infer()` executes a caller-provided native graph in a bounded
-worker. Its current contract is static FP16 or FP32 graph inputs and outputs
+`graphinfer_infer()` executes a caller-provided native graph in-process and
+copies tensors through internal Level Zero host allocations. Its
+current contract is static FP16 or FP32 graph inputs and outputs
 with at most five dimensions. The caller must provide exactly one descriptor
 for every graph input, selected either by argument index or by exact UTF-8
 name.
@@ -266,14 +267,14 @@ matters.
 
 ## Concurrency and timeouts
 
-Calls to `shavecc`, `ir2blob`, and `graphinfer_infer()` launch independent
-worker processes through one shared Win32 launcher. Request, protocol response,
+Calls to `shavecc` and `ir2blob` launch independent worker processes through
+one shared Win32 launcher. Request, protocol response,
 stdout, and stderr use separate bounded pipes, and process trees are terminated
 through a Job Object when a deadline expires. `patchblob` operates on caller
-and result buffers without global mutable parser state. In-process graphinfer
-sessions serialize calls per session and use the supplied timeout for fence
-waits. Each caller is responsible for choosing the appropriate isolation and
-setting a finite timeout.
+and result buffers without global mutable parser state. Graph inference is
+in-process: the copied call owns a temporary session, while explicit shared
+sessions serialize calls per session. Both use the supplied timeout for fence
+waits. Each caller chooses copied or shared tensors and sets a finite timeout.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated

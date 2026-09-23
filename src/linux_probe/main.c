@@ -101,27 +101,27 @@ static int write_json_string(FILE *stream, const char *value) {
   return fputc('"', stream) != EOF;
 }
 
-static const char *worker_status_name(npunlock_infer_worker_status status) {
+static const char *infer_status_name(npunlock_infer_status status) {
   switch (status) {
-  case NPUNLOCK_INFER_WORKER_OK:
+  case NPUNLOCK_INFER_OK:
     return "ok";
-  case NPUNLOCK_INFER_WORKER_BAD_REQUEST:
+  case NPUNLOCK_INFER_BAD_REQUEST:
     return "bad-request";
-  case NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY:
+  case NPUNLOCK_INFER_OUT_OF_MEMORY:
     return "out-of-memory";
-  case NPUNLOCK_INFER_WORKER_LOADER_NOT_FOUND:
+  case NPUNLOCK_INFER_LOADER_NOT_FOUND:
     return "loader-not-found";
-  case NPUNLOCK_INFER_WORKER_SYMBOL_MISSING:
+  case NPUNLOCK_INFER_SYMBOL_MISSING:
     return "symbol-missing";
-  case NPUNLOCK_INFER_WORKER_NPU_NOT_FOUND:
+  case NPUNLOCK_INFER_NPU_NOT_FOUND:
     return "npu-not-found";
-  case NPUNLOCK_INFER_WORKER_GRAPH_EXTENSION_MISSING:
+  case NPUNLOCK_INFER_GRAPH_EXTENSION_MISSING:
     return "graph-extension-missing";
-  case NPUNLOCK_INFER_WORKER_UNSUPPORTED:
+  case NPUNLOCK_INFER_UNSUPPORTED:
     return "unsupported";
-  case NPUNLOCK_INFER_WORKER_DRIVER_FAILED:
+  case NPUNLOCK_INFER_DRIVER_FAILED:
     return "driver-failed";
-  case NPUNLOCK_INFER_WORKER_BAD_RESULT:
+  case NPUNLOCK_INFER_BAD_RESULT:
     return "bad-result";
   default:
     return "unknown";
@@ -129,7 +129,7 @@ static const char *worker_status_name(npunlock_infer_worker_status status) {
 }
 
 static const char *stage_state(const npunlock_infer_result *result, npunlock_infer_stage stage) {
-  if (result->stage > stage || result->status == NPUNLOCK_INFER_WORKER_OK) {
+  if (result->stage > stage || result->status == NPUNLOCK_INFER_OK) {
     return "passed";
   }
   if (result->stage == stage) {
@@ -176,7 +176,7 @@ static int write_report(FILE *stream, const char *bundle_root, const npunlock_in
               stage_state(result, NPUNLOCK_INFER_STAGE_GRAPH_CREATE),
               stage_state(result, NPUNLOCK_INFER_STAGE_INITIALIZATION),
               stage_state(result, NPUNLOCK_INFER_STAGE_EXECUTION), oracle_state,
-              worker_status_name(result->status), npunlock_infer_stage_name(result->stage),
+              infer_status_name(result->status), npunlock_infer_stage_name(result->stage),
               result->driver_result, driver_index, device_index, result->driver_version,
               result->vendor_id, result->device_id) < 0 ||
       !write_json_string(stream, result->diagnostic) ||
@@ -258,7 +258,7 @@ int main(int argc, char **argv) {
   request.inputs[0].data = input.data;
   request.inputs[0].data_size = input.size;
   npunlock_infer_execute(&request, &result);
-  if (result.status == NPUNLOCK_INFER_WORKER_OK) {
+  if (result.status == NPUNLOCK_INFER_OK) {
     if (result.output_count == 1 && result.outputs[0].argument_index == 1 &&
         result.outputs[0].data_size == expected.size &&
         memcmp(result.outputs[0].data, expected.data, expected.size) == 0) {

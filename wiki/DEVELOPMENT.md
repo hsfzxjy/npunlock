@@ -30,27 +30,27 @@ those buffer-oriented libraries.
 
 ## Worker isolation
 
-MoviTools calls, Intel graph compilation, and default NPU execution can hang,
-fault, or terminate their process. One `npunlock_worker.exe` dispatches all
-three worker modes, but each ordinary request still runs in its own
-finite-lived process with a deadline and Windows Job Object cleanup.
+MoviTools calls and Intel graph compilation can hang, fault, or terminate their
+process. One `npunlock_worker.exe` dispatches those two worker modes, and each
+request runs in its own finite-lived process with a deadline and Windows Job
+Object cleanup.
 
 The worker communicates with the libraries through bounded, versioned pipe
 messages. Stage buffers remain in memory; no temporary files connect native
 library stages.
 
-The three library clients share one Win32 process-launch implementation. It
+The two library clients share one Win32 process-launch implementation. It
 owns worker discovery, inheritable handles, request writing, response draining,
 stdout/stderr capture, deadlines, and Job Object cleanup. Each mode retains
 only its protocol-specific request builder and response parser. The worker
 executable similarly shares byte encoding, bounded input, complete output, and
-response-handle helpers among its three modes.
+response-handle helpers among its two modes.
 
-`graphinfer` additionally exposes an opt-in in-process session for directly
-binding host/NPU shared Level Zero allocations. This is required for NumPy to
-view the same allocation used by the NPU. The session serializes executions and
-uses finite fence waits, but it cannot provide Job Object recovery from a
-driver call that never returns.
+`graphinfer` always executes in-process. Its ordinary call copies tensors
+through temporary Level Zero host allocations; its opt-in session directly binds
+host/NPU shared allocations so NumPy can view the same memory used by the NPU.
+Sessions serialize executions and use finite fence waits, but neither mode can
+provide Job Object recovery from a driver call that never returns.
 
 Protocol responses, stdout, and stderr are independent byte streams. The C
 results expose both captured process streams. `npurun` writes both verbatim
@@ -190,7 +190,7 @@ src/shavecc/         compiler orchestration and ELF validation
 src/ir2blob/         Intel driver graph compilation
 src/patchblob/       native graph validation and mutation
 src/graphinfer/      graph execution API
-src/workers/         isolated MoviTools/driver worker modes
+src/workers/         isolated MoviTools/graph-compiler worker modes
 src/npurun/          file-oriented CLI
 python/npunlock/     symbolic Python frontend and ctypes bindings
 examples/            runnable Python custom-kernel examples

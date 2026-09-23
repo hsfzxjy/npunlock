@@ -812,15 +812,14 @@ class NativeLibraries:
         inputs: Iterable[InferenceInput],
         *,
         timeout_ms: int = 20_000,
-        worker: str | None = None,
     ) -> InferenceResult:
         input_values = tuple(inputs)
         if not input_values:
             raise ValueError("at least one inference input is required")
         graph_view, graph_owner = _owned_view(graph_blob)
-        worker_view, worker_owner = _owned_view(worker.encode("utf-8") if worker else b"")
+        reserved_view, reserved_owner = _owned_view(b"")
         native_inputs = (_InferInput * len(input_values))()
-        owners: list[object] = [graph_owner, worker_owner]
+        owners: list[object] = [graph_owner, reserved_owner]
         for index, value in enumerate(input_values):
             if not isinstance(value, InferenceInput):
                 raise TypeError("inputs must contain InferenceInput values")
@@ -839,7 +838,7 @@ class NativeLibraries:
             0xFFFFFFFF,
             0xFFFFFFFF,
             timeout_ms,
-            worker_view,
+            reserved_view,
         )
         result = _InferResult()
         result.struct_size = ctypes.sizeof(_InferResult)
@@ -859,11 +858,6 @@ class NativeLibraries:
                     result.stdout_log,
                     result.stderr_log,
                 )
-            _report_worker_streams(
-                _buffer_bytes(result.stdout_log),
-                _buffer_bytes(result.stderr_log),
-                failed=False,
-            )
             outputs = tuple(
                 InferenceOutput(
                     output.argument_index,

@@ -139,7 +139,6 @@ class Program:
     patch_reports: tuple[bytes, ...]
     _libraries: NativeLibraries = field(repr=False, compare=False)
     _timeout_ms: int = field(repr=False, compare=False)
-    _infer_worker: str | None = field(repr=False, compare=False)
     _shared_state: _ProgramSharedState = field(default_factory=_ProgramSharedState, repr=False, compare=False)
 
     def to_bytes(self) -> bytes:
@@ -249,7 +248,6 @@ class Program:
             self.graph_blob,
             native_inputs,
             timeout_ms=self._timeout_ms,
-            worker=self._infer_worker,
         )
         if len(inferred.outputs) != len(self.graph.outputs):
             raise RuntimeError(f"graph returned {len(inferred.outputs)} outputs; expected {len(self.graph.outputs)}")
@@ -286,7 +284,6 @@ def load_native(
     graph: Graph,
     native_dir: str | Path | None = None,
     timeout_ms: int = 20_000,
-    infer_worker: str | None = None,
     libraries: NativeLibraries | None = None,
 ) -> Program:
     """Create an executable program from native graph bytes.
@@ -306,7 +303,6 @@ def load_native(
         (),
         native,
         timeout_ms,
-        infer_worker,
     )
 
 
@@ -316,7 +312,6 @@ def load_native_file(
     graph: Graph,
     native_dir: str | Path | None = None,
     timeout_ms: int = 20_000,
-    infer_worker: str | None = None,
     libraries: NativeLibraries | None = None,
 ) -> Program:
     """Create an executable program from a native graph file."""
@@ -326,7 +321,6 @@ def load_native_file(
         graph=graph,
         native_dir=native_dir,
         timeout_ms=timeout_ms,
-        infer_worker=infer_worker,
         libraries=libraries,
     )
 
@@ -455,7 +449,6 @@ def compile(
     timeout_ms: int = 20_000,
     ir_worker: str | None = None,
     movi_worker: str | None = None,
-    infer_worker: str | None = None,
     libraries: NativeLibraries | None = None,
 ) -> Program:
     if not isinstance(graph, Graph):
@@ -538,5 +531,4 @@ def compile(
         tuple(reports),
         native,
         timeout_ms,
-        infer_worker,
     )

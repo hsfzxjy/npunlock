@@ -4,9 +4,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "infer_protocol.h"
-
 #define NPUNLOCK_INFER_AUTO_INDEX UINT32_MAX
+#define NPUNLOCK_INFER_MAX_ARGUMENTS 64u
+#define NPUNLOCK_INFER_MAX_GRAPH_SIZE (512u * 1024u * 1024u)
+#define NPUNLOCK_INFER_MAX_INPUT_SIZE (256u * 1024u * 1024u)
+#define NPUNLOCK_INFER_MAX_OUTPUT_SIZE (256u * 1024u * 1024u)
+#define NPUNLOCK_INFER_MAX_DIAGNOSTIC_SIZE (64u * 1024u)
+
+typedef enum npunlock_infer_status {
+  NPUNLOCK_INFER_OK = 0,
+  NPUNLOCK_INFER_BAD_REQUEST = 1,
+  NPUNLOCK_INFER_OUT_OF_MEMORY = 2,
+  NPUNLOCK_INFER_LOADER_NOT_FOUND = 3,
+  NPUNLOCK_INFER_SYMBOL_MISSING = 4,
+  NPUNLOCK_INFER_NPU_NOT_FOUND = 5,
+  NPUNLOCK_INFER_GRAPH_EXTENSION_MISSING = 6,
+  NPUNLOCK_INFER_UNSUPPORTED = 7,
+  NPUNLOCK_INFER_DRIVER_FAILED = 8,
+  NPUNLOCK_INFER_BAD_RESULT = 9
+} npunlock_infer_status;
 
 typedef enum npunlock_infer_stage {
   NPUNLOCK_INFER_STAGE_LOADER = 0,
@@ -47,7 +63,7 @@ typedef struct npunlock_infer_result_output {
 } npunlock_infer_result_output;
 
 typedef struct npunlock_infer_result {
-  npunlock_infer_worker_status status;
+  npunlock_infer_status status;
   npunlock_infer_stage stage;
   uint32_t driver_result;
   uint32_t driver_index;

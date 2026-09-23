@@ -116,11 +116,10 @@ execution.
 
 ## Correctness and stability
 
-The default inference path is isolated in a finite-lived worker process.
-Host/NPU shared arrays require an opt-in in-process graph session because the
-validated NPU driver does not export its host-visible Level Zero allocations
-between processes. Fence waits remain finite, but a driver API call that never
-returns cannot be killed independently of the application in shared mode.
+Inference runs in-process for both copied and shared tensors. Fence waits are
+finite, but a driver API call that never returns cannot be killed independently
+of the application. Shared arrays remain opt-in; ordinary inputs and outputs
+are copied through internal Level Zero host allocations.
 
 Shared bindings require complete contiguous FP16 or FP32 arrays allocated by
 the same program. Partial views, foreign arrays, mixed copied/shared bindings,

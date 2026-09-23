@@ -33,7 +33,6 @@ int main(void) {
   static const uint8_t source[] = "void controlled_act(unsigned p) {(void)p;}";
   static const uint8_t path[] = "C:\\npunlock-tests\\missing-movitools";
   static const uint8_t missing_ir_worker[] = "C:\\npunlock-tests\\missing-ir-worker.exe";
-  static const uint8_t missing_infer_worker[] = "C:\\npunlock-tests\\missing-infer-worker.exe";
   static const uint8_t cpu[] = "3720xx";
   static const uint8_t entry[] = "controlled_act";
   static const uint8_t script[] = "SECTIONS {}";
@@ -127,17 +126,9 @@ int main(void) {
   infer_options.driver_index = GRAPHINFER_AUTO_INDEX;
   infer_options.device_index = GRAPHINFER_AUTO_INDEX;
   infer_options.timeout_ms = 1000;
-  infer_options.worker_executable_utf8 =
-      (npunlock_view){missing_infer_worker, sizeof(missing_infer_worker) - 1};
   infer_input.struct_size = sizeof(infer_input);
   infer_input.argument_index = 0;
   infer_input.data = (npunlock_view){tensor, sizeof(tensor)};
-  CHECK(graphinfer_infer(&infer_options, (npunlock_view){blob, sizeof(blob)}, &infer_input, 1,
-                         &infer_result) == NPUNLOCK_STATUS_NOT_FOUND);
-  CHECK(check_diagnostic(&infer_result.diagnostic, "not_found"));
-  graphinfer_result_release(&infer_result);
-  graphinfer_result_release(&infer_result);
-
   infer_input.data = (npunlock_view){NULL, 1};
   CHECK(graphinfer_infer(&infer_options, (npunlock_view){blob, sizeof(blob)}, &infer_input, 1,
                          &infer_result) == NPUNLOCK_STATUS_INVALID_ARGUMENT);

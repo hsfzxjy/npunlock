@@ -12,8 +12,5 @@ int main(int argc, char **argv) {
   if (strcmp(argv[1], "ir") == 0) {
     return npunlock_ir_worker_main(argc - 1, argv + 1);
   }
-  if (strcmp(argv[1], "infer") == 0) {
-    return npunlock_infer_worker_main(argc - 1, argv + 1);
-  }
   return 2;
 }

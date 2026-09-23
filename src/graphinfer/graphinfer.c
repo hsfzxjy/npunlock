@@ -1,14 +1,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "npunlock/graphinfer.h"
 
-#include "infer_worker.h"
 #include "internal.h"
+#include "session_internal.h"
 
 #define GRAPHINFER_MAX_INPUTS 64u
 
@@ -27,35 +26,6 @@ static bool input_is_valid(const graphinfer_input *input) {
   by_index = input->argument_index != GRAPHINFER_AUTO_INDEX;
   by_name = input->argument_name_utf8.size != 0;
   return by_index != by_name;
-}
-
-static npunlock_status worker_failure(graphinfer_result *result, npunlock_status status,
-                                      const npunlock_infer_worker_result *worker) {
-  char fallback[192];
-  char *message = NULL;
-  size_t index;
-  if (worker->diagnostic.size != 0 && worker->diagnostic.size <= 65535) {
-    message = (char *)malloc(worker->diagnostic.size + 1);
-    if (message != NULL) {
-      memcpy(message, worker->diagnostic.data, worker->diagnostic.size);
-      for (index = 0; index < worker->diagnostic.size; ++index) {
-        if (message[index] == '\0') {
-          message[index] = '?';
-        }
-      }
-      message[worker->diagnostic.size] = '\0';
-    }
-  }
-  if (message == NULL) {
-    snprintf(fallback, sizeof(fallback),
-             "inference worker failed (worker_status=%u, driver_result=0x%08x, "
-             "process_exit=0x%08x)",
-             worker->worker_status, worker->driver_result, worker->process_exit_code);
-  }
-  status = npunlock_set_diagnostic(&result->diagnostic, status, "graphinfer.infer",
-                                   message != NULL ? message : fallback);
-  free(message);
-  return status;
 }
 
 void graphinfer_result_release(graphinfer_result *result) {
@@ -77,7 +47,7 @@ void graphinfer_result_release(graphinfer_result *result) {
 npunlock_status graphinfer_infer(const graphinfer_options *options, npunlock_view graph_blob,
                                  const graphinfer_input *inputs, size_t input_count,
                                  graphinfer_result *result) {
-  npunlock_infer_worker_result worker = {0};
+  graphinfer_session_result session_result = {0};
   npunlock_status status;
   size_t index;
   if (result == NULL) {
@@ -87,9 +57,8 @@ npunlock_status graphinfer_infer(const graphinfer_options *options, npunlock_vie
   result->struct_size = (uint32_t)sizeof(*result);
   if (options == NULL || options->struct_size < sizeof(*options) || options->timeout_ms == 0 ||
       !npunlock_view_is_valid(options->worker_executable_utf8) ||
-      view_has_nul(options->worker_executable_utf8) || !npunlock_view_is_valid(graph_blob) ||
-      graph_blob.size == 0 || input_count == 0 || input_count > GRAPHINFER_MAX_INPUTS ||
-      inputs == NULL) {
+      !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0 || input_count == 0 ||
+      input_count > GRAPHINFER_MAX_INPUTS || inputs == NULL) {
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
                                    "graphinfer.validate",
                                    "invalid options, graph blob, or input array");
@@ -114,27 +83,19 @@ npunlock_status graphinfer_infer(const graphinfer_options *options, npunlock_vie
       }
     }
   }
-  status = npunlock_run_infer_worker(options->worker_executable_utf8, options->driver_index,
-                                     options->device_index, graph_blob, inputs, input_count,
-                                     options->timeout_ms, &worker);
-  result->stdout_log = worker.stdout_log;
-  memset(&worker.stdout_log, 0, sizeof(worker.stdout_log));
-  result->stderr_log = worker.stderr_log;
-  memset(&worker.stderr_log, 0, sizeof(worker.stderr_log));
+  status = graphinfer_session_create(options, graph_blob, &session_result);
   if (status != NPUNLOCK_STATUS_OK) {
-    status = worker_failure(result, status, &worker);
-    npunlock_infer_worker_result_release(&worker);
+    result->diagnostic = session_result.diagnostic;
+    memset(&session_result.diagnostic, 0, sizeof(session_result.diagnostic));
+    graphinfer_session_result_release(&session_result);
     return status;
   }
-  result->selected_driver_index = worker.selected_driver_index;
-  result->selected_device_index = worker.selected_device_index;
-  result->driver_version = worker.driver_version;
-  result->device_vendor_id = worker.device_vendor_id;
-  result->device_id = worker.device_id;
-  result->outputs = worker.outputs;
-  result->output_count = worker.output_count;
-  worker.outputs = NULL;
-  worker.output_count = 0;
-  npunlock_infer_worker_result_release(&worker);
-  return NPUNLOCK_STATUS_OK;
+  result->selected_driver_index = session_result.selected_driver_index;
+  result->selected_device_index = session_result.selected_device_index;
+  result->driver_version = session_result.driver_version;
+  result->device_vendor_id = session_result.device_vendor_id;
+  result->device_id = session_result.device_id;
+  status = npunlock_graphinfer_infer_copied(session_result.session, inputs, input_count, result);
+  graphinfer_session_result_release(&session_result);
+  return status;
 }

@@ -11,7 +11,8 @@ It helps to separate three compatibility questions:
 1. Can the NPU execute the compiled SHAVE instructions and use the same kernel
    invocation ABI?
 2. Will the driver and firmware accept the patched native graph blob?
-3. Can the host run the graph compiler, MoviTools, and execution workers?
+3. Can the host run the graph compiler and MoviTools, and load the graph for
+   in-process execution?
 
 A positive answer to one does not establish the others.
 
@@ -73,7 +74,7 @@ selection, but WSL has no NPU passthrough. Graph creation, execution, and the
 oracle therefore still require a real Linux NPU system before this milestone
 can be considered hardware-validated.
 
-### Milestone 4: POSIX worker isolation
+### Milestone 4: POSIX compiler-worker isolation
 
 A reusable bounded POSIX process launcher is now implemented and tested
 offline. It uses a dedicated binary-response descriptor, nonblocking request
@@ -81,10 +82,10 @@ transport, separate stdout and stderr pipes, a child process group, finite
 deadlines, and deterministic group termination. The focused fixture verifies
 both byte-exact transport and timeout cleanup.
 
-The next slice is to build the unified `npunlock_worker infer` child on Linux
-and connect copied graph inference to this launcher. Until then,
-`npunlock-linux-probe` remains the explicitly in-process bring-up path. Shared
-Level Zero buffers may remain the same narrow in-process exception as Windows.
+The launcher is reserved for future graph-compilation and possible
+Wine-hosted MoviTools workers. Inference intentionally remains in-process on
+both platforms, with callers choosing copied tensors or explicit host/NPU
+shared allocations.
 
 ### Milestone 5: Linux graph compilation
 
@@ -115,8 +116,8 @@ correctness result; output must be checked against a host oracle.
 
 The current host tooling is Windows-only. There are two separable Linux tasks:
 
-- **Run an existing patched blob.** Add a Linux Level Zero graph loader and
-  execution worker, then test a blob produced and patched on Windows.
+- **Run an existing patched blob.** Use the Linux Level Zero graph loader and
+  in-process execution probe, then test a blob produced and patched on Windows.
 - **Build the kernel on Linux.** The available MoviTools components are Windows
   DLLs. A Linux port would need a reliable way to load those PE DLLs, such as a
   suitable compatibility environment, or compile the SHAVE ELF on a Windows

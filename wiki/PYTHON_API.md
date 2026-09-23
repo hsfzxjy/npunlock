@@ -210,15 +210,15 @@ empty `patch_reports` tuple because those build-time records cannot be
 recovered from the native blob. Loading still uses the installed Intel NPU
 driver when `run()` executes, but it does not require MoviTools.
 
-## Worker output and errors
+## Native tool output and errors
 
-Graph compilation, custom C compilation, and the default copied execution path
-run in bounded native worker processes. Their stdout and stderr streams are
-captured separately. The explicitly requested shared-buffer execution path is
-in-process because its Level Zero allocations must remain directly visible to
-NumPy; see [Shared input and output buffers](#shared-input-and-output-buffers).
+Graph compilation and custom C compilation run in bounded native worker
+processes. Their stdout and stderr streams are captured separately. Graph
+execution is always in-process; callers choose either ordinary NumPy arrays,
+which are copied through internal Level Zero host allocations, or explicit shared
+arrays. See [Shared input and output buffers](#shared-input-and-output-buffers).
 
-If a worker-backed operation fails, Python writes captured stdout to the
+If a worker-backed compilation operation fails, Python writes captured stdout to the
 process stdout and captured stderr to the process stderr **verbatim**, without
 embedding or quoting either stream inside the exception message. It then
 raises `npu.NativeError`, whose `stdout_log` and `stderr_log` attributes retain
@@ -275,11 +275,11 @@ execution binds those allocations directly and returns the caller's output
 objects without copying tensor bytes. Array views retain the native allocation
 owner, so the allocation is released only after the final view is gone.
 
-This mode deliberately keeps the Level Zero context and graph in the Python
-process. The fence wait still uses `timeout_ms`, but unlike the default worker
-path, a driver call that never returns cannot be terminated without ending the
-application. Use ordinary `Program.run()` when process isolation matters more
-than avoiding tensor copies.
+Both tensor modes keep Level Zero graph execution in the Python process. Fence
+waits use `timeout_ms`, but a driver call that never returns cannot be
+terminated without ending the application. Use ordinary `Program.run()` for
+simple owned NumPy results; choose shared arrays when avoiding tensor copies or
+reusing allocations matters.
 
 ## Serialization without execution
 

@@ -144,13 +144,13 @@ validated contract.
 
 ## 6. Execute and validate semantics
 
-`graphinfer` offers two execution boundaries. The default loads the patched
-native graph in a bounded worker, copies caller inputs into Level Zero memory,
-and returns owned output buffers. Python's ordinary `Program.run()` converts
-those buffers into NumPy arrays.
+`graphinfer` offers two in-process tensor modes. The default loads the patched
+native graph, copies caller inputs into internal Level Zero host
+allocations, and returns owned output buffers. Python's ordinary
+`Program.run()` converts those buffers into NumPy arrays.
 
-For repeated execution, an in-process session keeps the graph and host-visible
-Level Zero shared allocations alive. Python exposes those allocations as
+The explicit shared-buffer mode keeps the graph and host-visible Level Zero
+allocations alive. Python exposes those allocations as
 `SharedArray` objects, binds caller-supplied shared inputs and outputs directly,
 and performs no tensor copy around execution. Shared-buffer lifetime keeps the
 underlying Level Zero context alive even when the public session closes.

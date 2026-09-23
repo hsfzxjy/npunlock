@@ -74,12 +74,11 @@ if(NOT WIN32)
   message(STATUS "Linux milestone: building offline inspection and in-process execution probes")
   set(NPUNLOCK_LINUX_PROBE_SOURCES
     src/linux_probe/main.c
-    src/workers/infer_worker.c
+    src/linux_probe/infer_engine.c
   )
   add_executable(npunlock_linux_probe ${NPUNLOCK_LINUX_PROBE_SOURCES})
   set_target_properties(npunlock_linux_probe PROPERTIES OUTPUT_NAME npunlock-linux-probe)
-  target_compile_definitions(npunlock_linux_probe PRIVATE NPUNLOCK_INFER_ENGINE_ONLY)
-  target_include_directories(npunlock_linux_probe PRIVATE include src/workers)
+  target_include_directories(npunlock_linux_probe PRIVATE include src/linux_probe src/workers)
   target_link_libraries(npunlock_linux_probe PRIVATE npunlock_warnings ${CMAKE_DL_LIBS})
   add_library(npunlock_posix_worker_process STATIC
     src/common/buffer.c
@@ -115,8 +114,7 @@ if(NOT WIN32)
   set(NPUNLOCK_LINUX_FORMAT_SOURCES
     ${NPUNLOCK_INSPECT_SOURCES}
     ${NPUNLOCK_LINUX_PROBE_SOURCES}
-    src/workers/infer_engine.h
-    src/workers/infer_protocol.h
+    src/linux_probe/infer_engine.h
     src/workers/level_zero_min.h
     src/common/worker_process_posix.c
     tests/helpers/worker_fixture_posix.c
@@ -168,7 +166,6 @@ add_executable(npunlock_worker
   src/workers/worker_io.c
   src/workers/movi_worker.c
   src/workers/ir_worker.c
-  src/workers/infer_worker.c
 )
 target_include_directories(npunlock_worker PRIVATE src/common src/workers)
 target_link_libraries(npunlock_worker PRIVATE npunlock_warnings)
@@ -224,7 +221,6 @@ target_link_libraries(npunlock_patchblob_objects PRIVATE npunlock_warnings)
 
 add_library(npunlock_graphinfer_objects OBJECT
   src/graphinfer/graphinfer.c
-  src/graphinfer/infer_worker_win32.c
   src/graphinfer/session_win32.c
 )
 target_include_directories(npunlock_graphinfer_objects PRIVATE include src src/common src/graphinfer)
@@ -304,8 +300,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/ir2blob/ir_worker.h
   src/ir2blob/ir_worker_win32.c
   src/graphinfer/graphinfer.c
-  src/graphinfer/infer_worker.h
-  src/graphinfer/infer_worker_win32.c
+  src/graphinfer/session_internal.h
   src/graphinfer/session_win32.c
   src/npurun/main.c
   src/npunlock_inspect/main.c
@@ -323,10 +318,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/workers/worker_io.h
   src/workers/ir_protocol.h
   src/workers/ir_worker.c
-  src/workers/infer_engine.h
   src/workers/level_zero_min.h
-  src/workers/infer_protocol.h
-  src/workers/infer_worker.c
   tests/package/smoke.c
   tests/integration/test_shavecc.c
   tests/integration/test_ir2blob.c
@@ -452,7 +444,6 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     target_link_libraries(
       npunlock_test_graphinfer_integration PRIVATE graphinfer npunlock_common npunlock_warnings
     )
-    add_dependencies(npunlock_test_graphinfer_integration npunlock_worker)
     add_test(NAME npu_graphinfer COMMAND npunlock_test_graphinfer_integration)
     set_tests_properties(
       npu_graphinfer PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

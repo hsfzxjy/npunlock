@@ -24,9 +24,9 @@ typedef struct graphinfer_options {
   /* Use GRAPHINFER_AUTO_INDEX to select the first matching Intel VPU. */
   uint32_t driver_index;
   uint32_t device_index;
-  /* Finite parent-process deadline; zero is invalid. */
+  /* Finite submitted-fence deadline; zero is invalid. */
   uint32_t timeout_ms;
-  /* Empty selects the installed sibling npunlock_worker executable. */
+  /* Reserved for ABI compatibility. Ignored; callers should pass {NULL, 0}. */
   npunlock_view worker_executable_utf8;
 } graphinfer_options;
 
@@ -62,7 +62,7 @@ typedef struct graphinfer_result {
   uint32_t device_id;
   graphinfer_output *outputs;
   size_t output_count;
-  /* Verbatim output captured from the bounded execution worker. */
+  /* Reserved for ABI compatibility; both buffers are empty. */
   npunlock_buffer stdout_log;
   npunlock_buffer stderr_log;
   npunlock_diagnostic diagnostic;
@@ -112,7 +112,9 @@ typedef struct graphinfer_session_infer_result {
  * graph_blob and every input view are borrowed only for this synchronous call.
  * On success, outputs contains every graph output. On any return after result
  * validation, graphinfer_result_release() is safe and releases partial state.
- * Calls use independent worker processes and do not share execution state.
+ * The graph runs in process. Inputs and outputs are copied through internal
+ * Level Zero host allocations. timeout_ms bounds submitted fence
+ * waits, but cannot terminate a driver call that never returns.
  */
 NPUNLOCK_GRAPHINFER_API npunlock_status graphinfer_infer(const graphinfer_options *options,
                                                          npunlock_view graph_blob,
@@ -123,11 +125,9 @@ NPUNLOCK_GRAPHINFER_API npunlock_status graphinfer_infer(const graphinfer_option
 NPUNLOCK_GRAPHINFER_API void graphinfer_result_release(graphinfer_result *result);
 
 /*
- * Create an in-process graph session. Unlike graphinfer_infer(), this path is
- * not isolated in a killable worker because the NPU and caller must share the
- * same Level Zero allocations. timeout_ms still bounds submitted fence waits,
- * but cannot terminate a driver call that never returns.
- * worker_executable_utf8 is ignored by this entry point.
+ * Create an in-process graph session for explicit host/NPU shared buffers.
+ * timeout_ms bounds submitted fence waits, but cannot terminate a driver call
+ * that never returns. worker_executable_utf8 is ignored.
  */
 NPUNLOCK_GRAPHINFER_API npunlock_status graphinfer_session_create(
     const graphinfer_options *options, npunlock_view graph_blob, graphinfer_session_result *result);

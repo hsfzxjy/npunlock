@@ -33,7 +33,6 @@ typedef struct build_arguments {
   const char *build_flags;
   const char *movi_worker_path;
   const char *ir_worker_path;
-  const char *run_worker_path;
   const char *run_input_path;
   const char *run_output_path;
   char *owned_movi_directory;
@@ -76,7 +75,6 @@ static void print_usage(const char *program) {
   printf("         explicit override: --patch-invocation N --patch-range N [repeat both]\n");
   printf("         --input-count N --element-count N --span-bytes N\n");
   printf("         --run-add1 --run-input FILE --run-output FILE [--run-input-index N]\n");
-  printf("         [--run-worker FILE]\n");
   printf("environment: %s supplies the MVC_DEPEND root when --movi-dll-dir is omitted\n",
          MOVITOOLS_DIRECTORY_ENV);
 }
@@ -171,7 +169,6 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     STRING_OPTION("--build-flags", build_flags)
     STRING_OPTION("--movi-worker", movi_worker_path)
     STRING_OPTION("--ir-worker", ir_worker_path)
-    STRING_OPTION("--run-worker", run_worker_path)
     STRING_OPTION("--run-input", run_input_path)
     STRING_OPTION("--run-output", run_output_path)
 #undef STRING_OPTION
@@ -812,16 +809,12 @@ static int run_build(const build_arguments *build) {
     infer_options.driver_index = GRAPHINFER_AUTO_INDEX;
     infer_options.device_index = GRAPHINFER_AUTO_INDEX;
     infer_options.timeout_ms = build->timeout_ms;
-    infer_options.worker_executable_utf8 =
-        (npunlock_view){(const uint8_t *)build->run_worker_path,
-                        build->run_worker_path == NULL ? 0 : strlen(build->run_worker_path)};
     infer_input.struct_size = sizeof(infer_input);
     infer_input.argument_index = build->run_input_index;
     infer_input.data = (npunlock_view){run_input.data, run_input.size};
     status = graphinfer_infer(
         &infer_options, (npunlock_view){patch_result.graph_blob.data, patch_result.graph_blob.size},
         &infer_input, 1, &run_result);
-    report_worker_streams(&run_result.stdout_log, &run_result.stderr_log, status);
     if (status != NPUNLOCK_STATUS_OK) {
       if (run_result.diagnostic.json.data != NULL) {
         fwrite(run_result.diagnostic.json.data, 1, run_result.diagnostic.json.size, stderr);

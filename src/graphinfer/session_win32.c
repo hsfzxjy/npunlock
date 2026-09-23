@@ -11,6 +11,7 @@
 #include "npunlock/graphinfer.h"
 
 #include "internal.h"
+#include "session_internal.h"
 #include "workers/level_zero_min.h"
 
 #define SESSION_MAX_ARGUMENTS 64u
@@ -38,6 +39,7 @@ typedef struct session_ze_functions {
   npunlock_ze_context_create_fn context_create;
   npunlock_ze_context_destroy_fn context_destroy;
   npunlock_ze_device_get_queue_groups_fn device_get_queue_groups;
+  npunlock_ze_mem_alloc_host_fn mem_alloc_host;
   npunlock_ze_mem_alloc_shared_fn mem_alloc_shared;
   npunlock_ze_mem_free_fn mem_free;
   npunlock_ze_command_queue_create_fn command_queue_create;
@@ -120,8 +122,8 @@ static bool load_ze_functions(HMODULE library, session_ze_functions *ze) {
          LOAD("zeDeviceGet", device_get) && LOAD("zeDeviceGetProperties", device_get_properties) &&
          LOAD("zeContextCreate", context_create) && LOAD("zeContextDestroy", context_destroy) &&
          LOAD("zeDeviceGetCommandQueueGroupProperties", device_get_queue_groups) &&
-         LOAD("zeMemAllocShared", mem_alloc_shared) && LOAD("zeMemFree", mem_free) &&
-         LOAD("zeCommandQueueCreate", command_queue_create) &&
+         LOAD("zeMemAllocHost", mem_alloc_host) && LOAD("zeMemAllocShared", mem_alloc_shared) &&
+         LOAD("zeMemFree", mem_free) && LOAD("zeCommandQueueCreate", command_queue_create) &&
          LOAD("zeCommandQueueDestroy", command_queue_destroy) &&
          LOAD("zeCommandQueueExecuteCommandLists", command_queue_execute) &&
          LOAD("zeCommandListCreate", command_list_create) &&
@@ -513,7 +515,6 @@ npunlock_status graphinfer_session_create(const graphinfer_options *options,
   result->struct_size = sizeof(*result);
   if (options == NULL || options->struct_size < sizeof(*options) || options->timeout_ms == 0 ||
       !npunlock_view_is_valid(options->worker_executable_utf8) ||
-      session_view_has_nul(options->worker_executable_utf8) ||
       !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0) {
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
                                    "graphinfer.session", "invalid options or graph blob");
@@ -740,6 +741,52 @@ static npunlock_status collect_bindings(graphinfer_session *session,
   return NPUNLOCK_STATUS_OK;
 }
 
+static npunlock_status execute_allocations_locked(graphinfer_session *session,
+                                                  void *const *allocations,
+                                                  npunlock_diagnostic *diagnostic) {
+  npunlock_status status;
+  size_t index;
+  uint32_t code;
+  for (index = 0; index < session->argument_count; ++index) {
+    code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      return session_driver_error(diagnostic, "pfnSetArgumentValue(pre-init)", code);
+    }
+  }
+  if (!session->initialized) {
+    if ((session->init_stages & NPUNLOCK_ZE_GRAPH_STAGE_INITIALIZE) != 0) {
+      if (session->graph.initialize == NULL) {
+        return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
+                                       "graphinfer.session",
+                                       "direct graph initialization is unavailable");
+      }
+      code = session->graph.initialize(session->handle);
+      if (code != NPUNLOCK_ZE_SUCCESS) {
+        return session_driver_error(diagnostic, "pfnGraphInitialize", code);
+      }
+    }
+    if ((session->init_stages & NPUNLOCK_ZE_GRAPH_STAGE_COMMAND_LIST_INITIALIZE) != 0) {
+      if (session->graph.append_initialize == NULL) {
+        return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
+                                       "graphinfer.session",
+                                       "command-list initialization is unavailable");
+      }
+      status = submit(session, true, diagnostic);
+      if (status != NPUNLOCK_STATUS_OK) {
+        return status;
+      }
+    }
+    session->initialized = true;
+  }
+  for (index = 0; index < session->argument_count; ++index) {
+    code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      return session_driver_error(diagnostic, "pfnSetArgumentValue(post-init)", code);
+    }
+  }
+  return submit(session, false, diagnostic);
+}
+
 npunlock_status graphinfer_session_infer(graphinfer_session *session,
                                          const graphinfer_shared_tensor *inputs, size_t input_count,
                                          const graphinfer_shared_tensor *outputs,
@@ -749,7 +796,6 @@ npunlock_status graphinfer_session_infer(graphinfer_session *session,
   bool matched[SESSION_MAX_ARGUMENTS] = {false};
   npunlock_status status;
   size_t index;
-  uint32_t code;
   if (result == NULL) {
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
   }
@@ -782,50 +828,134 @@ npunlock_status graphinfer_session_infer(graphinfer_session *session,
                                        "graphinfer.session", "graph argument is not bound");
       goto done;
     }
-    code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
-    if (code != NPUNLOCK_ZE_SUCCESS) {
-      status = session_driver_error(&result->diagnostic, "pfnSetArgumentValue(pre-init)", code);
-      goto done;
-    }
   }
-  if (!session->initialized) {
-    if ((session->init_stages & NPUNLOCK_ZE_GRAPH_STAGE_INITIALIZE) != 0) {
-      if (session->graph.initialize == NULL) {
-        status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
-                                         "graphinfer.session",
-                                         "direct graph initialization is unavailable");
-        goto done;
-      }
-      code = session->graph.initialize(session->handle);
-      if (code != NPUNLOCK_ZE_SUCCESS) {
-        status = session_driver_error(&result->diagnostic, "pfnGraphInitialize", code);
-        goto done;
-      }
-    }
-    if ((session->init_stages & NPUNLOCK_ZE_GRAPH_STAGE_COMMAND_LIST_INITIALIZE) != 0) {
-      if (session->graph.append_initialize == NULL) {
-        status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
-                                         "graphinfer.session",
-                                         "command-list initialization is unavailable");
-        goto done;
-      }
-      status = submit(session, true, &result->diagnostic);
-      if (status != NPUNLOCK_STATUS_OK) {
-        goto done;
-      }
-    }
-    session->initialized = true;
-  }
-  for (index = 0; index < session->argument_count; ++index) {
-    code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
-    if (code != NPUNLOCK_ZE_SUCCESS) {
-      status = session_driver_error(&result->diagnostic, "pfnSetArgumentValue(post-init)", code);
-      goto done;
-    }
-  }
-  status = submit(session, false, &result->diagnostic);
+  status = execute_allocations_locked(session, allocations, &result->diagnostic);
 
 done:
+  LeaveCriticalSection(&session->lock);
+  return status;
+}
+
+static bool copied_input_matches(const graphinfer_input *input, const session_argument *argument) {
+  if (input->argument_index != GRAPHINFER_AUTO_INDEX) {
+    return input->argument_index == argument->index;
+  }
+  return input->argument_name_utf8.size == argument->name_size &&
+         memcmp(input->argument_name_utf8.data, argument->name, argument->name_size) == 0;
+}
+
+npunlock_status npunlock_graphinfer_infer_copied(graphinfer_session *session,
+                                                 const graphinfer_input *inputs, size_t input_count,
+                                                 graphinfer_result *result) {
+  void *allocations[SESSION_MAX_ARGUMENTS] = {0};
+  bool matched_inputs[SESSION_MAX_ARGUMENTS] = {false};
+  npunlock_ze_host_mem_alloc_desc host_desc = {0};
+  npunlock_status status = NPUNLOCK_STATUS_OK;
+  size_t index;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  if (session == NULL || inputs == NULL || input_count != session->input_count) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "graphinfer.infer", "inputs do not cover graph tensors");
+  }
+  host_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC;
+  EnterCriticalSection(&session->lock);
+  if (!session->active) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                     "graphinfer.infer", "session is closed");
+    goto done;
+  }
+  for (index = 0; index < input_count; ++index) {
+    size_t argument_index;
+    session_argument *argument = NULL;
+    for (argument_index = 0; argument_index < session->argument_count; ++argument_index) {
+      session_argument *candidate = &session->arguments[argument_index];
+      if (candidate->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT &&
+          copied_input_matches(&inputs[index], candidate)) {
+        if (argument != NULL) {
+          status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                           "graphinfer.infer", "input selector is ambiguous");
+          goto done;
+        }
+        argument = candidate;
+      }
+    }
+    if (argument == NULL || matched_inputs[argument->index] ||
+        inputs[index].data.size != argument->data_size) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                       "graphinfer.infer",
+                                       "input selector or byte size does not match the graph");
+      goto done;
+    }
+    matched_inputs[argument->index] = true;
+  }
+  result->outputs = (graphinfer_output *)calloc(session->output_count, sizeof(*result->outputs));
+  if (result->outputs == NULL) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "graphinfer.infer", "failed to allocate output descriptors");
+    goto done;
+  }
+  for (index = 0; index < session->argument_count; ++index) {
+    session_argument *argument = &session->arguments[index];
+    uint32_t code;
+    host_desc.flags = argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT
+                          ? NPUNLOCK_ZE_HOST_MEM_ALLOC_WRITE_COMBINED
+                          : 0;
+    code = session->ze.mem_alloc_host(session->context, &host_desc, argument->data_size,
+                                      SESSION_PAGE_SIZE, &allocations[index]);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      status = session_driver_error(&result->diagnostic, "zeMemAllocHost(copied tensor)", code);
+      goto done;
+    }
+    if (argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
+      size_t input_index;
+      for (input_index = 0; input_index < input_count; ++input_index) {
+        if (copied_input_matches(&inputs[input_index], argument)) {
+          memcpy(allocations[index], inputs[input_index].data.data, argument->data_size);
+          break;
+        }
+      }
+    } else {
+      memset(allocations[index], 0, argument->data_size);
+    }
+  }
+  status = execute_allocations_locked(session, allocations, &result->diagnostic);
+  if (status == NPUNLOCK_STATUS_OK) {
+    size_t output_index = 0;
+    for (index = 0; index < session->argument_count; ++index) {
+      session_argument *argument = &session->arguments[index];
+      graphinfer_output *output;
+      if (argument->type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT) {
+        continue;
+      }
+      output = &result->outputs[output_index++];
+      result->output_count = output_index;
+      output->struct_size = sizeof(*output);
+      output->argument_index = argument->index;
+      output->precision = argument->precision;
+      output->dims_count = argument->dims_count;
+      memcpy(output->dims, argument->dims, sizeof(output->dims));
+      status = npunlock_buffer_copy((npunlock_view){argument->name, argument->name_size},
+                                    &output->argument_name_utf8);
+      if (status == NPUNLOCK_STATUS_OK) {
+        status = npunlock_buffer_copy((npunlock_view){allocations[index], argument->data_size},
+                                      &output->data);
+      }
+      if (status != NPUNLOCK_STATUS_OK) {
+        npunlock_set_diagnostic(&result->diagnostic, status, "graphinfer.infer",
+                                "failed to retain graph output");
+        goto done;
+      }
+    }
+  }
+
+done:
+  for (index = 0; index < session->argument_count; ++index) {
+    if (allocations[index] != NULL) {
+      session->ze.mem_free(session->context, allocations[index]);
+    }
+  }
   LeaveCriticalSection(&session->lock);
   return status;
 }

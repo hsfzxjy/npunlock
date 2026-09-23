@@ -126,7 +126,6 @@ def compile(
     timeout_ms: int = ...,
     ir_worker: str | None = ...,
     movi_worker: str | None = ...,
-    infer_worker: str | None = ...,
     libraries: Any = ...,
 ) -> Program: ...
 def load_native(
@@ -135,7 +134,6 @@ def load_native(
     graph: Graph,
     native_dir: str | PathLike[str] | None = ...,
     timeout_ms: int = ...,
-    infer_worker: str | None = ...,
     libraries: Any = ...,
 ) -> Program: ...
 def load_native_file(
@@ -144,7 +142,6 @@ def load_native_file(
     graph: Graph,
     native_dir: str | PathLike[str] | None = ...,
     timeout_ms: int = ...,
-    infer_worker: str | None = ...,
     libraries: Any = ...,
 ) -> Program: ...
 def Abs(x: Tensor, *, _shape: object, _dtype: object, _name: str | None = ...) -> Tensor: ...
