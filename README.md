@@ -183,6 +183,7 @@ this does not yet imply Linux graph execution support.
 - **[Intel NPU architecture](wiki/INTEL_NPU_ARCHITECTURE.md)** — DPU and ACT-SHAVE overview
 - **[Current limitations](wiki/LIMITATIONS.md)** — verified hardware and ABI scope
 - **[Porting to Linux and newer NPUs](wiki/PORTING.md)** — experimental routes and contribution guide
+- **[Porting probe bundle](wiki/PORTING_PROBE_BUNDLE.md)** — reproducible graph, tensor, provenance, and oracle package
 - **[Development and native APIs](wiki/DEVELOPMENT.md)** — CMake, testing, packaging, CLI, and C interfaces
 - **[Full documentation index](wiki/README.md)**
 

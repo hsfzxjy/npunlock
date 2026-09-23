@@ -42,10 +42,12 @@ firmware, or different NPU can load or execute the blob.
 
 ### Milestone 2: reproducible probe bundle
 
-Define a small, redistributable probe bundle containing a patched native blob,
-raw input tensors, expected outputs, tensor selectors, hashes, and the Windows
-driver/compiler provenance that produced it. Keep the first oracle static
-dense FP16 add-one so comparison can be exact. The bundle must contain no
+The standard-library-only `tools/porting_probe.py` helper creates and verifies
+a small redistributable directory containing a patched native blob, raw input,
+exact expected output, tensor selectors, hashes, and required Windows
+driver/compiler provenance. The first schema is deliberately fixed to static
+dense `1x16` FP16 add-one. See the
+[probe-bundle contract](PORTING_PROBE_BUNDLE.md). The bundle contains no
 MoviTools or driver binaries.
 
 ### Milestone 3: minimal Linux Level Zero execution

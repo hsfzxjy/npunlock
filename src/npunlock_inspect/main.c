@@ -119,7 +119,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
     const patchblob_discovered_target *discovered = &discovery->targets[index];
     const patchblob_target *target = &discovered->target;
     if (fprintf(stream,
-                "    %s{\"group_index\": %u, \"invocation_index\": %u, "
+                "%s    {\"group_index\": %u, \"invocation_index\": %u, "
                 "\"range_index\": %u, \"input_count\": %u, \"element_count\": "
                 "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_flags\": %u, "
                 "\"precision\": \"%s\"}",

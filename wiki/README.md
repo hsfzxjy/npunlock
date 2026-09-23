@@ -15,6 +15,8 @@ and where the current compatibility boundary lies.
   and kernel boundaries.
 - [Porting to Linux and newer NPUs](PORTING.md) — unverified compatibility
   hypotheses, suggested experiments, and how to contribute results.
+- [Porting probe bundle](PORTING_PROBE_BUNDLE.md) — package one patched graph,
+  deterministic tensors, provenance, hashes, and an exact host oracle.
 
 ## How it works
 

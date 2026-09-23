@@ -59,6 +59,13 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
       --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs.bin
   )
   set_tests_properties(porting_inspect_rejects_empty PROPERTIES WILL_FAIL TRUE)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME porting_probe_bundle
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_porting_probe.py
+    )
+  endif()
 endif()
 
 install(TARGETS npunlock_inspect RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)

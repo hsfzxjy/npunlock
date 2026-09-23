@@ -75,7 +75,7 @@ tools\msvc-run.ps1 cmake --preset windows
 tools\msvc-run.ps1 cmake --build --preset windows-debug
 tools\msvc-run.ps1 ctest --preset windows-debug
 tools\msvc-run.ps1 cmake --build build\windows --config Debug --target format-check
-python -m black --check python examples tests\python setup.py
+python -m black --check python examples tests\python tools setup.py
 ```
 
 The default test suite is offline. It does not require MoviTools, an NPU, or
