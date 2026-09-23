@@ -1,5 +1,9 @@
+#ifndef NPUNLOCK_INFER_ENGINE_ONLY
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -8,12 +12,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "infer_engine.h"
 #include "infer_protocol.h"
 #include "level_zero_min.h"
+#ifndef NPUNLOCK_INFER_ENGINE_ONLY
 #include "worker_entry.h"
 #include "worker_io.h"
 #include "worker_protocol.h"
+#endif
 
+#ifndef NPUNLOCK_INFER_ENGINE_ONLY
 #define checked_add npunlock_worker_checked_add
 #define checked_mul npunlock_worker_checked_mul
 #define load_u32 npunlock_worker_load_u32
@@ -21,51 +29,32 @@
 #define store_u32 npunlock_worker_store_u32
 #define store_u64 npunlock_worker_store_u64
 #define write_all npunlock_worker_write_all
+#else
+static bool checked_add(size_t left, size_t right, size_t *result) {
+  if (right > SIZE_MAX - left) {
+    return false;
+  }
+  *result = left + right;
+  return true;
+}
 
-#define INFER_AUTO_INDEX UINT32_MAX
+static bool checked_mul(size_t left, size_t right, size_t *result) {
+  if (left != 0 && right > SIZE_MAX / left) {
+    return false;
+  }
+  *result = left * right;
+  return true;
+}
+#endif
+
+#define INFER_AUTO_INDEX NPUNLOCK_INFER_AUTO_INDEX
 #define INFER_PAGE_SIZE 4096u
 #define INFER_FENCE_TIMEOUT_NS 5000000000ull
 
-typedef struct infer_request_input {
-  uint32_t argument_index;
-  const uint8_t *name;
-  size_t name_size;
-  const uint8_t *data;
-  size_t data_size;
-} infer_request_input;
-
-typedef struct infer_request {
-  uint32_t driver_index;
-  uint32_t device_index;
-  const uint8_t *graph;
-  size_t graph_size;
-  infer_request_input inputs[NPUNLOCK_INFER_MAX_ARGUMENTS];
-  size_t input_count;
-} infer_request;
-
-typedef struct infer_result_output {
-  uint32_t argument_index;
-  uint32_t precision;
-  uint32_t dims_count;
-  uint32_t dims[5];
-  uint8_t name[256];
-  size_t name_size;
-  uint8_t *data;
-  size_t data_size;
-} infer_result_output;
-
-typedef struct infer_result {
-  npunlock_infer_worker_status status;
-  uint32_t driver_result;
-  uint32_t driver_index;
-  uint32_t device_index;
-  uint32_t driver_version;
-  uint32_t vendor_id;
-  uint32_t device_id;
-  infer_result_output outputs[NPUNLOCK_INFER_MAX_ARGUMENTS];
-  size_t output_count;
-  char *diagnostic;
-} infer_result;
+typedef npunlock_infer_request_input infer_request_input;
+typedef npunlock_infer_request infer_request;
+typedef npunlock_infer_result_output infer_result_output;
+typedef npunlock_infer_result infer_result;
 
 typedef struct graph_argument {
   uint32_t index;
@@ -81,6 +70,8 @@ typedef struct graph_argument {
 } graph_argument;
 
 typedef struct ze_functions {
+  npunlock_ze_init_fn init;
+  npunlock_ze_driver_get_fn driver_get;
   npunlock_ze_init_drivers_fn init_drivers;
   npunlock_ze_driver_get_properties_fn driver_get_properties;
   npunlock_ze_driver_get_extensions_fn driver_get_extensions;
@@ -134,6 +125,7 @@ _Static_assert(sizeof(npunlock_ze_fence_desc) == 24, "Level Zero fence ABI misma
 _Static_assert(sizeof(npunlock_ze_host_mem_alloc_desc) == 24,
                "Level Zero host allocation ABI mismatch");
 
+#ifndef NPUNLOCK_INFER_ENGINE_ONLY
 static bool parse_request(const uint8_t *data, size_t size, infer_request *request) {
   uint64_t graph_size;
   uint64_t payload_size;
@@ -198,6 +190,7 @@ static bool parse_request(const uint8_t *data, size_t size, infer_request *reque
   }
   return payload_cursor == payload_size;
 }
+#endif
 
 static void set_diagnostic(infer_result *result, const char *message) {
   size_t size;
@@ -223,7 +216,17 @@ static void set_driver_error(infer_result *result, uint32_t code, const char *st
   set_diagnostic(result, message);
 }
 
-static bool load_export(HMODULE library, const char *name, void *destination, size_t size) {
+/* The first Linux milestone intentionally uses the system loader in-process. */
+#ifndef NPUNLOCK_INFER_ENGINE_ONLY
+typedef HMODULE infer_library;
+
+static infer_library open_loader(void) {
+  return LoadLibraryExW(L"ze_loader.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+}
+
+static void close_loader(infer_library library) { FreeLibrary(library); }
+
+static bool load_export(infer_library library, const char *name, void *destination, size_t size) {
   FARPROC proc = GetProcAddress(library, name);
   if (proc == NULL || size != sizeof(proc)) {
     return false;
@@ -231,26 +234,51 @@ static bool load_export(HMODULE library, const char *name, void *destination, si
   memcpy(destination, &proc, size);
   return true;
 }
+#else
+typedef void *infer_library;
 
-static bool load_ze_functions(HMODULE library, ze_functions *ze) {
+static infer_library open_loader(void) {
+  return dlopen("libze_loader.so.1", RTLD_NOW | RTLD_LOCAL);
+}
+
+static void close_loader(infer_library library) { dlclose(library); }
+
+static bool load_export(infer_library library, const char *name, void *destination, size_t size) {
+  void *proc = dlsym(library, name);
+  if (proc == NULL || size != sizeof(proc)) {
+    return false;
+  }
+  memcpy(destination, &proc, size);
+  return true;
+}
+#endif
+
+static bool load_ze_functions(infer_library library, ze_functions *ze) {
+  bool required;
   memset(ze, 0, sizeof(*ze));
 #define LOAD(name, field) load_export(library, name, &ze->field, sizeof(ze->field))
-  return LOAD("zeInitDrivers", init_drivers) &&
-         LOAD("zeDriverGetProperties", driver_get_properties) &&
-         LOAD("zeDriverGetExtensionProperties", driver_get_extensions) &&
-         LOAD("zeDriverGetExtensionFunctionAddress", driver_get_extension_address) &&
-         LOAD("zeDeviceGet", device_get) && LOAD("zeDeviceGetProperties", device_get_properties) &&
-         LOAD("zeContextCreate", context_create) && LOAD("zeContextDestroy", context_destroy) &&
-         LOAD("zeDeviceGetCommandQueueGroupProperties", device_get_queue_groups) &&
-         LOAD("zeMemAllocHost", mem_alloc_host) && LOAD("zeMemFree", mem_free) &&
-         LOAD("zeCommandQueueCreate", command_queue_create) &&
-         LOAD("zeCommandQueueDestroy", command_queue_destroy) &&
-         LOAD("zeCommandQueueExecuteCommandLists", command_queue_execute) &&
-         LOAD("zeCommandListCreate", command_list_create) &&
-         LOAD("zeCommandListClose", command_list_close) &&
-         LOAD("zeCommandListDestroy", command_list_destroy) &&
-         LOAD("zeFenceCreate", fence_create) && LOAD("zeFenceDestroy", fence_destroy) &&
-         LOAD("zeFenceHostSynchronize", fence_synchronize);
+  required =
+      LOAD("zeDriverGetProperties", driver_get_properties) &&
+      LOAD("zeDriverGetExtensionProperties", driver_get_extensions) &&
+      LOAD("zeDriverGetExtensionFunctionAddress", driver_get_extension_address) &&
+      LOAD("zeDeviceGet", device_get) && LOAD("zeDeviceGetProperties", device_get_properties) &&
+      LOAD("zeContextCreate", context_create) && LOAD("zeContextDestroy", context_destroy) &&
+      LOAD("zeDeviceGetCommandQueueGroupProperties", device_get_queue_groups) &&
+      LOAD("zeMemAllocHost", mem_alloc_host) && LOAD("zeMemFree", mem_free) &&
+      LOAD("zeCommandQueueCreate", command_queue_create) &&
+      LOAD("zeCommandQueueDestroy", command_queue_destroy) &&
+      LOAD("zeCommandQueueExecuteCommandLists", command_queue_execute) &&
+      LOAD("zeCommandListCreate", command_list_create) &&
+      LOAD("zeCommandListClose", command_list_close) &&
+      LOAD("zeCommandListDestroy", command_list_destroy) && LOAD("zeFenceCreate", fence_create) &&
+      LOAD("zeFenceDestroy", fence_destroy) && LOAD("zeFenceHostSynchronize", fence_synchronize);
+  if (!required) {
+    return false;
+  }
+  if (LOAD("zeInitDrivers", init_drivers)) {
+    return true;
+  }
+  return LOAD("zeInit", init) && LOAD("zeDriverGet", driver_get);
 #undef LOAD
 }
 
@@ -262,9 +290,19 @@ static bool select_npu(const infer_request *request, const ze_functions *ze, inf
   npunlock_ze_driver_handle *drivers = NULL;
   uint32_t driver_count = 0;
   uint32_t driver_index;
-  uint32_t code = ze->init_drivers(&driver_count, NULL, &init);
+  uint32_t code;
+  if (ze->init_drivers != NULL) {
+    code = ze->init_drivers(&driver_count, NULL, &init);
+  } else {
+    code = ze->init(0);
+    if (code == NPUNLOCK_ZE_SUCCESS) {
+      code = ze->driver_get(&driver_count, NULL);
+    }
+  }
   if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "zeInitDrivers(count)");
+    set_driver_error(result, code,
+                     ze->init_drivers != NULL ? "zeInitDrivers(count)"
+                                              : "zeInit/zeDriverGet(count)");
     return false;
   }
   if (driver_count == 0 ||
@@ -278,9 +316,11 @@ static bool select_npu(const infer_request *request, const ze_functions *ze, inf
     result->status = NPUNLOCK_INFER_WORKER_OUT_OF_MEMORY;
     return false;
   }
-  code = ze->init_drivers(&driver_count, drivers, &init);
+  code = ze->init_drivers != NULL ? ze->init_drivers(&driver_count, drivers, &init)
+                                  : ze->driver_get(&driver_count, drivers);
   if (code != NPUNLOCK_ZE_SUCCESS) {
-    set_driver_error(result, code, "zeInitDrivers(list)");
+    set_driver_error(result, code,
+                     ze->init_drivers != NULL ? "zeInitDrivers(list)" : "zeDriverGet(list)");
     free(drivers);
     return false;
   }
@@ -688,8 +728,8 @@ static bool bind_arguments(const graph_functions *graph, npunlock_ze_graph_handl
   return true;
 }
 
-static void execute_graph(const infer_request *request, infer_result *result) {
-  HMODULE loader = NULL;
+void npunlock_infer_execute(const npunlock_infer_request *request, npunlock_infer_result *result) {
+  infer_library loader = NULL;
   ze_functions ze = {0};
   graph_functions graph = {0};
   npunlock_ze_driver_handle driver = NULL;
@@ -709,10 +749,17 @@ static void execute_graph(const infer_request *request, infer_result *result) {
 
   memset(result, 0, sizeof(*result));
   result->status = NPUNLOCK_INFER_WORKER_DRIVER_FAILED;
-  loader = LoadLibraryExW(L"ze_loader.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+  result->stage = NPUNLOCK_INFER_STAGE_LOADER;
+  result->driver_index = INFER_AUTO_INDEX;
+  result->device_index = INFER_AUTO_INDEX;
+  loader = open_loader();
   if (loader == NULL) {
     result->status = NPUNLOCK_INFER_WORKER_LOADER_NOT_FOUND;
+#ifndef NPUNLOCK_INFER_ENGINE_ONLY
     set_diagnostic(result, "Level Zero loader ze_loader.dll was not found in System32");
+#else
+    set_diagnostic(result, "Level Zero loader libze_loader.so.1 was not found");
+#endif
     goto done;
   }
   if (!load_ze_functions(loader, &ze)) {
@@ -720,6 +767,7 @@ static void execute_graph(const infer_request *request, infer_result *result) {
     set_diagnostic(result, "Level Zero loader is missing a required execution export");
     goto done;
   }
+  result->stage = NPUNLOCK_INFER_STAGE_DEVICE;
   if (!select_npu(request, &ze, result, &driver, &device)) {
     goto done;
   }
@@ -730,10 +778,12 @@ static void execute_graph(const infer_request *request, infer_result *result) {
     goto done;
   }
   result->driver_version = driver_properties.driverVersion;
+  result->stage = NPUNLOCK_INFER_STAGE_GRAPH_EXTENSION;
   graph_version = find_graph_version(&ze, driver, result);
   if (graph_version == 0 || !get_graph_functions(&ze, driver, graph_version, result, &graph)) {
     goto done;
   }
+  result->stage = NPUNLOCK_INFER_STAGE_GRAPH_CREATE;
   context_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_CONTEXT_DESC;
   code = ze.context_create(driver, &context_desc, &context);
   if (code != NPUNLOCK_ZE_SUCCESS) {
@@ -750,6 +800,7 @@ static void execute_graph(const infer_request *request, infer_result *result) {
     set_driver_error(result, code, "pfnCreate2(native)");
     goto done;
   }
+  result->stage = NPUNLOCK_INFER_STAGE_INITIALIZATION;
   if (!query_arguments(request, &graph, handle, result, &arguments, &argument_count) ||
       !find_compute_queue(&ze, device, result, &queue_ordinal)) {
     goto done;
@@ -826,6 +877,7 @@ static void execute_graph(const infer_request *request, infer_result *result) {
                       "pfnSetArgumentValue(post-init)")) {
     goto done;
   }
+  result->stage = NPUNLOCK_INFER_STAGE_EXECUTION;
   if (!submit(&ze, &graph, context, device, handle, queue_ordinal, false, result)) {
     goto done;
   }
@@ -851,6 +903,7 @@ static void execute_graph(const infer_request *request, infer_result *result) {
     memcpy(output->data, argument->allocation, argument->data_size);
   }
   result->status = NPUNLOCK_INFER_WORKER_OK;
+  result->stage = NPUNLOCK_INFER_STAGE_COMPLETE;
   result->driver_result = NPUNLOCK_ZE_SUCCESS;
 
 done:
@@ -876,10 +929,11 @@ done:
     result->output_count = 0;
   }
   if (loader != NULL) {
-    FreeLibrary(loader);
+    close_loader(loader);
   }
 }
 
+#ifndef NPUNLOCK_INFER_ENGINE_ONLY
 static bool send_response(HANDLE handle, const infer_result *result) {
   uint8_t header[NPUNLOCK_INFER_RESPONSE_HEADER_SIZE] = {0};
   uint8_t descriptors[NPUNLOCK_INFER_MAX_ARGUMENTS * NPUNLOCK_INFER_RESPONSE_OUTPUT_SIZE] = {0};
@@ -962,7 +1016,7 @@ int npunlock_infer_worker_main(int argc, char **argv) {
   } else if (!parse_request(request_data, request_size, &request)) {
     set_diagnostic(&result, "malformed graphinfer worker request");
   } else {
-    execute_graph(&request, &result);
+    npunlock_infer_execute(&request, &result);
   }
   exit_code = send_response(response, &result) ? 0 : 3;
   for (index = 0; index < result.output_count; ++index) {
@@ -972,4 +1026,38 @@ int npunlock_infer_worker_main(int argc, char **argv) {
   free(request_data);
   CloseHandle(response);
   return exit_code;
+}
+#endif
+
+void npunlock_infer_result_release(npunlock_infer_result *result) {
+  size_t index;
+  if (result == NULL) {
+    return;
+  }
+  for (index = 0; index < result->output_count; ++index) {
+    free(result->outputs[index].data);
+  }
+  free(result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
+const char *npunlock_infer_stage_name(npunlock_infer_stage stage) {
+  switch (stage) {
+  case NPUNLOCK_INFER_STAGE_LOADER:
+    return "loader";
+  case NPUNLOCK_INFER_STAGE_DEVICE:
+    return "device-selection";
+  case NPUNLOCK_INFER_STAGE_GRAPH_EXTENSION:
+    return "graph-extension";
+  case NPUNLOCK_INFER_STAGE_GRAPH_CREATE:
+    return "graph-create";
+  case NPUNLOCK_INFER_STAGE_INITIALIZATION:
+    return "initialization";
+  case NPUNLOCK_INFER_STAGE_EXECUTION:
+    return "execution";
+  case NPUNLOCK_INFER_STAGE_COMPLETE:
+    return "complete";
+  default:
+    return "unknown";
+  }
 }

@@ -71,18 +71,43 @@ endif()
 install(TARGETS npunlock_inspect RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
 
 if(NOT WIN32)
-  message(STATUS "Linux milestone: building the offline npunlock-inspect utility only")
+  message(STATUS "Linux milestone: building offline inspection and in-process execution probes")
+  set(NPUNLOCK_LINUX_PROBE_SOURCES
+    src/linux_probe/main.c
+    src/workers/infer_worker.c
+  )
+  add_executable(npunlock_linux_probe ${NPUNLOCK_LINUX_PROBE_SOURCES})
+  set_target_properties(npunlock_linux_probe PROPERTIES OUTPUT_NAME npunlock-linux-probe)
+  target_compile_definitions(npunlock_linux_probe PRIVATE NPUNLOCK_INFER_ENGINE_ONLY)
+  target_include_directories(npunlock_linux_probe PRIVATE include src/workers)
+  target_link_libraries(npunlock_linux_probe PRIVATE npunlock_warnings ${CMAKE_DL_LIBS})
+  install(
+    TARGETS npunlock_linux_probe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
+  )
+  if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
+    add_test(NAME porting_linux_probe_help COMMAND npunlock_linux_probe --help)
+    set_tests_properties(
+      porting_linux_probe_help PROPERTIES PASS_REGULAR_EXPRESSION "--bundle ROOT"
+    )
+  endif()
+  set(NPUNLOCK_LINUX_FORMAT_SOURCES
+    ${NPUNLOCK_INSPECT_SOURCES}
+    ${NPUNLOCK_LINUX_PROBE_SOURCES}
+    src/workers/infer_engine.h
+    src/workers/infer_protocol.h
+    src/workers/level_zero_min.h
+  )
   find_program(CLANG_FORMAT_EXECUTABLE
     NAMES clang-format clang-format-19 clang-format-18
   )
   if(CLANG_FORMAT_EXECUTABLE)
     add_custom_target(format
-      COMMAND ${CLANG_FORMAT_EXECUTABLE} -i ${NPUNLOCK_INSPECT_SOURCES}
+      COMMAND ${CLANG_FORMAT_EXECUTABLE} -i ${NPUNLOCK_LINUX_FORMAT_SOURCES}
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       VERBATIM
     )
     add_custom_target(format-check
-      COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${NPUNLOCK_INSPECT_SOURCES}
+      COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${NPUNLOCK_LINUX_FORMAT_SOURCES}
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       VERBATIM
     )
@@ -272,6 +297,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/workers/worker_io.h
   src/workers/ir_protocol.h
   src/workers/ir_worker.c
+  src/workers/infer_engine.h
   src/workers/level_zero_min.h
   src/workers/infer_protocol.h
   src/workers/infer_worker.c

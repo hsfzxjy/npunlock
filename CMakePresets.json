@@ -17,7 +17,7 @@
     },
     {
       "name": "linux-inspect",
-      "displayName": "Linux offline inspector",
+      "displayName": "Linux porting utilities",
       "binaryDir": "${sourceDir}/build/linux-inspect",
       "condition": {
         "type": "equals",

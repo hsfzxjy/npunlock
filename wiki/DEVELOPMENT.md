@@ -81,11 +81,12 @@ python -m black --check python examples tests\python tools setup.py
 The default test suite is offline. It does not require MoviTools, an NPU, or
 OpenVINO.
 
-## Linux offline inspector
+## Linux porting utilities
 
-The first Linux milestone builds only `npunlock-inspect` and its offline tests.
-It requires a C17 compiler and CMake 3.24 or newer, but does not require
-MoviTools, Level Zero, an NPU, Python, or the Windows worker:
+The Linux preset builds `npunlock-inspect`, the experimental in-process
+`npunlock-linux-probe`, and their offline tests. It requires a C17 compiler and
+CMake 3.24 or newer. It does not build or invoke MoviTools, graph compilation,
+or the Windows worker. Ordinary CTest does not attempt NPU execution:
 
 ```bash
 cmake --preset linux-inspect
@@ -94,9 +95,12 @@ ctest --preset linux-inspect
 ./build/linux-inspect/npunlock-inspect --graph patched.blob
 ```
 
-The full compiler, patch, and execution runtime remains Windows-only. See the
+The execution probe dynamically loads the system Level Zero loader only when
+explicitly invoked with a verified probe bundle. The full compiler, patch, and
+public execution runtime remains Windows-only. Read the
 [staged Linux roadmap](PORTING.md#porting-utilities-and-staged-roadmap) before
-adding platform backends.
+interpreting results as driver, firmware, instruction-set, or invocation-ABI
+compatibility.
 
 ## Opt-in integration tests
 

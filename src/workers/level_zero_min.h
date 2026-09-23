@@ -1,6 +1,10 @@
 #ifndef NPUNLOCK_LEVEL_ZERO_MIN_H
 #define NPUNLOCK_LEVEL_ZERO_MIN_H
 
+#if !defined(_WIN32) && !defined(__cdecl)
+#define __cdecl
+#endif
+
 /*
  * Minimal private declarations for the stable Level Zero loader ABI and the
  * Intel NPU graph-extension prefix used by this project. Values and layouts
@@ -239,6 +243,8 @@ typedef struct npunlock_ze_graph_ddi_prefix {
   void *slots[30];
 } npunlock_ze_graph_ddi_prefix;
 
+typedef uint32_t(__cdecl *npunlock_ze_init_fn)(uint32_t);
+typedef uint32_t(__cdecl *npunlock_ze_driver_get_fn)(uint32_t *, npunlock_ze_driver_handle *);
 typedef uint32_t(__cdecl *npunlock_ze_init_drivers_fn)(uint32_t *, npunlock_ze_driver_handle *,
                                                        npunlock_ze_init_driver_type_desc *);
 typedef uint32_t(__cdecl *npunlock_ze_driver_get_properties_fn)(npunlock_ze_driver_handle,

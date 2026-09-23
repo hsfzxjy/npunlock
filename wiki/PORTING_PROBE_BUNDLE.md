@@ -55,6 +55,27 @@ the inspection report.
 The verifier uses Python's IEEE-754 binary16 support and compares the expected
 output bytes exactly. It does not load Level Zero and works without an NPU.
 
+## Attempt execution on Linux
+
+The Linux bring-up utility accepts the bundle root and writes a report outside
+the strict four-file bundle:
+
+```bash
+./build/linux-inspect/npunlock-linux-probe \
+  --bundle build/add1-probe \
+  --report build/add1-linux-report.json
+```
+
+Its `npunlock.porting.linux-execution.v1` report records `passed`, `failed`, or
+`not-run` independently for loader discovery, NPU selection, graph-extension
+discovery, graph creation, initialization, execution, and the exact host
+oracle. A nonzero exit is expected if any stage fails or the output differs.
+
+The probe is temporarily in-process to reduce bring-up variables. Fence waits
+are finite, but another driver call that hangs cannot be killed independently.
+Use it only as an experimental compatibility probe until the POSIX worker
+milestone is complete.
+
 ## Manifest contract
 
 The schema identifier is `npunlock.porting.probe.v1`. Each binary entry records
@@ -79,5 +100,5 @@ be archived for transport after verification.
 - Only an exact match with `expected-output-0.bin` establishes this one add-one
   experiment on the reported platform.
 
-Linux graph loading and execution are the next roadmap milestone and are not
-implemented by the bundle helper.
+The bundle helper itself never loads the driver. Linux execution is performed
+only by the separate experimental `npunlock-linux-probe` utility.

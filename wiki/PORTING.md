@@ -52,12 +52,26 @@ MoviTools or driver binaries.
 
 ### Milestone 3: minimal Linux Level Zero execution
 
-Add a Linux `graphinfer` backend that dynamically loads the system Level Zero
-loader and consumes an existing native blob. The first experiment may execute
-in-process to reduce bring-up variables, but must retain finite fence waits and
-state clearly that a stuck driver call cannot then be killed independently.
-Its report must distinguish graph creation, initialization, execution, and
-host-oracle comparison.
+`npunlock-linux-probe` now reuses the graph-inference execution engine,
+dynamically loads the system Level Zero loader, and consumes a verified probe
+bundle containing an existing native blob. It reports loader discovery, NPU
+selection, graph-extension discovery, graph creation, initialization,
+execution, and host-oracle comparison separately. Run it after verifying the
+bundle:
+
+```bash
+python3 tools/porting_probe.py verify build/add1-probe
+./build/linux-inspect/npunlock-linux-probe \
+  --bundle build/add1-probe \
+  --report build/add1-linux-report.json
+```
+
+This first bring-up path runs in-process and uses a finite fence wait. A driver
+call that never returns cannot be terminated independently. WSL testing has
+confirmed loader discovery and a clean `npu-not-found` result at device
+selection, but WSL has no NPU passthrough. Graph creation, execution, and the
+oracle therefore still require a real Linux NPU system before this milestone
+can be considered hardware-validated.
 
 ### Milestone 4: POSIX worker isolation
 
