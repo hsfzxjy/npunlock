@@ -41,6 +41,8 @@ __all__ = [
     "constant",
     "custom",
     "input",
+    "load_native",
+    "load_native_file",
     "op",
     "serialize_ir",
 ]
@@ -94,12 +96,22 @@ def __getattr__(name: str) -> OpFactory:
 class Program:
     graph_blob: bytes
     graph: Graph
-    serialized_ir: SerializedIR
-    ir_provenance: IrCompileResult
+    serialized_ir: SerializedIR | None
+    ir_provenance: IrCompileResult | None
     patch_reports: tuple[bytes, ...]
     _libraries: NativeLibraries = field(repr=False, compare=False)
     _timeout_ms: int = field(repr=False, compare=False)
     _infer_worker: str | None = field(repr=False, compare=False)
+
+    def to_bytes(self) -> bytes:
+        """Return the complete native graph blob."""
+
+        return self.graph_blob
+
+    def save(self, destination: str | Path) -> None:
+        """Write the complete native graph blob to *destination*."""
+
+        Path(destination).write_bytes(self.graph_blob)
 
     def run(self, inputs: Mapping[str, object]) -> Mapping[str, object]:
         import numpy as np
@@ -160,6 +172,69 @@ class Program:
                 )
             values[name] = np.frombuffer(output.data, dtype=expected_dtype).copy().reshape(tensor.shape)
         return values
+
+
+def _native_blob_bytes(value: object) -> bytes:
+    if isinstance(value, bytes):
+        blob = value
+    elif isinstance(value, (bytearray, memoryview)):
+        blob = bytes(value)
+    else:
+        raise TypeError("native graph blob must be bytes-like")
+    if not blob:
+        raise ValueError("native graph blob must not be empty")
+    return blob
+
+
+def load_native(
+    blob: bytes | bytearray | memoryview,
+    *,
+    graph: Graph,
+    native_dir: str | Path | None = None,
+    timeout_ms: int = 20_000,
+    infer_worker: str | None = None,
+    libraries: NativeLibraries | None = None,
+) -> Program:
+    """Create an executable program from native graph bytes.
+
+    ``graph`` supplies the symbolic input and output contract used by
+    :meth:`Program.run`; loading does not compile IR or custom C again.
+    """
+
+    if not isinstance(graph, Graph):
+        raise TypeError("load_native() requires a Graph")
+    native = libraries or NativeLibraries(native_dir)
+    return Program(
+        _native_blob_bytes(blob),
+        graph,
+        None,
+        None,
+        (),
+        native,
+        timeout_ms,
+        infer_worker,
+    )
+
+
+def load_native_file(
+    source: str | Path,
+    *,
+    graph: Graph,
+    native_dir: str | Path | None = None,
+    timeout_ms: int = 20_000,
+    infer_worker: str | None = None,
+    libraries: NativeLibraries | None = None,
+) -> Program:
+    """Create an executable program from a native graph file."""
+
+    return load_native(
+        Path(source).read_bytes(),
+        graph=graph,
+        native_dir=native_dir,
+        timeout_ms=timeout_ms,
+        infer_worker=infer_worker,
+        libraries=libraries,
+    )
 
 
 def _kernel_source(value: object) -> bytes:

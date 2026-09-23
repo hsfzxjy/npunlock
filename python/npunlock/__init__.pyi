@@ -56,11 +56,31 @@ class InferenceResult:
     vendor_id: int
     device_id: int
 
+class IrCompileResult:
+    graph_blob: bytes
+    driver_index: int
+    device_index: int
+    driver_version: int
+    vendor_id: int
+    device_id: int
+    graph_extension_version: int
+    compiler_version: tuple[int, int]
+
+class SerializedIR:
+    xml: bytes
+    weights: bytes
+
 class NativeLibraries:
     def __init__(self, directory: str | PathLike[str] | None = ...) -> None: ...
 
 class Program:
     graph_blob: bytes
+    graph: Graph
+    serialized_ir: SerializedIR | None
+    ir_provenance: IrCompileResult | None
+    patch_reports: tuple[bytes, ...]
+    def to_bytes(self) -> bytes: ...
+    def save(self, destination: str | PathLike[str]) -> None: ...
     def run(self, inputs: Mapping[str, object]) -> Mapping[str, object]: ...
 
 def input(name: str, *, shape: object, dtype: object) -> Tensor: ...
@@ -79,6 +99,14 @@ def compile(graph: Graph, *, native_dir: str | PathLike[str] | None = ...,
             timeout_ms: int = ..., ir_worker: str | None = ...,
             movi_worker: str | None = ..., infer_worker: str | None = ...,
             libraries: Any = ...) -> Program: ...
+def load_native(blob: bytes | bytearray | memoryview, *, graph: Graph,
+                native_dir: str | PathLike[str] | None = ...,
+                timeout_ms: int = ..., infer_worker: str | None = ...,
+                libraries: Any = ...) -> Program: ...
+def load_native_file(source: str | PathLike[str], *, graph: Graph,
+                     native_dir: str | PathLike[str] | None = ...,
+                     timeout_ms: int = ..., infer_worker: str | None = ...,
+                     libraries: Any = ...) -> Program: ...
 
 def Abs(x: Tensor, *, _shape: object, _dtype: object, _name: str | None = ...) -> Tensor: ...
 def Add(a: Tensor, b: Tensor, *, _shape: object, _dtype: object,

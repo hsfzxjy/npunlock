@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import io
 import sys
+import tempfile
 import unittest
 import warnings
 from pathlib import Path
@@ -485,6 +486,46 @@ class CompilationFlowTests(unittest.TestCase):
         program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
         with self.assertRaises(ValueError):
             program.run({"x": np.zeros((32,), dtype=np.float16)})
+
+    def test_native_blob_bytes_file_and_reload(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x, _shape=x.shape, _dtype=x.dtype)
+        graph = npu.Graph([x], [y])
+        fake = FakeNative()
+        program = npu.compile(graph, native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+
+        self.assertEqual(program.to_bytes(), b"native")
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            path = Path(directory) / "graph.blob"
+            program.save(path)
+            self.assertEqual(path.read_bytes(), b"native")
+
+            from_bytes = npu.load_native(
+                bytearray(program.to_bytes()), graph=graph, libraries=fake  # type: ignore[arg-type]
+            )
+            from_file = npu.load_native_file(
+                path, graph=graph, libraries=fake  # type: ignore[arg-type]
+            )
+
+        self.assertIsNone(from_bytes.serialized_ir)
+        self.assertIsNone(from_bytes.ir_provenance)
+        self.assertEqual(from_bytes.patch_reports, ())
+        self.assertEqual(from_file.to_bytes(), b"native")
+        value = np.zeros((1, 32), dtype=np.float16)
+        np.testing.assert_array_equal(from_bytes.run({"x": value})["Result_0"], value + 1)
+        np.testing.assert_array_equal(from_file.run({"x": value})["Result_0"], value + 1)
+
+    def test_native_blob_load_validation(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x, _shape=x.shape, _dtype=x.dtype)
+        graph = npu.Graph([x], [y])
+        fake = FakeNative()
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            npu.load_native(b"", graph=graph, libraries=fake)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(TypeError, "bytes-like"):
+            npu.load_native("graph.blob", graph=graph, libraries=fake)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(TypeError, "requires a Graph"):
+            npu.load_native(b"native", graph=object(), libraries=fake)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

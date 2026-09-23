@@ -176,6 +176,37 @@ flags are otherwise empty. Caller-supplied flags for such a graph must include
 Compilation returns a `Program` containing the final graph bytes, serialized
 IR, driver/compiler provenance, and patch reports.
 
+## Save and load native graphs
+
+The final patched native graph can be retrieved as immutable bytes or written
+directly to a file:
+
+```python
+blob = program.to_bytes()
+program.save("my_graph.blob")
+```
+
+Load either representation without repeating IR compilation, custom C
+compilation, or patching:
+
+```python
+from_memory = npu.load_native(blob, graph=graph)
+from_file = npu.load_native_file("my_graph.blob", graph=graph)
+
+output = from_file.run({"x": input_value})
+```
+
+The symbolic `graph` is required because `Program.run()` uses its input and
+output names, shapes, and dtypes as the Python tensor contract. `npunlock`
+does not try to reconstruct that high-level graph from the native binary, and
+it cannot prove that a caller-supplied graph describes an unrelated blob.
+Always load with the same graph contract that produced the native binary.
+
+A loaded program has `serialized_ir` and `ir_provenance` set to `None` and an
+empty `patch_reports` tuple because those build-time records cannot be
+recovered from the native blob. Loading still uses the installed Intel NPU
+driver when `run()` executes, but it does not require MoviTools.
+
 ## Worker output and errors
 
 Graph compilation, custom C compilation, and execution run in bounded native
