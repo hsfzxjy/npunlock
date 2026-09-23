@@ -304,6 +304,41 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.patch_args[2], (npu.PatchTarget(0, 0, 1, 8, 16),))
         self.assertEqual(program.graph_blob, b"patched")
 
+    def test_large_custom_op_accepts_exact_cover_partition_groups(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f32")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        targets = tuple(
+            npu.PatchTarget(index, index, 1, 8, 32, 0x3B) for index in range(4)
+        )
+        fake = FakeNative()
+        fake.discovery_groups = ((targets[0], targets[1]), (targets[2], targets[3]))
+
+        npu.compile(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            movi_dll_dir="movi",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(fake.patch_args[2], targets)
+
+    def test_partition_groups_must_exactly_cover_custom_output(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f32")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 8, 32, 0x3B),),
+            (npu.PatchTarget(1, 1, 1, 8, 32, 0x3B),),
+        )
+
+        with self.assertRaisesRegex(ValueError, "unique exact-cover partition mapping"):
+            npu.compile(
+                npu.Graph([x], [y]),
+                native_dir="unused",
+                movi_dll_dir="movi",
+                libraries=fake,  # type: ignore[arg-type]
+            )
+
     def test_f32_custom_enables_accuracy_mode_and_runs_f32(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f32")
         y = npu.custom(

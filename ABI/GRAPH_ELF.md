@@ -120,13 +120,17 @@ is therefore not a safe operation selector.
 Automatic high-level selection is allowed only when all of the following are
 true:
 
-1. every computational node has one validated positional ACT group;
-2. node count and group count match exactly in topological order;
-3. the selected group's input arity matches the custom node; and
-4. every invocation in the group has the same supported tensor contract.
+1. the computational-node sequence maps uniquely to the positional ACT groups
+   in topological order;
+2. each ordinary computational node consumes one group;
+3. a custom node normally consumes one group with matching input arity; and
+4. when a large custom node consumes several consecutive groups, every target
+   has matching arity, element width and contract flags, invocation indices are
+   consecutive, and the summed element count exactly covers its declared
+   output tensor.
 
 Graphs containing DPU operations, fused nodes, inserted conversions, or other
-count mismatches need an explicit validated target selection. A source node
+ambiguous mappings need an explicit validated target selection. A source node
 name is not stored as a reliable range selector in the native blob.
 
 ## ACT range records

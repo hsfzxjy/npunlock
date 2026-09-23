@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from math import prod
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -245,6 +246,117 @@ def _kernel_source(value: object) -> bytes:
     raise TypeError("custom _kernel must be source bytes or a filesystem path")
 
 
+def _combined_custom_targets(
+    node: Node,
+    groups: tuple[tuple[PatchTarget, ...], ...],
+) -> tuple[PatchTarget, ...] | None:
+    """Validate a compiler-partitioned custom operation and flatten its targets."""
+
+    if len(groups) < 2 or len(node.outputs) != 1:
+        return None
+    item_sizes = {"f16": 2, "f32": 4}
+    output = node.outputs[0]
+    item_size = item_sizes.get(output.dtype)
+    if item_size is None:
+        return None
+    targets = tuple(target for group in groups for target in group)
+    if not targets:
+        return None
+    input_count = len(node.inputs)
+    flags = targets[0].contract_flags
+    if any(
+        target.input_count != input_count
+        or target.span_bytes != target.element_count * item_size
+        or target.contract_flags != flags
+        for target in targets
+    ):
+        return None
+    first_invocation = targets[0].invocation_index
+    if tuple(target.invocation_index for target in targets) != tuple(
+        range(first_invocation, first_invocation + len(targets))
+    ):
+        return None
+    if len({(target.invocation_index, target.range_index) for target in targets}) != len(
+        targets
+    ):
+        return None
+    if sum(target.element_count for target in targets) != prod(output.shape):
+        return None
+    return targets
+
+
+def _automatic_target_groups(
+    graph: Graph,
+    custom_nodes: tuple[Node, ...],
+    discovered_groups: tuple[tuple[PatchTarget, ...], ...],
+) -> tuple[tuple[PatchTarget, ...], ...]:
+    computational_nodes = tuple(
+        node for node in graph.nodes if node.op not in {"Parameter", "Const"}
+    )
+
+    # Keep the established positional contract unchanged when it applies.
+    if len(discovered_groups) == len(computational_nodes):
+        node_groups = dict(zip(computational_nodes, discovered_groups))
+        selected = tuple(node_groups[node] for node in custom_nodes)
+        for node, targets in zip(custom_nodes, selected):
+            if any(target.input_count != len(node.inputs) for target in targets):
+                raise ValueError(
+                    f"discovered ACT group for custom node {node.name or '<unnamed>'!r} "
+                    "does not match its input arity"
+                )
+        return selected
+
+    solutions: list[dict[Node, tuple[PatchTarget, ...]]] = []
+
+    def visit(
+        node_index: int,
+        group_index: int,
+        selected: dict[Node, tuple[PatchTarget, ...]],
+    ) -> None:
+        if len(solutions) > 1:
+            return
+        if node_index == len(computational_nodes):
+            if group_index == len(discovered_groups):
+                solutions.append(dict(selected))
+            return
+
+        remaining_nodes = len(computational_nodes) - node_index - 1
+        maximum_take = len(discovered_groups) - group_index - remaining_nodes
+        if maximum_take < 1:
+            return
+        node = computational_nodes[node_index]
+        take_values = range(1, maximum_take + 1) if node in custom_nodes else (1,)
+        for take in take_values:
+            groups = discovered_groups[group_index : group_index + take]
+            if take == 1:
+                targets = groups[0]
+                if not targets:
+                    continue
+                if node in custom_nodes and any(
+                    target.input_count != len(node.inputs) for target in targets
+                ):
+                    continue
+            else:
+                targets = _combined_custom_targets(node, groups)
+                if targets is None:
+                    continue
+            if node in custom_nodes:
+                selected[node] = targets
+            visit(node_index + 1, group_index + take, selected)
+            selected.pop(node, None)
+
+    visit(0, 0, {})
+    if len(solutions) != 1:
+        reason = "no" if not solutions else "multiple"
+        raise ValueError(
+            f"native graph has {len(discovered_groups)} positional ACT groups for "
+            f"{len(computational_nodes)} computational nodes and {reason} valid mapping; "
+            "automatic selection requires a one-to-one positional mapping or one unique "
+            "exact-cover partition mapping, otherwise provide explicit _patch_targets"
+        )
+    return tuple(solutions[0][node] for node in custom_nodes)
+
+
 def compile(
     graph: Graph,
     *,
@@ -320,25 +432,11 @@ def compile(
         )
         target_groups = explicit_target_groups
         if target_groups is None:
-            discovered_groups = native.discover_patch_targets(blob)
-            computational_nodes = tuple(
-                node for node in graph.nodes if node.op not in {"Parameter", "Const"}
+            target_groups = _automatic_target_groups(
+                graph,
+                serialized.custom_nodes,
+                native.discover_patch_targets(blob),
             )
-            if len(discovered_groups) != len(computational_nodes):
-                raise ValueError(
-                    f"native graph has {len(discovered_groups)} positional ACT groups for "
-                    f"{len(computational_nodes)} computational nodes; automatic selection "
-                    "requires a one-to-one positional mapping, otherwise provide explicit "
-                    "_patch_targets"
-                )
-            node_groups = dict(zip(computational_nodes, discovered_groups))
-            target_groups = tuple(node_groups[node] for node in serialized.custom_nodes)
-            for node, targets in zip(serialized.custom_nodes, target_groups):
-                if any(target.input_count != len(node.inputs) for target in targets):
-                    raise ValueError(
-                        f"discovered ACT group for custom node {node.name or '<unnamed>'!r} "
-                        "does not match its input arity"
-                    )
         for node, target_values in zip(serialized.custom_nodes, target_groups):
             elf = native.compile_shave(
                 _kernel_source(node.metadata.get("_kernel")),

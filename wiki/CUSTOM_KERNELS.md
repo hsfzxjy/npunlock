@@ -150,8 +150,9 @@ The carrier's compiled arity and tensor layout must match the C entry. `Abs`
 is used by the validated unary examples. The validated two-input example uses
 `Maximum` for one exact static FP16 graph.
 
-Automatic positional mapping is accepted only when the complete graph maps
-one-to-one to validated ACT groups. See
+Automatic positional mapping normally maps one computational node to one ACT
+group. A large custom operation may use several consecutive compatible groups
+when their targets uniquely and exactly cover its declared output tensor. See
 [How npunlock works](HOW_NPUNLOCK_WORKS.md#4-find-a-compatible-act-group).
 
 ## Math functions and linked data

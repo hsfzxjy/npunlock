@@ -109,8 +109,11 @@ function, tensor helpers, and math-link compatibility macro.
 
 Advanced callers may supply `_patch_targets`, but invocation and range indices
 are native compiler-output details. Normal code should rely on automatic
-selection only for graphs satisfying the documented one-to-one positional
-contract.
+selection only for graphs satisfying the documented positional contract. The
+usual case maps one ACT group to each computational node. If the compiler
+partitions one large custom operation into several consecutive groups,
+`npunlock` also accepts them when one unique exact-cover mapping can be proven
+from the declared output size and the groups' compatible ABI metadata.
 
 ## Graphs
 

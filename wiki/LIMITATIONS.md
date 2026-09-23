@@ -57,10 +57,13 @@ Not every graph operation produces an ACT kernel. The compiler may place an
 operation on the DPU, fuse it, optimize it away, or insert conversion groups.
 Such changes can break a presumed source-to-ACT relationship.
 
-Automatic Python selection requires a one-to-one match between all
-topologically ordered computational nodes and validated positional ACT groups,
-plus matching custom-node arity. It is not a general mapping from source node
-names to native ranges.
+Automatic Python selection normally requires a one-to-one match between all
+topologically ordered computational nodes and validated positional ACT groups.
+One large custom node may instead consume several consecutive groups when a
+unique exact-cover mapping is proven: target arity, element width and contract
+flags must agree, invocation indices must be consecutive, and their element
+counts must sum to the declared output size. It is not a general mapping from
+source node names to native ranges.
 
 Advanced explicit invocation/range targets remain available only for layouts
 the caller has independently validated. DPU-only graphs have no patchable ACT

@@ -110,10 +110,13 @@ groups compatible invocation records by their observed positional identity.
 It then validates tensor arity, element count, byte span, precision, dense
 layout, CMX placement, and output separation.
 
-The Python frontend selects a custom node automatically only when the complete
-topological computational-node sequence maps one-to-one to the discovered ACT
-groups and the selected group has matching arity. This is intentionally not a
-general source-node-name lookup. Fused, optimized-away, inserted-conversion,
+The Python frontend normally maps the complete topological computational-node
+sequence one-to-one to the discovered ACT groups. It can also combine several
+consecutive groups for one large custom node when there is exactly one complete
+mapping and the combined targets have matching arity, element width and
+contract flags, consecutive invocation indices, and an element count that
+exactly covers the declared output tensor. This is intentionally not a general
+source-node-name lookup. Fused, optimized-away, inserted-conversion,
 DPU-containing, or otherwise ambiguous graphs require explicit validated
 targets or are rejected.
 
