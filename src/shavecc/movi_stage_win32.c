@@ -159,7 +159,7 @@ npunlock_status npunlock_run_movi_stage(npunlock_view worker_executable_utf8,
   status = build_request(dll_path_utf8, stage, arguments, argument_count, inputs, input_count,
                          &request, &request_size);
   if (status == NPUNLOCK_STATUS_OK) {
-    status = npunlock_worker_process_run(worker_executable_utf8, L"movi",
+    status = npunlock_worker_process_run(worker_executable_utf8, "movi",
                                          (npunlock_view){request, request_size}, maximum_response,
                                          timeout_ms, &process);
   }

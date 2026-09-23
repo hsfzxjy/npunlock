@@ -102,6 +102,10 @@ public execution runtime remains Windows-only. Read the
 interpreting results as driver, firmware, instruction-set, or invocation-ABI
 compatibility.
 
+CTest also exercises the private POSIX worker-process transport without an NPU.
+The fixture checks the dedicated response channel, separate stdout/stderr
+capture, and process-group timeout cleanup. It does not invoke Level Zero.
+
 ## Opt-in integration tests
 
 First configure the `MVC_DEPEND` root:

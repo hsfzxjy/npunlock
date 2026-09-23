@@ -81,6 +81,14 @@ if(NOT WIN32)
   target_compile_definitions(npunlock_linux_probe PRIVATE NPUNLOCK_INFER_ENGINE_ONLY)
   target_include_directories(npunlock_linux_probe PRIVATE include src/workers)
   target_link_libraries(npunlock_linux_probe PRIVATE npunlock_warnings ${CMAKE_DL_LIBS})
+  add_library(npunlock_posix_worker_process STATIC
+    src/common/buffer.c
+    src/common/checked.c
+    src/common/status.c
+    src/common/worker_process_posix.c
+  )
+  target_include_directories(npunlock_posix_worker_process PUBLIC include PRIVATE src/common)
+  target_link_libraries(npunlock_posix_worker_process PRIVATE npunlock_warnings)
   install(
     TARGETS npunlock_linux_probe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
   )
@@ -89,6 +97,20 @@ if(NOT WIN32)
     set_tests_properties(
       porting_linux_probe_help PROPERTIES PASS_REGULAR_EXPRESSION "--bundle ROOT"
     )
+    add_executable(npunlock_worker_fixture_posix tests/helpers/worker_fixture_posix.c)
+    target_link_libraries(npunlock_worker_fixture_posix PRIVATE npunlock_warnings)
+    add_executable(npunlock_test_worker_process_posix tests/unit/test_worker_process_posix.c)
+    target_include_directories(npunlock_test_worker_process_posix PRIVATE src/common)
+    target_compile_definitions(
+      npunlock_test_worker_process_posix
+      PRIVATE NPUNLOCK_POSIX_WORKER_FIXTURE="$<TARGET_FILE:npunlock_worker_fixture_posix>"
+    )
+    target_link_libraries(
+      npunlock_test_worker_process_posix PRIVATE npunlock_posix_worker_process npunlock_warnings
+    )
+    add_dependencies(npunlock_test_worker_process_posix npunlock_worker_fixture_posix)
+    add_test(NAME porting_posix_worker_process COMMAND npunlock_test_worker_process_posix)
+    set_tests_properties(porting_posix_worker_process PROPERTIES TIMEOUT 5)
   endif()
   set(NPUNLOCK_LINUX_FORMAT_SOURCES
     ${NPUNLOCK_INSPECT_SOURCES}
@@ -96,6 +118,9 @@ if(NOT WIN32)
     src/workers/infer_engine.h
     src/workers/infer_protocol.h
     src/workers/level_zero_min.h
+    src/common/worker_process_posix.c
+    tests/helpers/worker_fixture_posix.c
+    tests/unit/test_worker_process_posix.c
   )
   find_program(CLANG_FORMAT_EXECUTABLE
     NAMES clang-format clang-format-19 clang-format-18
@@ -272,6 +297,7 @@ set(NPUNLOCK_FORMAT_SOURCES
   src/common/sha256.c
   src/common/status.c
   src/common/worker_process.h
+  src/common/worker_process_posix.c
   src/common/worker_process_win32.c
   src/common/worker_protocol.h
   src/ir2blob/ir2blob.c

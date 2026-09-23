@@ -75,10 +75,16 @@ can be considered hardware-validated.
 
 ### Milestone 4: POSIX worker isolation
 
-Once execution works, add a bounded POSIX worker launcher using pipes,
-`fork`/`exec`, process groups, and deterministic termination. Existing copied
-inference should use it by default. Shared Level Zero buffers may remain the
-explicit in-process exception, matching the Windows contract.
+A reusable bounded POSIX process launcher is now implemented and tested
+offline. It uses a dedicated binary-response descriptor, nonblocking request
+transport, separate stdout and stderr pipes, a child process group, finite
+deadlines, and deterministic group termination. The focused fixture verifies
+both byte-exact transport and timeout cleanup.
+
+The next slice is to build the unified `npunlock_worker infer` child on Linux
+and connect copied graph inference to this launcher. Until then,
+`npunlock-linux-probe` remains the explicitly in-process bring-up path. Shared
+Level Zero buffers may remain the same narrow in-process exception as Windows.
 
 ### Milestone 5: Linux graph compilation
 

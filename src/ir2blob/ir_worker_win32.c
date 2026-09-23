@@ -152,7 +152,7 @@ npunlock_status npunlock_run_ir_worker(npunlock_view worker_executable_utf8, uin
   status = build_request(driver_index, device_index, ir_xml, weights, build_flags, &request,
                          &request_size);
   if (status == NPUNLOCK_STATUS_OK) {
-    status = npunlock_worker_process_run(worker_executable_utf8, L"ir",
+    status = npunlock_worker_process_run(worker_executable_utf8, "ir",
                                          (npunlock_view){request, request_size}, maximum_response,
                                          timeout_ms, &process);
   }

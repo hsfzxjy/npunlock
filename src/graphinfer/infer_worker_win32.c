@@ -243,7 +243,7 @@ npunlock_status npunlock_run_infer_worker(npunlock_view worker_executable_utf8,
   status = build_request(driver_index, device_index, graph_blob, inputs, input_count, &request,
                          &request_size);
   if (status == NPUNLOCK_STATUS_OK) {
-    status = npunlock_worker_process_run(worker_executable_utf8, L"infer",
+    status = npunlock_worker_process_run(worker_executable_utf8, "infer",
                                          (npunlock_view){request, request_size}, maximum_response,
                                          timeout_ms, &process);
   }

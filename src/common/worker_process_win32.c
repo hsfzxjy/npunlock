@@ -205,7 +205,7 @@ void npunlock_worker_process_result_release(npunlock_worker_process_result *resu
 }
 
 npunlock_status npunlock_worker_process_run(npunlock_view worker_executable_utf8,
-                                            const wchar_t *worker_mode, npunlock_view request,
+                                            const char *worker_mode, npunlock_view request,
                                             size_t maximum_response_size, uint32_t timeout_ms,
                                             npunlock_worker_process_result *result) {
   SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
@@ -229,6 +229,7 @@ npunlock_status npunlock_worker_process_run(npunlock_view worker_executable_utf8
   SIZE_T attribute_size = 0;
   bool attribute_list_initialized = false;
   wchar_t *worker_path = NULL;
+  wchar_t *worker_mode_wide = NULL;
   wchar_t *command_line = NULL;
   size_t command_capacity;
   ULONGLONG deadline;
@@ -236,7 +237,7 @@ npunlock_status npunlock_worker_process_run(npunlock_view worker_executable_utf8
   DWORD exit_code = 0;
   npunlock_status status = NPUNLOCK_STATUS_INTERNAL_ERROR;
 
-  if (result == NULL || worker_mode == NULL || worker_mode[0] == L'\0' ||
+  if (result == NULL || worker_mode == NULL || worker_mode[0] == '\0' ||
       !npunlock_view_is_valid(worker_executable_utf8) || !npunlock_view_is_valid(request) ||
       request.size == 0 || maximum_response_size == 0 || timeout_ms == 0) {
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
@@ -247,6 +248,12 @@ npunlock_status npunlock_worker_process_run(npunlock_view worker_executable_utf8
   if (worker_path == NULL) {
     status = worker_executable_utf8.size == 0 ? NPUNLOCK_STATUS_INTERNAL_ERROR
                                               : NPUNLOCK_STATUS_INVALID_ARGUMENT;
+    goto done;
+  }
+  worker_mode_wide =
+      utf8_to_wide((npunlock_view){(const uint8_t *)worker_mode, strlen(worker_mode)});
+  if (worker_mode_wide == NULL) {
+    status = NPUNLOCK_STATUS_INVALID_ARGUMENT;
     goto done;
   }
   if (!CreatePipe(&input_read, &input_write, &security, 0) ||
@@ -265,14 +272,14 @@ npunlock_status npunlock_worker_process_run(npunlock_view worker_executable_utf8
     status = NPUNLOCK_STATUS_INTERNAL_ERROR;
     goto done;
   }
-  command_capacity = wcslen(worker_path) + wcslen(worker_mode) + 80;
+  command_capacity = wcslen(worker_path) + wcslen(worker_mode_wide) + 80;
   command_line = (wchar_t *)malloc(command_capacity * sizeof(*command_line));
   if (command_line == NULL) {
     status = NPUNLOCK_STATUS_OUT_OF_MEMORY;
     goto done;
   }
   swprintf_s(command_line, command_capacity, L"\"%ls\" %ls --response-handle %llu", worker_path,
-             worker_mode, (unsigned long long)(uintptr_t)response_write);
+             worker_mode_wide, (unsigned long long)(uintptr_t)response_write);
   inherited_handles[0] = input_read;
   inherited_handles[1] = response_write;
   inherited_handles[2] = stdout_write;
@@ -434,6 +441,7 @@ done:
     CloseHandle(stderr_write);
   }
   free(worker_path);
+  free(worker_mode_wide);
   free(command_line);
   if (attribute_list_initialized) {
     DeleteProcThreadAttributeList(startup.lpAttributeList);

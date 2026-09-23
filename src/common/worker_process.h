@@ -1,12 +1,10 @@
 #ifndef NPUNLOCK_COMMON_WORKER_PROCESS_H
 #define NPUNLOCK_COMMON_WORKER_PROCESS_H
 
-#include <stddef.h>
-#include <stdint.h>
-#include <wchar.h>
-
 #include "npunlock/buffer.h"
 #include "npunlock/error.h"
+#include <stddef.h>
+#include <stdint.h>
 
 typedef struct npunlock_worker_process_result {
   npunlock_buffer response;
@@ -16,7 +14,7 @@ typedef struct npunlock_worker_process_result {
 } npunlock_worker_process_result;
 
 npunlock_status npunlock_worker_process_run(npunlock_view worker_executable_utf8,
-                                            const wchar_t *worker_mode, npunlock_view request,
+                                            const char *worker_mode, npunlock_view request,
                                             size_t maximum_response_size, uint32_t timeout_ms,
                                             npunlock_worker_process_result *result);
 
