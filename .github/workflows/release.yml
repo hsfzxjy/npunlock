@@ -1,0 +1,312 @@
+name: daily-release
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npunlock-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+      previous_tag: ${{ steps.check.outputs.previous_tag }}
+
+    steps:
+      - name: Check out source and tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for commits after the previous release
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          releases="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          previous_tag="$(
+            jq -r '[.[] | select(.draft == false)] | first | .tag_name // ""' <<<"${releases}"
+          )"
+          publish=true
+
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && -n "${previous_tag}" ]]; then
+            if ! git rev-parse --verify --quiet "${previous_tag}^{commit}" >/dev/null; then
+              git fetch --no-tags origin "refs/tags/${previous_tag}:refs/tags/${previous_tag}"
+            fi
+            if [[ "$(git rev-list --count "${previous_tag}..HEAD")" == "0" ]]; then
+              publish=false
+              echo "No commits were added after ${previous_tag}; skipping the daily release."
+            fi
+          fi
+
+          echo "publish=${publish}" >>"${GITHUB_OUTPUT}"
+          echo "previous_tag=${previous_tag}" >>"${GITHUB_OUTPUT}"
+
+  windows:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python test dependency
+        run: python -m pip install --disable-pip-version-check numpy
+
+      - name: Build and test native Windows package
+        shell: pwsh
+        run: |
+          tools\msvc-run.ps1 cmake -S . -B build\release -G "NMake Makefiles" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DNPUNLOCK_BUILD_TESTS=ON `
+            -DNPUNLOCK_ENABLE_NPU_TESTS=OFF `
+            -DNPUNLOCK_ENABLE_MOVITOOLS_TESTS=OFF `
+            -DNPUNLOCK_ENABLE_GRAPHINFER_TESTS=OFF
+          tools\msvc-run.ps1 cmake --build build\release
+          tools\msvc-run.ps1 ctest --test-dir build\release --output-on-failure
+          tools\msvc-run.ps1 cmake --install build\release --prefix build\native-stage
+
+      - name: Package native Windows binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build\release-assets | Out-Null
+          Compress-Archive -Path build\native-stage\* `
+            -DestinationPath build\release-assets\npunlock-windows-x64.zip
+
+      - name: Build Windows Python wheel
+        run: python -m pip wheel . --no-deps --wheel-dir build\wheel-dist
+
+      - name: Collect Windows wheel
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem build\wheel-dist\npunlock-*-win_amd64.whl
+          if ($wheel.Count -ne 1) {
+            throw "Expected exactly one Windows x64 wheel, found $($wheel.Count)."
+          }
+          Copy-Item -LiteralPath $wheel.FullName -Destination build\release-assets
+          python -m pip install --force-reinstall --no-deps $wheel.FullName
+          python -c "from npunlock._native import NativeLibraries; NativeLibraries(); print('bundled runtime loaded')"
+
+      - name: Upload Windows release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-release-assets
+          path: build/release-assets/*
+          if-no-files-found: error
+
+  environment-prober:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Build Linux environment prober
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/prober \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNPUNLOCK_BUILD_TESTS=OFF
+          cmake --build build/prober
+          build/prober/npunlock-linux-probe --help
+          build/prober/npunlock-inspect \
+            --graph tests/fixtures/npu3720/abs-add-1x16-tile1.blob
+
+      - name: Package environment prober and ready-to-run bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="build/prober-package/npunlock-environment-prober-linux-x64"
+          mkdir -p "${package}" build/release-assets
+          install -m 755 build/prober/npunlock-linux-probe "${package}/"
+          install -m 755 build/prober/npunlock-inspect "${package}/"
+          install -m 644 tools/porting_probe.py "${package}/"
+          install -m 644 wiki/PORTING_PROBE_BUNDLE.md "${package}/README.md"
+          install -m 644 LICENSE "${package}/"
+          python3 tools/porting_probe.py create \
+            --graph tests/fixtures/npu3720/add1-shared-1x16.blob \
+            --output-dir "${package}/add1-probe" \
+            --producer-platform "Windows x64" \
+            --device "Meteor Lake / NPU3720" \
+            --driver-version "unknown (retained fixture)" \
+            --graph-compiler-version "8.3"
+          python3 tools/porting_probe.py verify "${package}/add1-probe"
+          (
+            cd build/prober-package
+            zip -r -9 ../release-assets/npunlock-environment-prober-linux-x64.zip \
+              npunlock-environment-prober-linux-x64
+          )
+
+      - name: Upload environment prober
+        uses: actions/upload-artifact@v7
+        with:
+          name: environment-prober-release-asset
+          path: build/release-assets/npunlock-environment-prober-linux-x64.zip
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - check
+      - windows
+      - environment-prober
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out source and tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download Windows release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-release-assets
+          path: release-assets
+
+      - name: Download environment prober
+        uses: actions/download-artifact@v8
+        with:
+          name: environment-prober-release-asset
+          path: release-assets
+
+      - name: Choose the UTC release name
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_date="$(date -u +%F)"
+          releases="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          max_index=-1
+
+          while IFS= read -r tag; do
+            suffix="${tag#${release_date}.}"
+            if [[ "${tag}" == "${release_date}."* && "${suffix}" =~ ^[0-9]+$ ]]; then
+              index=$((10#${suffix}))
+              if ((index > max_index)); then
+                max_index=${index}
+              fi
+            fi
+          done < <(
+            {
+              git tag --list "${release_date}.*"
+              jq -r --arg prefix "${release_date}." \
+                '.[] | select(.tag_name | startswith($prefix)) | .tag_name' <<<"${releases}"
+            } | sort -u
+          )
+
+          printf -v release_tag '%s.%02d' "${release_date}" "$((max_index + 1))"
+          echo "release_tag=${release_tag}" >>"${GITHUB_OUTPUT}"
+
+      - name: Generate release notes
+        shell: bash
+        env:
+          PREVIOUS_TAG: ${{ needs.check.outputs.previous_tag }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          notes="release-notes.md"
+          short_sha="${GITHUB_SHA:0:12}"
+
+          {
+            echo "Built from [\`${short_sha}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo
+            echo "## New commits compared with the previous release"
+            echo
+          } >"${notes}"
+
+          if [[ -n "${PREVIOUS_TAG}" ]]; then
+            if ! git rev-parse --verify --quiet "${PREVIOUS_TAG}^{commit}" >/dev/null; then
+              git fetch --no-tags origin "refs/tags/${PREVIOUS_TAG}:refs/tags/${PREVIOUS_TAG}"
+            fi
+            echo "Compared with [\`${PREVIOUS_TAG}\`](https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS_TAG}...${RELEASE_TAG})." >>"${notes}"
+            echo >>"${notes}"
+            range="${PREVIOUS_TAG}..HEAD"
+          else
+            echo "This is the first published release; the list covers repository history through this build." >>"${notes}"
+            echo >>"${notes}"
+            range="HEAD"
+          fi
+
+          if [[ "$(git rev-list --count "${range}")" == "0" ]]; then
+            echo "- No new commits. This release was requested manually." >>"${notes}"
+          else
+            git log "${range}" --reverse \
+              --pretty=format:'- [`%h`](https://github.com/'"${GITHUB_REPOSITORY}"'/commit/%H) %s' \
+              >>"${notes}"
+            echo >>"${notes}"
+          fi
+
+          breakthrough="$(
+            grep -m1 '^> \*\*Latest breakthrough' README.md | \
+              sed "s#](wiki/#](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/wiki/#g"
+          )"
+          if [[ -z "${breakthrough}" ]]; then
+            echo "README.md does not contain the synchronized latest-breakthrough excerpt." >&2
+            exit 1
+          fi
+
+          {
+            echo
+            echo "## New ABI breakthrough"
+            echo
+            echo "${breakthrough}"
+            echo
+            echo "## Environment prober quick start"
+            echo
+            echo "The \`npunlock-environment-prober-linux-x64.zip\` asset contains the Linux probe, the offline inspector, the bundle helper, and a ready-to-run \`add1-probe\` bundle. After extracting it:"
+            echo
+            echo '```bash'
+            echo 'python3 porting_probe.py verify add1-probe'
+            echo './npunlock-linux-probe --bundle add1-probe --report add1-linux-report.json'
+            echo '```'
+            echo
+            echo "To bundle another patched add-one graph, run:"
+            echo
+            echo '```bash'
+            echo 'python3 porting_probe.py create --graph patched-add1.blob --output-dir my-probe --producer-platform "Windows x64" --device "Meteor Lake / NPU3720" --driver-version "DRIVER_VERSION" --graph-compiler-version "8.3"'
+            echo '```'
+            echo
+            echo "The prober is experimental: graph loading alone is not a compatibility result; compare the output with the bundled host oracle."
+          } >>"${notes}"
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum * >SHA256SUMS
+          gh release create "${RELEASE_TAG}" ./* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "${RELEASE_TAG}" \
+            --notes-file ../release-notes.md

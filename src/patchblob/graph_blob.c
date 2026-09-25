@@ -516,7 +516,7 @@ static npunlock_status count_data_pointer_relocations(const graph_layout *layout
     }
     for (relocation_index = 0; relocation_index < section->size / ELF64_RELA_SIZE;
          ++relocation_index) {
-      graph_relocation relocation;
+      graph_relocation relocation = {0};
       npunlock_status status =
           resolve_relocation(layout, section_index, relocation_index, &relocation, diagnostic);
       if (status != NPUNLOCK_STATUS_OK) {
