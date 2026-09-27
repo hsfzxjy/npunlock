@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-09-27:** A custom ACT kernel consumed dense FP32 and produced dense FP16 inside a connected graph, matching 32/32 outputs across two input sets. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#11-one-act-invocation-can-convert-fp32-input-to-fp16-output).
+> **Latest breakthrough — 2026-09-27:** Custom ACT kernels performed connected FP32-to-FP16 and FP16-to-FP32 conversion, each matching 32/32 outputs across two input sets. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#11-mixed-precision-act-conversion-works-in-both-directions).
 
 ## Quick example
 
@@ -148,10 +148,10 @@ reference.
 
 Support is experimental and currently limited to Windows x64, Meteor Lake /
 NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
-Connected FP32-to-FP16 custom execution is experimentally confirmed, but the
-public target/discovery ABI cannot yet express its unequal input/output spans;
-the supported mixed-precision example therefore uses independent branches.
-Other NPU generations have not been verified. See
+Connected FP32/FP16 custom conversion is experimentally confirmed in both
+directions, but the public target/discovery ABI cannot yet express its unequal
+input/output spans; the supported mixed-precision example therefore uses
+independent branches. Other NPU generations have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 
 ## Help test Linux and newer NPUs

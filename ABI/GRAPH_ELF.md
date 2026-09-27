@@ -222,7 +222,7 @@ absolute error `2.38419e-07`.
 This establishes one unary FP32 carrier configuration, not general FP32 graph
 support.
 
-### Experimental FP32-to-FP16 conversion
+### Experimental mixed-precision conversion
 
 A connected static `[1,32]` graph produced a unary conversion record with an
 FP32 input at `+0x00` and FP16 output at `+0x28`. Both descriptors had 32
@@ -232,10 +232,14 @@ conversion range and matched a discriminating host reference at all 32 output
 positions across two input sets.
 
 This confirms that the descriptor sequence can carry different input/output
-types and spans. It does not establish arbitrary mixed types, FP16-to-FP32,
-mixed-dtype binary operations, or a safe automatic mapping for all ranges in
-the compiler-generated group. The public patch target cannot represent this
-contract yet and therefore continues to reject it.
+types and spans. A reverse connected graph was also tested with a 32-element
+FP16 input (64 bytes) and FP32 output (128 bytes). A custom `__fp16`-to-`float`
+kernel matched all 32 outputs across two input sets.
+
+The two directions establish this unary descriptor convention, not arbitrary
+mixed types, mixed-dtype binary operations, or a safe automatic mapping for
+all ranges in the compiler-generated group. The public patch target cannot
+represent either contract yet and therefore continues to reject them.
 
 ## How `patchblob` substitutes code
 

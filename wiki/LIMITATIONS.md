@@ -99,11 +99,11 @@ One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those
 ACT groups remains internally single-precision.
 
-A later connected FP32-to-FP16 experiment established that one custom ACT
-invocation can read 32 dense FP32 elements and write 32 dense FP16 elements.
-That result is ABI evidence, not current product support: the public
-`patchblob_target` has only one precision flag and one span, so discovery still
-rejects this unequal-span contract. The test also found a matching full-tensor
+A later pair of connected conversion experiments established that custom ACT
+invocations can convert 32 dense FP32 elements to FP16 and 32 dense FP16
+elements to FP32. Those results are ABI evidence, not current product support:
+the public `patchblob_target` has only one precision flag and one span, so
+discovery still rejects this unequal-span contract. The test also found a matching full-tensor
 range that was not observable at the selected graph output, making automatic
 group-to-partition mapping unsafe without more scheduling evidence.
 

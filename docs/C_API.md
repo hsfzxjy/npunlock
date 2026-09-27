@@ -211,9 +211,10 @@ mutation, and returns a new blob plus a JSON preservation report.
 
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
-carrier. A controlled experiment has executed a mixed FP32-input/FP16-output
-ACT kernel, but this public structure cannot express its separate record spans
-or precisions and therefore does not make conversion groups patch-compatible.
+carrier. Controlled experiments have executed both FP32-input/FP16-output and
+FP16-input/FP32-output ACT kernels, but this public structure cannot express
+their separate record spans or precisions and therefore does not make
+conversion groups patch-compatible.
 
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release

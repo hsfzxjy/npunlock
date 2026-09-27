@@ -237,7 +237,7 @@ connected mixed-precision custom pipeline or mixed-dtype ACT invocation.
 The complete runnable case is
 [`example_mixed_precision_multi_custom.py`](../examples/example_mixed_precision_multi_custom.py).
 
-## 11. One ACT invocation can convert FP32 input to FP16 output
+## 11. Mixed-precision ACT conversion works in both directions
 
 On 2026-09-27, a connected `FP32 Abs -> Convert -> FP16 Abs` graph isolated
 the conversion ABI that the ordinary target validator had previously rejected.
@@ -259,11 +259,12 @@ as `float`, wrote the second as `__fp16`, and computed
 irregular FP32 vector. Replacing only the otherwise matching range 5 left all
 32 outputs at the original conversion result.
 
-**Confirmed:** the tested NPU3720 ACT entry convention can carry a static dense
-FP32 input and static dense FP16 output with equal element counts but different
-byte spans. Custom code can perform the conversion inside a connected graph;
-the earlier rejection was a limitation of `npunlock`'s single-precision target
-model, not evidence that the hardware ABI required equal spans.
+**First direction confirmed:** the tested NPU3720 ACT entry convention can
+carry a static dense FP32 input and static dense FP16 output with equal element
+counts but different byte spans. Custom code can perform the conversion inside
+a connected graph; the earlier rejection was a limitation of `npunlock`'s
+single-precision target model, not evidence that the hardware ABI required
+equal spans.
 
 The range-5 control establishes only that this range was not observable at the
 chosen graph output under this schedule. It does not prove that the invocation
@@ -278,6 +279,32 @@ The linked kernel ELF SHA-256 was
 `31d6b47d29e12569245d1220836bfdeb6b6d8d223d29a782c94f1b2dd12726e2`;
 its 208-byte executable image SHA-256 was
 `f2f369526d2251a012abd1f797ea93b11b4259b8d40bcb4176daf4169c154f40`.
+
+A reverse experiment used the connected graph
+`FP16 Abs -> Convert -> FP32 Abs`. Its conversion records mirrored the first
+case: 32 FP16 input elements occupied 64 bytes and 32 FP32 output elements
+occupied 128 bytes. A custom range read `__fp16`, wrote `float`, and computed
+`(float)input * 1.75f - 0.375f`. After the surrounding `Abs` stages, all 32
+outputs matched an independent host calculation for both linear and irregular
+FP16 vectors.
+
+The reverse controls repeated the same range behavior: replacing range 4
+changed all outputs to the custom formula, while replacing only matching range
+5 left every output at the original conversion result. This repetition across
+opposite conversion directions strengthens the conclusion that the current
+invocation-identity bytes are insufficient to identify output partitions.
+
+**Confirmed:** for these two static unary carriers, the observed ACT descriptor
+sequence supports unequal input/output types and spans in both FP32-to-FP16 and
+FP16-to-FP32 directions. This still does not establish arbitrary mixed types,
+mixed-dtype binary kernels, or a public patch-selection contract.
+
+The reverse carrier blob SHA-256 was
+`ec78179dab71abe81bcf2328d11b0ce6e77e8e2691d3685bba0152dfa299711e`.
+The reverse linked kernel ELF SHA-256 was
+`cfdda003858ea5336103808db0a60b0771f4642accf7d003236803d85043e04e`;
+its 208-byte executable image SHA-256 was
+`3d9c6375e491c1c764902004b26045ac27e82f207a225bf46b0a07f051b50e9f`.
 
 This is ABI evidence, not yet a supported public patching mode.
 `patchblob_target` currently carries one precision flag and one expected span,
