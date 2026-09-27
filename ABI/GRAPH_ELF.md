@@ -182,7 +182,10 @@ binary operation: input A at +0x00, input B at +0x28, output at +0x50
 
 An FP16 span is `element_count * 2`; an FP32 span is
 `element_count * 4`. Inputs and output must describe matching element counts,
-and the output span must not alias an input span.
+and the output span must not alias an input span. The currently supported
+patch-target ABI additionally requires every record to use one precision and
+one byte span. That is a product constraint, not a universal record rule; the
+mixed conversion observation below demonstrates unequal input/output spans.
 
 ## Validated examples
 
@@ -218,6 +221,21 @@ absolute error `2.38419e-07`.
 
 This establishes one unary FP32 carrier configuration, not general FP32 graph
 support.
+
+### Experimental FP32-to-FP16 conversion
+
+A connected static `[1,32]` graph produced a unary conversion record with an
+FP32 input at `+0x00` and FP16 output at `+0x28`. Both descriptors had 32
+elements and dense CMX layout, while their byte spans were respectively 128
+and 64. A custom kernel reading `float` and writing `__fp16` replaced one
+conversion range and matched a discriminating host reference at all 32 output
+positions across two input sets.
+
+This confirms that the descriptor sequence can carry different input/output
+types and spans. It does not establish arbitrary mixed types, FP16-to-FP32,
+mixed-dtype binary operations, or a safe automatic mapping for all ranges in
+the compiler-generated group. The public patch target cannot represent this
+contract yet and therefore continues to reject it.
 
 ## How `patchblob` substitutes code
 
@@ -270,7 +288,8 @@ the complete native ELF using `pfnGetNativeBinary2` before releasing the graph.
 Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
-- element types other than the narrow FP16 and unary FP32 cases above;
+- supported patch targets beyond the narrow same-precision FP16 and unary FP32
+  cases above (the mixed conversion is experimental ABI evidence only);
 - broadcasting or unequal binary input shapes;
 - arbitrary compiler or graph-format versions;
 - nonempty `KernelData` for custom kernels;

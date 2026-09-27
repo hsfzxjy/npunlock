@@ -16,7 +16,7 @@ That observation turned an undocumented native graph into a practical,
 testable custom-kernel path. This page records the important milestones behind
 that result without treating every observed field as a general vendor ABI.
 
-Status: experimental. Last updated 2026-09-23.
+Status: experimental. Last updated 2026-09-27.
 
 ## How the conclusions were established
 
@@ -236,6 +236,55 @@ connected mixed-precision custom pipeline or mixed-dtype ACT invocation.
 
 The complete runnable case is
 [`example_mixed_precision_multi_custom.py`](../examples/example_mixed_precision_multi_custom.py).
+
+## 11. One ACT invocation can convert FP32 input to FP16 output
+
+On 2026-09-27, a connected `FP32 Abs -> Convert -> FP16 Abs` graph isolated
+the conversion ABI that the ordinary target validator had previously rejected.
+The conversion records kept the unary descriptor order—input at `+0x00` and
+output at `+0x28`—but deliberately used unequal element types and byte spans:
+
+| Field | Input | Output |
+| --- | ---: | ---: |
+| element type | FP32 (`1`) | FP16 (`2`) |
+| element count | 32 | 32 |
+| dense bit stride | 32 | 16 |
+| byte span | 128 | 64 |
+
+Both descriptors were static dense CMX tensors in the same observed address
+space with disjoint spans. A separately compiled kernel read the first record
+as `float`, wrote the second as `__fp16`, and computed
+`(__fp16)(input * 0.5f + 1.25f)`. Replacing conversion range 4 changed all
+32 graph outputs to that formula exactly for both a linear vector and an
+irregular FP32 vector. Replacing only the otherwise matching range 5 left all
+32 outputs at the original conversion result.
+
+**Confirmed:** the tested NPU3720 ACT entry convention can carry a static dense
+FP32 input and static dense FP16 output with equal element counts but different
+byte spans. Custom code can perform the conversion inside a connected graph;
+the earlier rejection was a limitation of `npunlock`'s single-precision target
+model, not evidence that the hardware ABI required equal spans.
+
+The range-5 control establishes only that this range was not observable at the
+chosen graph output under this schedule. It does not prove that the invocation
+was skipped. More importantly, two consecutive invocations with the same
+current group-identity bytes did not behave as two output partitions. Their
+element counts therefore must not be blindly summed or treated as an exact
+cover.
+
+The carrier blob SHA-256 was
+`5bc0ab6845b081782c35b0e356aac75c5d674efbe77621a10c097cd2503830d3`.
+The linked kernel ELF SHA-256 was
+`31d6b47d29e12569245d1220836bfdeb6b6d8d223d29a782c94f1b2dd12726e2`;
+its 208-byte executable image SHA-256 was
+`f2f369526d2251a012abd1f797ea93b11b4259b8d40bcb4176daf4169c154f40`.
+
+This is ABI evidence, not yet a supported public patching mode.
+`patchblob_target` currently carries one precision flag and one expected span,
+so it cannot express separate input and output contracts. Discovery continues
+to fail closed. Before exposing this path, the target ABI needs per-record
+element type/span expectations and a safer way to distinguish active work
+partitions from compiler-emitted matching ranges.
 
 ## What remains deliberately unresolved
 
