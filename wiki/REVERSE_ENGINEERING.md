@@ -296,8 +296,9 @@ invocation-identity bytes are insufficient to identify output partitions.
 
 **Confirmed:** for these two static unary carriers, the observed ACT descriptor
 sequence supports unequal input/output types and spans in both FP32-to-FP16 and
-FP16-to-FP32 directions. This still does not establish arbitrary mixed types,
-mixed-dtype binary kernels, or a public patch-selection contract.
+FP16-to-FP32 directions. This conversion result alone did not establish
+arbitrary mixed types, mixed-dtype binary kernels, or a public patch-selection
+contract; the later two-input result is documented in section 13.
 
 The reverse carrier blob SHA-256 was
 `ec78179dab71abe81bcf2328d11b0ce6e77e8e2691d3685bba0152dfa299711e`.
@@ -360,8 +361,75 @@ network output.
 
 **Still open:** whether the same tile relationship and `0x200000` CMX delta
 hold across other shapes, operators, compiler versions, or NPU generations;
-how to represent replica sets in the stable public selector; and the
-mixed-dtype multi-input contract.
+and how to represent replica sets in the stable public selector. Section 13
+tests one mixed-dtype multi-input contract.
+
+## 13. Mixed-dtype two-input ACT kernels work
+
+On 2026-10-01, a static `[1,32]` `GatherElements` graph exposed a genuine
+mixed-type two-input ACT invocation. The operator had to be serialized with
+its correct opset version; the same graph labeled as opset1 was rejected by
+the driver compiler. The accepted carrier used FP32 data and constant I32
+indices and produced an FP32 output.
+
+The invocation kept the established consecutive 40-byte descriptor layout:
+
+| Offset | Role | Raw type | Interpreted type | Count and span |
+| ---: | --- | ---: | --- | --- |
+| `+0x00` | data input | `1` | FP32 | 32 elements, 128 bytes |
+| `+0x28` | indices input | `9` | I32 | 32 elements, 128 bytes |
+| `+0x50` | output | `1` | FP32 | 32 elements, 128 bytes |
+
+The compatible software-kernel runtime enum identifies raw type 9 as
+`NN_I32`. All three descriptors were static, dense, and CMX-resident. As in
+the conversion probes, the compiler emitted two full-tensor replicas: range 0
+on tile 0 and range 1 on tile 1, separated by a `0x200000` CMX addend.
+
+The replacement kernel used every index to make two non-sequential reads:
+
+```text
+j = indices[i]
+k = (3 * j + 1) & 31
+output[i] = 1.375 * data[j] + 0.125 * data[k]
+```
+
+This formula makes an accidental pass from ignoring either input extremely
+unlikely. With the ordinary tile-0 output route, replacing range 0 matched all
+32 host-oracle values exactly for both a linear and an irregular FP32 input.
+Replacing both tile replicas produced the same result. After changing only the
+network-output DMA source to tile 1, replacing only range 1 also matched all
+32 values exactly for both inputs. Every execution completed without an
+NPU-side error.
+
+An independent `Select` probe provided supporting evidence for heterogeneous
+records: its FP32 form exposed an I8 condition followed by two FP32 inputs and
+one FP32 output, and a custom kernel using all three inputs also matched two
+32-element oracles exactly.
+
+**Confirmed for these carriers:** an NPU3720 ACT invocation can present
+consecutive inputs with different element types to custom code. The descriptor
+order remains inputs followed by output, and ordinary C pointer types can read
+the FP32, I32, and I8 records tested here.
+
+**Important limit:** the unmodified `GatherElements` carrier did not match the
+operator's host semantics in this configuration. It served only as a
+compiler-generated invocation and scheduling envelope; correctness was
+established for the replacement kernel against its own independent oracle.
+This result does not claim general `GatherElements` support.
+
+The carrier blob SHA-256 was
+`f488baa56ced8f7c85104b9e4d1f895792085e3ac318f4e88b7f51add58ed79b`.
+The linked kernel ELF SHA-256 was
+`fb8381c28a91bbc9e70f1d6459cb5220a4798495f453e79d4c1a92aa5e78d0f5`;
+its 256-byte executable image SHA-256 was
+`cdb3cff513f856fd2908fafa8d0fb84b2d39240db629d2037cabd4fb779fb01c`.
+
+**Still open:** integer-valued host graph inputs, other integer widths and
+signedness, negative or out-of-range indexing, unequal element counts,
+broadcasting, additional layouts, and a public target model capable of
+describing each record independently. `patchblob` continues to reject this
+carrier because its supported target contract is intentionally limited to
+uniform FP16 or FP32 records.
 
 ## What remains deliberately unresolved
 

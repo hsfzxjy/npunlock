@@ -197,12 +197,14 @@ descriptor is 0x28 bytes:
 | `+0x0c` | rank as `u32` |
 | `+0x10` | pointer to `rank` signed 32-bit dimensions |
 | `+0x14` | pointer to `rank` signed 64-bit bit-strides |
-| `+0x18` | element-type value: 2 for FP16, 1 for validated FP32 |
+| `+0x18` | element-type value: 1 for FP32, 2 for FP16, 9 for I32, and 11 for I8 in observed records |
 | `+0x24` | raw value 2 for supported CMX tensors |
 
-The official enum names for the raw values are not known. `npunlock` validates
-the complete combination instead of assigning broader meanings to individual
-numbers.
+The raw element values match the `NN_FP32`, `NN_FP16`, `NN_I32`, and `NN_I8`
+entries in the compatible software-kernel runtime type definition. An IR
+boolean condition was lowered to an I8 descriptor. `npunlock` still validates
+the complete combination rather than assuming that every enum member or
+mixture is usable.
 
 For a dense tensor, non-singleton dimensions ordered by increasing stride
 must start at the element bit width and grow by the previous dimension size.
@@ -273,12 +275,41 @@ types and spans. A reverse connected graph was also tested with a 32-element
 FP16 input (64 bytes) and FP32 output (128 bytes). A custom `__fp16`-to-`float`
 kernel matched all 32 outputs across two input sets.
 
-The two directions establish this unary descriptor convention, not arbitrary
-mixed types or mixed-dtype binary operations. The matching conversion ranges
-were later shown to be executable tile-local replicas, not output partitions;
-there is still no safe automatic mapping for that compiler-generated group.
-The public patch target cannot represent either contract yet and therefore
-continues to reject them.
+The two directions establish this unary descriptor convention. By themselves,
+they do not establish arbitrary mixed types or mixed-dtype binary operations.
+The matching conversion ranges were later shown to be executable tile-local
+replicas, not output partitions; there is still no safe automatic mapping for
+that compiler-generated group. The public patch target cannot represent either
+contract yet and therefore continues to reject them.
+
+### Experimental mixed-dtype two-input invocation
+
+A static `[1,32]` `GatherElements` carrier produced this descriptor sequence:
+
+| Parameter offset | Role | Type | Count | Bit stride | Byte span |
+| ---: | --- | --- | ---: | ---: | ---: |
+| `+0x00` | data input | FP32 (`1`) | 32 | 32 | 128 |
+| `+0x28` | indices input | I32 (`9`) | 32 | 32 | 128 |
+| `+0x50` | output | FP32 (`1`) | 32 | 32 | 128 |
+
+All three records were static dense CMX tensors. The compiler emitted two
+full-tensor invocations: range 0 on tile 0 and range 1 on tile 1, with their
+data addends separated by the same observed `0x200000` tile delta.
+
+A custom kernel read the first record as `float`, the second as signed
+32-bit indices, and wrote the third as `float`. Each index selected two
+different positions from the data span, making both input records necessary
+to match the oracle. The kernel matched all 32 outputs exactly for linear and
+irregular data on tile 0. Rerouting the output DMA to tile 1 and replacing only
+range 1 produced the same exact results there.
+
+This confirms one mixed FP32/I32 two-input ACT convention. It does not establish
+arbitrary integer tensors, negative or out-of-range indices, integer graph
+inputs, broadcasting, other shapes, or other operators. The original carrier
+implementation did not match a `GatherElements` host oracle in this
+configuration, so this is custom-entry ABI evidence rather than a claim that
+the carrier operator itself works. The public patch target intentionally
+rejects the I32 descriptor.
 
 ## How `patchblob` substitutes code
 

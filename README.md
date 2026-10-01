@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-01:** Matching ACT ranges were shown to be executable tile-local replicas: rerouting the graph output to tile 1 made the previously hidden range-5 custom kernel control all 32 outputs in both mixed-precision directions. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#12-matching-ranges-can-be-tile-local-replicas).
+> **Latest breakthrough — 2026-10-01:** A two-input custom ACT kernel consumed FP32 data and I32 indices from one invocation, matching all 32 outputs on both NPU tiles across two input sets. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#13-mixed-dtype-two-input-act-kernels-work).
 
 ## Quick example
 
