@@ -98,12 +98,49 @@ bytes.
 | `+0x00` | index of the selected `ActKernelRange` | confirmed |
 | `+0x04` | relocated reference to this invocation's `KernelParams` | confirmed |
 | `+0x08` | relocated reference to `KernelData` | confirmed; supported custom kernels use no data |
-| `+0x34` | tile-like value (`0` or `1` in two-tile graphs) | inferred |
+| `+0x10` | barrier wait mask | confirmed against scheduling behavior |
+| `+0x18` | barrier post mask | confirmed against scheduling behavior |
+| `+0x20` | barrier group and mask bytes | structure-correlated |
+| `+0x28` | scheduling `start_after` value | structure-correlated |
+| `+0x2c` | scheduling `clean_after` value | structure-correlated |
+| `+0x30` | invocation index | confirmed |
+| `+0x34` | tile index (`0` or `1` in the tested two-tile graphs) | execution-confirmed |
+| `+0x38` | kernel-range index | confirmed |
 
 The number of invocation records is not the number of graph operations. It
 depends on shape, layout, compiler partitioning, and tile configuration. For
 example, some `[1,16]` FP16 operations have two invocations of eight elements
 even when compilation requests one NPU tile.
+
+### Tile-local replicas and output routing
+
+Two tested mixed-precision carriers each contained a pair of full-tensor
+conversion invocations rather than two partial-tensor chunks. The records had
+the same tensor contract but different tile indices and CMX addends:
+
+```text
+range 4  tile 0  base addend +0x000000
+range 5  tile 1  base addend +0x200000
+```
+
+Both records appeared in the mapped-inference task list, waited on the same
+barrier, and posted the same following barrier. That barrier declared two
+producers, matching the pair. The final network-output DMA selected the tile-0
+CMX result, so replacing range 5 initially produced no host-visible change.
+
+A controlled mutation changed only that DMA source relocation to the
+corresponding tile-1 CMX result. The unmodified kernel path still produced the
+same baseline output; replacing range 4 remained invisible; and replacing
+range 5 then controlled all 32 outputs. This result repeated for FP32-to-FP16
+and FP16-to-FP32 conversion with two input sets in each direction.
+
+**Confirmed for these carriers:** matching invocations may be executable
+tile-local replicas of the same logical work. An invocation can be active even
+when its result is not selected by the graph output. The observed `0x200000`
+tile delta and DMA relocation layout are not yet claimed as universal ABI.
+Automatic grouping must distinguish replicas from partitions: summing their
+element counts would double-count the logical tensor, while patching only the
+currently visible replica would depend on compiler routing.
 
 ## Positional operation groups
 
@@ -237,9 +274,11 @@ FP16 input (64 bytes) and FP32 output (128 bytes). A custom `__fp16`-to-`float`
 kernel matched all 32 outputs across two input sets.
 
 The two directions establish this unary descriptor convention, not arbitrary
-mixed types, mixed-dtype binary operations, or a safe automatic mapping for
-all ranges in the compiler-generated group. The public patch target cannot
-represent either contract yet and therefore continues to reject them.
+mixed types or mixed-dtype binary operations. The matching conversion ranges
+were later shown to be executable tile-local replicas, not output partitions;
+there is still no safe automatic mapping for that compiler-generated group.
+The public patch target cannot represent either contract yet and therefore
+continues to reject them.
 
 ## How `patchblob` substitutes code
 

@@ -313,6 +313,56 @@ to fail closed. Before exposing this path, the target ABI needs per-record
 element type/span expectations and a safer way to distinguish active work
 partitions from compiler-emitted matching ranges.
 
+## 12. Matching ranges can be tile-local replicas
+
+On 2026-10-01, the previously invisible range 5 from both mixed-conversion
+carriers was traced through the scheduling records. The 64-byte invocation
+layout identifies range 4 as tile 0 and range 5 as tile 1. Both invocations are
+included in the mapped-inference task list, wait on barrier 1, and post barrier
+2. Barrier 2 declares exactly two producers, consistent with both conversion
+invocations participating in the schedule.
+
+Their tensor descriptors reveal two full-tensor tile-local data paths rather
+than two output partitions. In the FP16-to-FP32 carrier, for example, range 4
+uses CMX addends `0x40 -> 0x80`, while range 5 uses
+`0x200040 -> 0x200080`. The downstream ACT operations preserve the same tile
+separation. The network-output DMA source points at the final tile-0 span,
+which explains why replacing range 5 was not visible in the original graph
+output.
+
+A controlled positive experiment changed only the output DMA source relocation
+to the corresponding tile-1 span. Three blobs were compared in each precision
+direction:
+
+| Output routed from tile 1 | Original carrier | Range 4 replaced | Range 5 replaced |
+| --- | ---: | ---: | ---: |
+| FP32-to-FP16, linear input | 32/32 baseline | 32/32 baseline | 32/32 custom |
+| FP32-to-FP16, irregular input | 32/32 baseline | 32/32 baseline | 32/32 custom |
+| FP16-to-FP32, linear input | 32/32 baseline | 32/32 baseline | 32/32 custom |
+| FP16-to-FP32, irregular input | 32/32 baseline | 32/32 baseline | 32/32 custom |
+
+Every graph load and execution completed without an NPU-side error. The
+unpatched tile-1 output matching the ordinary result verifies that the routing
+mutation selected a coherent duplicate path. The range-5 result then proves
+that the second conversion invocation executes and consumes its tile-local
+descriptors; it was hidden by output routing, not skipped.
+
+**Confirmed for these two carriers:** equal-contract ACT invocations can be
+executable tile-local replicas of the same logical tensor. The invocation tile
+field and the network-output DMA source together explain which replica is
+host-visible.
+
+**Consequence:** replicas must not be treated as output partitions whose
+element counts are summed. A future mixed-type target model must describe
+per-record types and spans, recognize the replica relationship, and replace
+all required replicas rather than only whichever tile currently feeds the
+network output.
+
+**Still open:** whether the same tile relationship and `0x200000` CMX delta
+hold across other shapes, operators, compiler versions, or NPU generations;
+how to represent replica sets in the stable public selector; and the
+mixed-dtype multi-input contract.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

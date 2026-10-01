@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-09-27:** Custom ACT kernels performed connected FP32-to-FP16 and FP16-to-FP32 conversion, each matching 32/32 outputs across two input sets. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#11-mixed-precision-act-conversion-works-in-both-directions).
+> **Latest breakthrough — 2026-10-01:** Matching ACT ranges were shown to be executable tile-local replicas: rerouting the graph output to tile 1 made the previously hidden range-5 custom kernel control all 32 outputs in both mixed-precision directions. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#12-matching-ranges-can-be-tile-local-replicas).
 
 ## Quick example
 
