@@ -3,7 +3,6 @@ from __future__ import annotations
 import ctypes
 import io
 import sys
-import tempfile
 import unittest
 import warnings
 from pathlib import Path
@@ -583,8 +582,8 @@ class CompilationFlowTests(unittest.TestCase):
         program = npu.compile(graph, native_dir="unused", libraries=fake)  # type: ignore[arg-type]
 
         self.assertEqual(program.to_bytes(), b"native")
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
-            path = Path(directory) / "graph.blob"
+        path = ROOT / "build" / "python-api-native-blob-test.bin"
+        try:
             program.save(path)
             self.assertEqual(path.read_bytes(), b"native")
 
@@ -592,6 +591,8 @@ class CompilationFlowTests(unittest.TestCase):
                 bytearray(program.to_bytes()), graph=graph, libraries=fake  # type: ignore[arg-type]
             )
             from_file = npu.load_native_file(path, graph=graph, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            path.unlink(missing_ok=True)
 
         self.assertIsNone(from_bytes.serialized_ir)
         self.assertIsNone(from_bytes.ir_provenance)

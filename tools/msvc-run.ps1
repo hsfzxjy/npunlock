@@ -16,6 +16,20 @@ if (Test-Path Env:PATH) {
     $env:Path = $msvcRunPath
 }
 
+# Proxy variables can carry the same case-folding collision. Preserve their
+# conventional uppercase spellings in the child environment.
+foreach ($msvcRunProxyName in @("NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")) {
+    if (Test-Path "Env:$msvcRunProxyName") {
+        $msvcRunProxyValue = [Environment]::GetEnvironmentVariable($msvcRunProxyName, "Process")
+        Remove-Item "Env:$msvcRunProxyName"
+        [Environment]::SetEnvironmentVariable(
+            $msvcRunProxyName,
+            $msvcRunProxyValue,
+            "Process"
+        )
+    }
+}
+
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
 $vs = & $vswhere `
