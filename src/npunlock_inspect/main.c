@@ -122,11 +122,14 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 "%s    {\"group_index\": %u, \"invocation_index\": %u, "
                 "\"range_index\": %u, \"input_count\": %u, \"element_count\": "
                 "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_flags\": %u, "
-                "\"precision\": \"%s\"}",
+                "\"precision\": \"%s\", \"input_1_scalar\": %s}",
                 index == 0 ? "" : ",\n", discovered->group_index, target->invocation_index,
                 target->range_index, target->expected_input_count, target->expected_element_count,
                 target->expected_span_bytes, target->required_contract_flags,
-                precision_name(target->required_contract_flags)) < 0) {
+                precision_name(target->required_contract_flags),
+                (target->required_contract_flags & PATCHBLOB_CONTRACT_INPUT_1_SCALAR) != 0u
+                    ? "true"
+                    : "false") < 0) {
       return 0;
     }
   }

@@ -52,10 +52,12 @@ static npunlock_buffer read_file(const char *path) {
 int main(void) {
   npunlock_buffer carrier;
   npunlock_buffer two_operation_carrier;
+  npunlock_buffer broadcast_carrier;
   npunlock_buffer elf;
   npunlock_buffer expected;
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
+  patchblob_target broadcast_targets[4] = {{0}};
   patchblob_discovery_result discovery = {0};
   patchblob_result result = {0};
   uint32_t flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
@@ -65,10 +67,11 @@ int main(void) {
 
   carrier = read_file(FIXTURE_ROOT "abs-add-1x16-tile1.blob");
   two_operation_carrier = read_file(FIXTURE_ROOT "abs-abs-1x32.blob");
+  broadcast_carrier = read_file(FIXTURE_ROOT "maximum-broadcast-1x32-f16.blob");
   elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
   expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
-  CHECK(carrier.data != NULL && two_operation_carrier.data != NULL && elf.data != NULL &&
-        expected.data != NULL);
+  CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
+        broadcast_carrier.data != NULL && elf.data != NULL && expected.data != NULL);
   status = patchblob_discover_targets((npunlock_view){carrier.data, carrier.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
     fprintf(stderr, "%s\n", (const char *)discovery.diagnostic.json.data);
@@ -102,6 +105,26 @@ int main(void) {
     CHECK(discovery.targets[index].target.expected_span_bytes == 32);
   }
   patchblob_discovery_result_release(&discovery);
+  status = patchblob_discover_targets(
+      (npunlock_view){broadcast_carrier.data, broadcast_carrier.size}, &discovery);
+  if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery.group_count == 1);
+  CHECK(discovery.target_count == 4);
+  for (index = 0; index < discovery.target_count; ++index) {
+    const patchblob_target *target = &discovery.targets[index].target;
+    CHECK(discovery.targets[index].group_index == 0);
+    CHECK(target->invocation_index == index);
+    CHECK(target->range_index == index);
+    CHECK(target->expected_input_count == 2);
+    CHECK(target->expected_element_count == 8);
+    CHECK(target->expected_span_bytes == 16);
+    CHECK((target->required_contract_flags & PATCHBLOB_CONTRACT_INPUT_1_SCALAR) != 0);
+    broadcast_targets[index] = *target;
+  }
+  patchblob_discovery_result_release(&discovery);
   options.struct_size = sizeof(options);
   options.image_alignment = 0x400;
   options.tail_padding = 0x80;
@@ -126,8 +149,27 @@ int main(void) {
   CHECK(strstr((const char *)result.report_json.data, "npunlock.patchblob.v1") != NULL);
   CHECK(strstr((const char *)result.report_json.data, "\"invocation_index\":1") != NULL);
   patchblob_result_release(&result);
+  status =
+      patchblob_patch(&options, (npunlock_view){broadcast_carrier.data, broadcast_carrier.size},
+                      (npunlock_view){elf.data, elf.size}, broadcast_targets, 4, &result);
+  if (status != NPUNLOCK_STATUS_OK && result.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)result.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(result.graph_blob.size > broadcast_carrier.size);
+  CHECK(strstr((const char *)result.report_json.data, "\"input_1_scalar\"") != NULL);
+  patchblob_result_release(&result);
+  broadcast_targets[0].required_contract_flags &= ~PATCHBLOB_CONTRACT_INPUT_1_SCALAR;
+  status =
+      patchblob_patch(&options, (npunlock_view){broadcast_carrier.data, broadcast_carrier.size},
+                      (npunlock_view){elf.data, elf.size}, broadcast_targets, 4, &result);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(result.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "expected element contract") != NULL);
+  patchblob_result_release(&result);
   free(expected.data);
   free(elf.data);
+  free(broadcast_carrier.data);
   free(two_operation_carrier.data);
   free(carrier.data);
   return 0;

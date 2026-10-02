@@ -95,19 +95,24 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
   }
   for (index = 0; index < summary->detail_count; ++index) {
     const npunlock_patch_detail *detail = &summary->details[index];
+    const char *precision =
+        (detail->contract_flags & PATCHBLOB_CONTRACT_FP16) != 0u ? "fp16" : "fp32";
+    const char *scalar_contract = (detail->contract_flags & PATCHBLOB_CONTRACT_INPUT_1_SCALAR) != 0u
+                                      ? ",\"input_1_scalar\""
+                                      : "";
     if (!report_append(&writer,
                        "%s{\"invocation_index\":%u,\"range_index\":%u,\"input_count\":%u,"
                        "\"parameter_base\":%" PRIu64 ",\"element_count\":%" PRIu64
                        ",\"span_bytes\":%" PRIu64 ",\"extent\":{\"file_offset\":%zu,"
                        "\"old\":%u,\"new\":%u},\"code_relocation_addend\":{"
                        "\"file_offset\":%zu,\"old\":%" PRId64 ",\"new\":%" PRId64
-                       "},\"contract\":[\"static\",\"dense\",\"fp16\",\"cmx\","
-                       "\"disjoint_output\"]}",
+                       "},\"contract_flags\":%u,\"contract\":[\"static\",\"dense\",\"%s\","
+                       "\"cmx\",\"disjoint_output\"%s]}",
                        index == 0 ? "" : ",", detail->invocation_index, detail->range_index,
                        detail->input_count, detail->parameter_base, detail->element_count,
                        detail->span_bytes, detail->extent_file_offset, detail->old_extent,
                        detail->new_extent, detail->addend_file_offset, detail->old_addend,
-                       detail->new_addend)) {
+                       detail->new_addend, detail->contract_flags, precision, scalar_contract)) {
       free(writer.data);
       return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR, "patchblob.report",
                                      "patch report buffer was too small");

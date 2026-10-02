@@ -492,11 +492,16 @@ FP16 patched blob  b3b2e4097d7408e8451780e5840e1c38ca05f49ed16f3d79c6d538f6ab8b2
 and custom code can reuse a one-element input across every element of an
 invocation-local output chunk.
 
-**Still open:** non-scalar broadcasting, different axes and ranks, other
-shapes and operators, other compiler versions, and a stable public target
-contract with per-record type/count/span expectations. Current `patchblob`
-discovery fails closed with `input tensor does not match the expected element
-contract`; this experiment does not enable public broadcasting support.
+`patchblob` now represents this exact layout with the
+`PATCHBLOB_CONTRACT_INPUT_1_SCALAR` bit. The ordinary element count and span
+continue to describe input 0 and the output; validation requires input 1 to be
+one same-precision element. The stable structure did not need to change, and
+older uniform contracts remain unchanged.
+
+**Still open:** non-scalar broadcasting, different input positions, axes and
+ranks, other shapes and operators, other compiler versions, and a general
+per-record type/count/span target model. This narrowly implemented contract
+does not enable general broadcasting support.
 
 ## What remains deliberately unresolved
 

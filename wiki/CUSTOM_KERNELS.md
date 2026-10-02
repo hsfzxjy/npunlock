@@ -96,18 +96,19 @@ Within each record, the fields used by the examples are:
 ```
 
 `patchblob` validates the rest of the observed contract before installation:
-static dimensions, dense strides, supported precision, matching element
-counts and spans, CMX placement, and a disjoint output.
+static dimensions, dense strides, supported precision, declared element counts
+and spans, CMX placement, and a disjoint output.
 
 ## Supported precision
 
-Static dense FP16 is the primary custom-kernel contract. Both unary and a
-narrow two-input layout have been executed successfully.
+Static dense FP16 is the primary custom-kernel contract. Both unary and narrow
+two-input layouts have been executed successfully.
 
-FP32 custom execution is limited to the validated unary accuracy-mode path.
-The Python frontend adds the required precision-preservation metadata and
-compiler flag automatically for an FP32 custom node. This does not establish
-general FP32 carriers or FP32 multi-input support.
+FP32 custom execution includes the validated unary accuracy-mode path and one
+same-precision two-input carrier with a scalar second input. The Python
+frontend adds the required precision-preservation metadata and compiler flag
+automatically for an FP32 custom node. This does not establish general FP32
+carriers or multi-input support.
 
 Although the symbolic IR serializer accepts additional data-type names, that
 does not make them valid custom-kernel or `Program.run()` contracts.
@@ -144,11 +145,26 @@ For a single-output custom operation, omitted `_shape` and `_dtype` values are
 inherited from the first input. Supply either override only when that part of
 the output contract differs and the carrier layout has been independently
 validated, or use `_outputs` to describe multiple outputs. The established
-automatic path remains same-shape and same-dtype.
+automatic path normally remains same-shape and same-dtype; the scalar-second-
+input exception is described below.
 
 The carrier's compiled arity and tensor layout must match the C entry. `Abs`
-is used by the validated unary examples. The validated two-input example uses
-`Maximum` for one exact static FP16 graph.
+is used by the validated unary examples. `Maximum` is used by the validated
+two-input carriers.
+
+The one supported unequal-count layout has an ordinary first input and output,
+plus a one-element second input of the same precision. Its C loop still uses
+the output chunk's `invocation.element_count`, but reads the second input only
+at index zero:
+
+```c
+for (unsigned i = 0; i < invocation.element_count; ++i) {
+    output[i] = input_0[i] * scale + input_1[0];
+}
+```
+
+Do not index the scalar with `i`. No other broadcasting layout is currently
+part of the public contract.
 
 Automatic positional mapping normally maps one computational node to one ACT
 group. A large custom operation may use several consecutive compatible groups

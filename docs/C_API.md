@@ -211,10 +211,18 @@ mutation, and returns a new blob plus a JSON preservation report.
 
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
-carrier. Controlled experiments have executed both FP32-input/FP16-output and
-FP16-input/FP32-output ACT kernels, but this public structure cannot express
-their separate record spans or precisions and therefore does not make
-conversion groups patch-compatible.
+carrier and same-precision scalar-second-input binary carrier. Controlled
+experiments have executed both FP32-input/FP16-output and FP16-input/FP32-output
+ACT kernels, but this public structure cannot express their separate record
+spans or precisions and therefore does not make conversion groups
+patch-compatible.
+
+`PATCHBLOB_CONTRACT_INPUT_1_SCALAR` describes the one supported unequal-count
+case. It is valid only for two-input, same-precision targets: input 0 and the
+output use `expected_element_count` and `expected_span_bytes`, while input 1
+must be one element with the corresponding two-byte FP16 or four-byte FP32
+span. Discovery sets this bit only for that exact observed layout. It does not
+enable general broadcasting or arbitrary per-input contracts.
 
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release

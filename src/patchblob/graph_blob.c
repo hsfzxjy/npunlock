@@ -552,15 +552,18 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
                         PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
   uint32_t precision_flags =
       target->required_contract_flags & (PATCHBLOB_CONTRACT_FP16 | PATCHBLOB_CONTRACT_FP32);
+  uint32_t scalar_flags = target->required_contract_flags & PATCHBLOB_CONTRACT_INPUT_1_SCALAR;
   uint32_t expected_dtype;
   if (target->invocation_index >= invocation_count ||
       target->range_index >= ranges->size / ACT_RANGE_SIZE || target->expected_input_count > 8u) {
     return unsupported(diagnostic, "selected invocation or range index is outside the ACT carrier");
   }
   if ((precision_flags != PATCHBLOB_CONTRACT_FP16 && precision_flags != PATCHBLOB_CONTRACT_FP32) ||
-      target->required_contract_flags != (base_flags | precision_flags)) {
+      target->required_contract_flags != (base_flags | precision_flags | scalar_flags) ||
+      (scalar_flags != 0u &&
+       (target->expected_input_count != 2u || target->expected_element_count <= 1u))) {
     return unsupported(diagnostic,
-                       "MVP requires a complete static dense FP16 or FP32 CMX disjoint contract");
+                       "target requires the observed static dense FP16/FP32 CMX contract");
   }
   expected_dtype =
       precision_flags == PATCHBLOB_CONTRACT_FP16 ? NPUNLOCK_DTYPE_F16 : NPUNLOCK_DTYPE_F32;
@@ -596,13 +599,19 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
     }
   }
   for (index = 0; index < target->expected_input_count; ++index) {
+    uint64_t expected_element_count = target->expected_element_count;
+    uint64_t expected_span_bytes = target->expected_span_bytes;
     npunlock_status status =
         validate_memref(layout, base + (uint64_t)index * MEMREF_SIZE, &inputs[index], diagnostic);
     if (status != NPUNLOCK_STATUS_OK) {
       return status;
     }
-    if (inputs[index].element_count != target->expected_element_count ||
-        inputs[index].span_bytes != target->expected_span_bytes ||
+    if (index == 1u && scalar_flags != 0u) {
+      expected_element_count = 1u;
+      expected_span_bytes = dtype_table[expected_dtype].size_bytes;
+    }
+    if (inputs[index].element_count != expected_element_count ||
+        inputs[index].span_bytes != expected_span_bytes ||
         inputs[index].dtype_kind != expected_dtype) {
       return unsupported(diagnostic, "input tensor does not match the expected element contract");
     }
@@ -641,6 +650,7 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
   detail->parameter_base = base;
   detail->element_count = target->expected_element_count;
   detail->span_bytes = target->expected_span_bytes;
+  detail->contract_flags = target->required_contract_flags;
   detail->extent_file_offset = range_offset + 0x0cu;
   detail->old_extent = read_u32(layout->blob.data + detail->extent_file_offset);
   return NPUNLOCK_STATUS_OK;
@@ -737,6 +747,8 @@ npunlock_status npunlock_discover_graph_targets(npunlock_view graph_blob,
     npunlock_patch_detail detail;
     graph_relocation range_relocation;
     memref_contract first_input;
+    memref_contract second_input;
+    memref_contract output;
     uint64_t base = parameter_bases[index];
     uint64_t limit =
         invocation_parameter_limit(parameter_bases, invocation_count, base, params->size);
@@ -768,6 +780,24 @@ npunlock_status npunlock_discover_graph_targets(npunlock_view graph_blob,
         PATCHBLOB_CONTRACT_DISJOINT_OUTPUT |
         (first_input.dtype_kind == NPUNLOCK_DTYPE_F16 ? PATCHBLOB_CONTRACT_FP16
                                                       : PATCHBLOB_CONTRACT_FP32);
+    if (target->expected_input_count == 2u) {
+      status = validate_memref(&layout, base + MEMREF_SIZE, &second_input, diagnostic);
+      if (status != NPUNLOCK_STATUS_OK) {
+        goto fail;
+      }
+      status = validate_memref(&layout, base + 2u * MEMREF_SIZE, &output, diagnostic);
+      if (status != NPUNLOCK_STATUS_OK) {
+        goto fail;
+      }
+      if (first_input.element_count > 1u && second_input.dtype_kind == first_input.dtype_kind &&
+          second_input.element_count == 1u &&
+          second_input.span_bytes == dtype_table[first_input.dtype_kind].size_bytes &&
+          output.dtype_kind == first_input.dtype_kind &&
+          output.element_count == first_input.element_count &&
+          output.span_bytes == first_input.span_bytes) {
+        target->required_contract_flags |= PATCHBLOB_CONTRACT_INPUT_1_SCALAR;
+      }
+    }
     status =
         validate_target(&layout, parameter_bases, invocation_count, target, &detail, diagnostic);
     if (status != NPUNLOCK_STATUS_OK) {

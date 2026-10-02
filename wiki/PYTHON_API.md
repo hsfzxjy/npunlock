@@ -115,6 +115,13 @@ partitions one large custom operation into several consecutive groups,
 `npunlock` also accepts them when one unique exact-cover mapping can be proven
 from the declared output size and the groups' compatible ABI metadata.
 
+One unequal-input case is implemented: a static same-precision two-input
+carrier whose second input is a one-element scalar. Discovery records that
+layout explicitly, and the kernel reads the broadcast value as `input_1[0]`
+for every invocation-local output element. This has been executed with FP16
+and FP32 `[1,32]` data plus a `[1,1]` scalar. It does not imply support for
+other input positions, broadcast axes, shapes, or operators.
+
 ## Graphs
 
 Create a graph from declared inputs and one or more output tensors:

@@ -340,7 +340,9 @@ broadcast axes, and compiler versions remain unverified. The unmodified
 `Maximum` carrier produced invalid-looking output in this configuration, so
 the carrier is evidence for the custom entry ABI rather than for built-in
 operator semantics. The public patch target cannot express per-record counts
-and intentionally rejects this graph.
+in general; it represents this exact two-input case with
+`PATCHBLOB_CONTRACT_INPUT_1_SCALAR`. Discovery and patching remain restricted
+to a same-precision one-element second input.
 
 ## How `patchblob` substitutes code
 
@@ -393,8 +395,9 @@ the complete native ELF using `pfnGetNativeBinary2` before releasing the graph.
 Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
-- supported patch targets beyond the narrow same-precision FP16 and unary FP32
-  cases above (the mixed conversion is experimental ABI evidence only);
+- supported patch targets beyond the narrow same-precision FP16, unary FP32,
+  and scalar-second-input FP32 cases above (the mixed conversion is
+  experimental ABI evidence only);
 - general broadcasting or unequal binary input shapes beyond the experimental
   one-element scalar case above;
 - arbitrary compiler or graph-format versions;

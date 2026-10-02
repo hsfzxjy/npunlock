@@ -25,6 +25,8 @@ _Static_assert(sizeof(graphinfer_shared_tensor) == 32, "shared tensor ABI change
 _Static_assert(sizeof(graphinfer_session_infer_result) == 48,
                "session inference result ABI changed");
 _Static_assert(PATCHBLOB_CONTRACT_FP32 == (1u << 5), "FP32 contract flag ABI changed");
+_Static_assert(PATCHBLOB_CONTRACT_INPUT_1_SCALAR == (1u << 6),
+               "scalar-input contract flag ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&

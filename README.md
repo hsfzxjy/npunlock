@@ -138,7 +138,7 @@ reference.
 - compile user-written C into ACT-SHAVE machine code
 - run custom kernels inside Intel NPU graphs
 - static dense FP16 unary and two-input custom kernels
-- a verified unary FP32 path
+- verified unary and scalar-input binary FP32 paths
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers

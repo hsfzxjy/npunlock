@@ -15,6 +15,7 @@ included.
 | `add1-fp16.elf` | `3f9d52273870c2e911000da3c3bd474c0514bd297d29539a14e935b2b01de6d5` | Golden linked output produced from `add1-fp16.c` and `shave_kernel.ld` with caller-owned MoviTools; used by offline ELF/patch tests. |
 | `abs-add-1x16-tile1.blob` | `d4abc3c09cabdb14fd5090fa5d2e4d33f4aa755aad2bcad4f078acc891d26e07` | Project research artifact: unmodified NPU3720 ACT carrier graph used by the offline patch test. |
 | `abs-abs-1x32.blob` | `da8c205954f565c95845d9109558928d3c3e2c249c2c9942dc92b7ed60c4402c` | Project-generated NPU3720 carrier compiled with graph compiler 8.3 from a two-Abs static FP16 chain; verifies positional ACT-group discovery when adjacent operations share code. |
+| `maximum-broadcast-1x32-f16.blob` | `1c1bd31fb53d9338feca495739015d09bf82aae37486b36c2dcaed4d67ed90df` | Project-generated NPU3720 FP16 carrier compiled with graph compiler 8.3 from `[1,32]` data and a host-provided `[1,1]` second input; verifies the observed scalar-input contract. |
 | `add1-shared-1x16.blob` | `2010915f2d21e07d2afee613ffe8f38a9ce6e39523ab98e0762c1bd40e04d95f` | Golden graph produced by applying the confirmed two-range patch to the carrier; also used by the opt-in execution test. |
 
 The native graph blobs are narrow evidence fixtures for the observed NPU3720

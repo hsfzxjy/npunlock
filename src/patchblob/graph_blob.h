@@ -14,6 +14,7 @@ typedef struct npunlock_patch_detail {
   uint64_t parameter_base;
   uint64_t element_count;
   uint64_t span_bytes;
+  uint32_t contract_flags;
   size_t extent_file_offset;
   size_t addend_file_offset;
   uint32_t old_extent;

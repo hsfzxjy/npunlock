@@ -15,8 +15,8 @@ output does not match that contract.
 | SHAVE target | `3720xx` |
 | graph compiler | current path validated with version 8.3 |
 | primary custom tensors | static, dense FP16 |
-| FP32 | validated unary accuracy-mode carrier only |
-| binary custom kernel | one static dense FP16 carrier family, including independent host inputs |
+| FP32 | validated unary accuracy-mode carrier and one same-precision scalar-input binary carrier |
+| binary custom kernel | static dense FP16 carriers with uniform inputs or a scalar second input; one FP32 scalar-input carrier |
 | kernel image | one linked executable image, shareable by selected ranges |
 | execution | installed Intel NPU driver through Level Zero |
 
@@ -32,9 +32,8 @@ contract.
 There is no general support for:
 
 - arbitrary strides or layouts;
-- broadcasting or unequal binary input shapes (one static scalar-broadcast
-  carrier has been demonstrated experimentally, but the public target ABI
-  still rejects it);
+- broadcasting or unequal binary input shapes beyond the implemented static
+  same-precision case with a one-element second input;
 - arbitrary input/output aliasing;
 - arbitrary tensor arity; or
 - automatic layout conversion inside custom code.
@@ -90,11 +89,11 @@ self-contained code image and no data dependency.
 ## Precision
 
 Static dense FP16 is the established general MVP path. FP32 support is limited
-to the documented unary carrier with precision-conversion suppression and
-accuracy-mode graph compilation.
+to the documented unary carrier and one scalar-second-input binary carrier,
+both with precision-conversion suppression and accuracy-mode graph compilation.
 
-Other dtypes, mixed-precision custom groups, FP32 binary kernels through the
-public patch API, and implicit dtype conversion are unsupported.
+Other dtypes, mixed-precision custom groups, FP32 binary kernels beyond the
+scalar-second-input carrier, and implicit dtype conversion are unsupported.
 
 One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those
@@ -111,9 +110,9 @@ group-to-partition mapping unsafe without more scheduling evidence.
 A later `[1,32]` binary-carrier experiment preserved a host-provided `[1,1]`
 operand as one scalar ACT descriptor beside eight-element input/output chunks.
 Custom FP16 and FP32 kernels read that scalar and matched two 32-element host
-oracles exactly. This is evidence for one scalar-broadcast execution contract,
-not product support: the public target model cannot describe different counts
-for individual records, and discovery intentionally rejects the carrier.
+oracles exactly. Discovery and patching now support that exact contract through
+`PATCHBLOB_CONTRACT_INPUT_1_SCALAR`. Other unequal shapes, scalar positions,
+broadcast axes, and per-record contracts remain unsupported.
 
 ## Software dependencies
 
