@@ -188,8 +188,11 @@ binary kernel:
 ```
 
 Both internal operands and two independently bound host inputs have been
-validated for a narrow static dense FP16 binary carrier. This does not imply
-broadcasting, unequal shapes, or arbitrary input counts.
+validated for a narrow static dense FP16 binary carrier. A separate
+experimental FP16/FP32 carrier presented eight-element data and output chunks
+beside a one-element scalar input; reading `input_b[0]` for every output
+matched the host oracle. This establishes one scalar-broadcast contract, not
+general broadcasting, unequal shapes, or arbitrary input counts.
 
 ## Invocation-local execution
 
@@ -258,7 +261,8 @@ Do not infer support for:
 - multiple executable images or alternate entry addresses;
 - high pointer halves;
 - dynamic shapes, non-dense layouts, or arbitrary precisions;
-- broadcasting, unequal binary shapes, or arbitrary arity;
+- general broadcasting, unequal binary shapes beyond the tested scalar case,
+  or arbitrary arity;
 - graph-global neighborhoods or cross-chunk halos;
 - large stacks, exceptions, or a C++ runtime; or
 - SHAVE targets other than `3720xx`.

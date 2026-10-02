@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-01:** A two-input custom ACT kernel consumed FP32 data and I32 indices from one invocation, matching all 32 outputs on both NPU tiles across two input sets. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#13-mixed-dtype-two-input-act-kernels-work).
+> **Latest breakthrough — 2026-10-02:** Scalar broadcast inputs remain one-element ACT descriptors rather than expanded tensors; custom FP16 and FP32 kernels used them to match all 32 outputs exactly. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#14-scalar-broadcast-inputs-remain-scalar).
 
 ## Quick example
 

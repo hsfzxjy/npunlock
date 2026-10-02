@@ -220,11 +220,11 @@ binary operation: input A at +0x00, input B at +0x28, output at +0x50
 ```
 
 An FP16 span is `element_count * 2`; an FP32 span is
-`element_count * 4`. Inputs and output must describe matching element counts,
-and the output span must not alias an input span. The currently supported
-patch-target ABI additionally requires every record to use one precision and
-one byte span. That is a product constraint, not a universal record rule; the
-mixed conversion observation below demonstrates unequal input/output spans.
+`element_count * 4`. The output span must not alias an input span. The
+currently supported patch-target ABI requires all inputs and the output to
+describe matching element counts, one precision, and one byte span. Those are
+product constraints, not universal record rules: the experimental conversion
+and scalar-broadcast observations below demonstrate unequal spans and counts.
 
 ## Validated examples
 
@@ -311,6 +311,37 @@ configuration, so this is custom-entry ABI evidence rather than a claim that
 the carrier operator itself works. The public patch target intentionally
 rejects the I32 descriptor.
 
+### Experimental scalar-broadcast input
+
+Static `[1,32]` `Maximum` carriers with host-provided `[1,1]` scalar inputs
+were compiled in FP16 and FP32 accuracy mode. In both precisions, the compiler
+emitted four invocations with this descriptor shape:
+
+| Parameter offset | Role | Count | FP32 span | FP16 span |
+| ---: | --- | ---: | ---: | ---: |
+| `+0x00` | data input | 8 | 32 bytes | 16 bytes |
+| `+0x28` | scalar input | 1 | 4 bytes | 2 bytes |
+| `+0x50` | output | 8 | 32 bytes | 16 bytes |
+
+The scalar was not expanded into an eight-element CMX tensor. Invocations 0
+and 2 reused one scalar address on tile 0; invocations 1 and 3 reused the
+corresponding address on tile 1. A custom kernel read `scalar[0]` and computed
+`data[i] * 1.375 - scalar[0] * 0.625`. Replacing all four ranges matched every
+host-oracle value exactly for linear and irregular inputs in both precisions.
+
+Incremental replacement exposed the output partitions. Range order was
+interleaved by tile: ranges 0, 1, 2, and 3 controlled output positions 0–7,
+16–23, 8–15, and 24–31 respectively. This is distinct from the full-tensor
+tile replicas observed in the conversion and mixed-dtype probes.
+
+This confirms one scalar-broadcast descriptor and execution contract, not
+general broadcasting. Other scalar positions, dimensions, shapes, operators,
+broadcast axes, and compiler versions remain unverified. The unmodified
+`Maximum` carrier produced invalid-looking output in this configuration, so
+the carrier is evidence for the custom entry ABI rather than for built-in
+operator semantics. The public patch target cannot express per-record counts
+and intentionally rejects this graph.
+
 ## How `patchblob` substitutes code
 
 The supported mutation is deliberately narrow:
@@ -364,7 +395,8 @@ Do not infer support for:
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16 and unary FP32
   cases above (the mixed conversion is experimental ABI evidence only);
-- broadcasting or unequal binary input shapes;
+- general broadcasting or unequal binary input shapes beyond the experimental
+  one-element scalar case above;
 - arbitrary compiler or graph-format versions;
 - nonempty `KernelData` for custom kernels;
 - unresolved data/code fixups or helper runtimes;

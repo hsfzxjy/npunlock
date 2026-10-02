@@ -178,8 +178,9 @@ two-input kernels, local indexing within the advertised invocation span, and
 independently bound graph inputs.
 
 **Open:** cross-invocation reads, halo exchange, graph-global coordinates,
-broadcasting, unequal input shapes, and the maximum local span. The 4096-byte
-result is a tested lower bound, not a limit or a general memory-access promise.
+general broadcasting and unequal input shapes beyond the scalar case in
+section 14, and the maximum local span. The 4096-byte result is a tested lower
+bound, not a limit or a general memory-access promise.
 
 ## 8. Graphs can be compiled without loading OpenVINO
 
@@ -425,11 +426,77 @@ its 256-byte executable image SHA-256 was
 `cdb3cff513f856fd2908fafa8d0fb84b2d39240db629d2037cabd4fb779fb01c`.
 
 **Still open:** integer-valued host graph inputs, other integer widths and
-signedness, negative or out-of-range indexing, unequal element counts,
-broadcasting, additional layouts, and a public target model capable of
-describing each record independently. `patchblob` continues to reject this
-carrier because its supported target contract is intentionally limited to
-uniform FP16 or FP32 records.
+signedness, negative or out-of-range indexing, additional layouts, and a
+public target model capable of describing each record independently.
+`patchblob` continues to reject this carrier because its supported target
+contract is intentionally limited to uniform FP16 or FP32 records. Section 14
+tests one unequal-count scalar-broadcast contract.
+
+## 14. Scalar broadcast inputs remain scalar
+
+On 2026-10-02, static `[1,32]` `Maximum` graphs were compiled with a second,
+host-provided `[1,1]` input and NumPy-style broadcasting. FP32 and FP16
+carriers both exposed four ACT invocations. Each invocation described eight
+data elements, one scalar element, and eight output elements:
+
+| Offset | Role | Count | FP32 span | FP16 span |
+| ---: | --- | ---: | ---: | ---: |
+| `+0x00` | data input | 8 | 32 bytes | 16 bytes |
+| `+0x28` | scalar input | 1 | 4 bytes | 2 bytes |
+| `+0x50` | output | 8 | 32 bytes | 16 bytes |
+
+The compiler therefore preserved the broadcast operand as a genuine scalar
+descriptor rather than expanding it into a full local tensor. The two tile-0
+invocations shared one scalar CMX address, and the two tile-1 invocations
+shared the corresponding address at the observed `0x200000` tile delta.
+
+The replacement kernel used both inputs for every output:
+
+```text
+output[i] = 1.375 * data[i] - 0.625 * scalar[0]
+```
+
+After all four ranges selected the replacement image, FP32 and FP16 execution
+each matched all 32 host-oracle values exactly for a linear and an irregular
+input. Incremental replacements also mapped the range schedule:
+
+| Replaced ranges | Output positions matching the custom oracle |
+| --- | --- |
+| 0 | 0–7 |
+| 0, 1 | 0–7 and 16–23 |
+| 0, 1, 2 | 0–23 |
+| 0, 1, 2, 3 | 0–31 |
+
+Invocation records identify ranges 0 and 2 as tile 0, and ranges 1 and 3 as
+tile 1. The output slices show that these four invocations are partitions,
+interleaved by tile in range order, rather than full-tensor replicas.
+
+The unmodified compiler-generated `Maximum` implementation produced
+invalid-looking values in this configuration. As with the earlier
+`GatherElements` carrier, the graph is used only as an invocation and
+scheduling envelope; correctness is established against the replacement
+kernel's independent oracle.
+
+Evidence hashes:
+
+```text
+FP32 carrier blob  08f2e5055e7d7fa6735188625d527d7c27af06613ba5790136afe538168e48dd
+FP32 kernel ELF    24f134a5219e32765910808c5607d251d16adb2c47a0e23dc178f7983f70411e
+FP32 patched blob  d72413dcc6f51a3708265c573fc8006a6b40b9cfe27a9e7d4180cb92fe8c693b
+FP16 carrier blob  1c1bd31fb53d9338feca495739015d09bf82aae37486b36c2dcaed4d67ed90df
+FP16 kernel ELF    2eaa6dd0c31ce3583aa90b8a55ebfaeaec139efade844fd7d9a8349e5e26d2b0
+FP16 patched blob  b3b2e4097d7408e8451780e5840e1c38ca05f49ed16f3d79c6d538f6ab8b2a50
+```
+
+**Confirmed for these two carriers:** unequal descriptor counts are valid,
+and custom code can reuse a one-element input across every element of an
+invocation-local output chunk.
+
+**Still open:** non-scalar broadcasting, different axes and ranks, other
+shapes and operators, other compiler versions, and a stable public target
+contract with per-record type/count/span expectations. Current `patchblob`
+discovery fails closed with `input tensor does not match the expected element
+contract`; this experiment does not enable public broadcasting support.
 
 ## What remains deliberately unresolved
 

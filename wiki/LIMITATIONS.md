@@ -32,8 +32,9 @@ contract.
 There is no general support for:
 
 - arbitrary strides or layouts;
-- broadcasting;
-- unequal binary input shapes;
+- broadcasting or unequal binary input shapes (one static scalar-broadcast
+  carrier has been demonstrated experimentally, but the public target ABI
+  still rejects it);
 - arbitrary input/output aliasing;
 - arbitrary tensor arity; or
 - automatic layout conversion inside custom code.
@@ -92,8 +93,8 @@ Static dense FP16 is the established general MVP path. FP32 support is limited
 to the documented unary carrier with precision-conversion suppression and
 accuracy-mode graph compilation.
 
-Other dtypes, mixed-precision custom groups, FP32 binary kernels, and implicit
-dtype conversion are unsupported.
+Other dtypes, mixed-precision custom groups, FP32 binary kernels through the
+public patch API, and implicit dtype conversion are unsupported.
 
 One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those
@@ -106,6 +107,13 @@ the public `patchblob_target` has only one precision flag and one span, so
 discovery still rejects this unequal-span contract. The test also found a matching full-tensor
 range that was not observable at the selected graph output, making automatic
 group-to-partition mapping unsafe without more scheduling evidence.
+
+A later `[1,32]` binary-carrier experiment preserved a host-provided `[1,1]`
+operand as one scalar ACT descriptor beside eight-element input/output chunks.
+Custom FP16 and FP32 kernels read that scalar and matched two 32-element host
+oracles exactly. This is evidence for one scalar-broadcast execution contract,
+not product support: the public target model cannot describe different counts
+for individual records, and discovery intentionally rejects the carrier.
 
 ## Software dependencies
 
