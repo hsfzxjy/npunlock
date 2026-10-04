@@ -182,6 +182,13 @@ build tree.
 The package is not currently documented as a PyPI release; installation is
 from the checked-out source tree.
 
+Scheduled and manually dispatched GitHub releases keep the public release tag
+format `YYYY-MM-DD.ii`. Their wheel uses the ordered PEP 440 post-release form
+`0.1.0.postYYYYMMDDii`, so two same-day snapshots and later daily snapshots are
+distinct upgrades rather than repeated `0.1.0` files. Ordinary source builds
+retain the base `0.1.0` version. `NPUNLOCK_PACKAGE_VERSION` is reserved for the
+release workflow's isolated wheel build.
+
 ## Source layout
 
 ```text

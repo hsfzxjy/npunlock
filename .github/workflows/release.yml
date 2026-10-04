@@ -18,6 +18,8 @@ jobs:
     outputs:
       publish: ${{ steps.check.outputs.publish }}
       previous_tag: ${{ steps.check.outputs.previous_tag }}
+      release_tag: ${{ steps.check.outputs.release_tag }}
+      package_version: ${{ steps.check.outputs.package_version }}
 
     steps:
       - name: Check out source and tags
@@ -37,6 +39,8 @@ jobs:
             jq -r '[.[] | select(.draft == false)] | first | .tag_name // ""' <<<"${releases}"
           )"
           publish=true
+          release_tag=""
+          package_version=""
 
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" && -n "${previous_tag}" ]]; then
             if ! git rev-parse --verify --quiet "${previous_tag}^{commit}" >/dev/null; then
@@ -48,8 +52,35 @@ jobs:
             fi
           fi
 
+          if [[ "${publish}" == "true" ]]; then
+            release_date="$(date -u +%F)"
+            max_index=-1
+
+            while IFS= read -r tag; do
+              suffix="${tag#${release_date}.}"
+              if [[ "${tag}" == "${release_date}."* && "${suffix}" =~ ^[0-9]+$ ]]; then
+                index=$((10#${suffix}))
+                if ((index > max_index)); then
+                  max_index=${index}
+                fi
+              fi
+            done < <(
+              {
+                git tag --list "${release_date}.*"
+                jq -r --arg prefix "${release_date}." \
+                  '.[] | select(.tag_name | startswith($prefix)) | .tag_name' <<<"${releases}"
+              } | sort -u
+            )
+
+            printf -v release_index '%02d' "$((max_index + 1))"
+            release_tag="${release_date}.${release_index}"
+            package_version="0.1.0.post${release_date//-/}${release_index}"
+          fi
+
           echo "publish=${publish}" >>"${GITHUB_OUTPUT}"
           echo "previous_tag=${previous_tag}" >>"${GITHUB_OUTPUT}"
+          echo "release_tag=${release_tag}" >>"${GITHUB_OUTPUT}"
+          echo "package_version=${package_version}" >>"${GITHUB_OUTPUT}"
 
   windows:
     needs: check
@@ -91,18 +122,25 @@ jobs:
             -DestinationPath build\release-assets\npunlock-windows-x64.zip
 
       - name: Build Windows Python wheel
+        env:
+          NPUNLOCK_PACKAGE_VERSION: ${{ needs.check.outputs.package_version }}
         run: python -m pip wheel . --no-deps --wheel-dir build\wheel-dist
 
       - name: Collect Windows wheel
         shell: pwsh
+        env:
+          EXPECTED_PACKAGE_VERSION: ${{ needs.check.outputs.package_version }}
         run: |
           $wheel = Get-ChildItem build\wheel-dist\npunlock-*-win_amd64.whl
           if ($wheel.Count -ne 1) {
             throw "Expected exactly one Windows x64 wheel, found $($wheel.Count)."
           }
+          if ($wheel.Name -notlike "npunlock-$env:EXPECTED_PACKAGE_VERSION-*") {
+            throw "Wheel $($wheel.Name) does not contain expected version $env:EXPECTED_PACKAGE_VERSION."
+          }
           Copy-Item -LiteralPath $wheel.FullName -Destination build\release-assets
           python -m pip install --force-reinstall --no-deps $wheel.FullName
-          python -c "from npunlock._native import NativeLibraries; NativeLibraries(); print('bundled runtime loaded')"
+          python -c "import importlib.metadata; from npunlock._native import NativeLibraries; assert importlib.metadata.version('npunlock') == '$env:EXPECTED_PACKAGE_VERSION'; NativeLibraries(); print('versioned bundled runtime loaded')"
 
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v7
@@ -194,41 +232,12 @@ jobs:
           name: environment-prober-release-asset
           path: release-assets
 
-      - name: Choose the UTC release name
-        id: release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          release_date="$(date -u +%F)"
-          releases="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
-          max_index=-1
-
-          while IFS= read -r tag; do
-            suffix="${tag#${release_date}.}"
-            if [[ "${tag}" == "${release_date}."* && "${suffix}" =~ ^[0-9]+$ ]]; then
-              index=$((10#${suffix}))
-              if ((index > max_index)); then
-                max_index=${index}
-              fi
-            fi
-          done < <(
-            {
-              git tag --list "${release_date}.*"
-              jq -r --arg prefix "${release_date}." \
-                '.[] | select(.tag_name | startswith($prefix)) | .tag_name' <<<"${releases}"
-            } | sort -u
-          )
-
-          printf -v release_tag '%s.%02d' "${release_date}" "$((max_index + 1))"
-          echo "release_tag=${release_tag}" >>"${GITHUB_OUTPUT}"
-
       - name: Generate release notes
         shell: bash
         env:
           PREVIOUS_TAG: ${{ needs.check.outputs.previous_tag }}
-          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          RELEASE_TAG: ${{ needs.check.outputs.release_tag }}
+          PACKAGE_VERSION: ${{ needs.check.outputs.package_version }}
         run: |
           set -euo pipefail
           notes="release-notes.md"
@@ -236,6 +245,7 @@ jobs:
 
           {
             echo "Built from [\`${short_sha}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo "Python wheel version: \`${PACKAGE_VERSION}\`."
             echo
             echo "## New commits compared with the previous release"
             echo
@@ -300,7 +310,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          RELEASE_TAG: ${{ needs.check.outputs.release_tag }}
         run: |
           set -euo pipefail
           cd release-assets

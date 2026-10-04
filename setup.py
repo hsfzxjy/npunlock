@@ -87,4 +87,7 @@ class BdistWheel(bdist_wheel):
         return "py3", "none", platform
 
 
-setup(cmdclass={"build_py": BuildPy, "bdist_wheel": BdistWheel})
+setup(
+    version=os.environ.get("NPUNLOCK_PACKAGE_VERSION", "0.1.0"),
+    cmdclass={"build_py": BuildPy, "bdist_wheel": BdistWheel},
+)
