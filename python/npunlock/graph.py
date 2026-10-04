@@ -16,6 +16,25 @@ _RESERVED = {
     "_patch_targets",
 }
 
+_SAME_SPEC_UNARY = {
+    "Abs",
+    "Exp",
+    "Log",
+    "Relu",
+    "Sigmoid",
+    "Sqrt",
+    "Tanh",
+}
+
+_SAME_SPEC_BINARY = {
+    "Add",
+    "Divide",
+    "Maximum",
+    "Minimum",
+    "Multiply",
+    "Subtract",
+}
+
 
 @dataclass(slots=True, eq=False)
 class Node:
@@ -40,7 +59,11 @@ def _validate_operator_name(name: object) -> str:
     return name
 
 
-def _output_specs(metadata: Mapping[str, object]) -> tuple[TensorSpec, ...]:
+def _output_specs(
+    operator: str,
+    inputs: tuple[Tensor, ...],
+    metadata: Mapping[str, object],
+) -> tuple[TensorSpec, ...]:
     outputs = metadata.get("_outputs")
     if outputs is not None:
         if metadata.get("_shape") is not None or metadata.get("_dtype") is not None:
@@ -55,9 +78,20 @@ def _output_specs(metadata: Mapping[str, object]) -> tuple[TensorSpec, ...]:
         if not specs:
             raise ValueError("_outputs must not be empty")
         return specs
-    if "_shape" not in metadata or "_dtype" not in metadata:
-        raise ValueError("dynamic operators require _shape and _dtype, or _outputs")
-    return (TensorSpec(metadata["_shape"], metadata["_dtype"]),)
+    has_shape = "_shape" in metadata
+    has_dtype = "_dtype" in metadata
+    if has_shape or has_dtype:
+        if not has_shape or not has_dtype:
+            raise ValueError("ordinary operator overrides require both _shape and _dtype")
+        return (TensorSpec(metadata["_shape"], metadata["_dtype"]),)
+    if operator in _SAME_SPEC_UNARY and len(inputs) == 1:
+        return (inputs[0].spec,)
+    if operator in _SAME_SPEC_BINARY and len(inputs) == 2 and inputs[0].spec == inputs[1].spec:
+        return (inputs[0].spec,)
+    raise ValueError(
+        f"operator {operator!r} requires _shape and _dtype, or _outputs; "
+        "automatic inference is limited to documented same-spec operators"
+    )
 
 
 def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tensor, ...]:
@@ -68,7 +102,7 @@ def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tenso
     unknown_metadata = set(metadata) - _RESERVED
     if unknown_metadata:
         raise TypeError(f"unknown npunlock metadata: {sorted(unknown_metadata)!r}")
-    specs = _output_specs(metadata)
+    specs = _output_specs(operator, tuple(inputs), metadata)
     node_name = metadata.get("_name")
     if node_name is not None and not isinstance(node_name, str):
         raise TypeError("_name must be a string or None")

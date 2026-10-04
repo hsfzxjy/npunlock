@@ -28,7 +28,7 @@ an operator factory, so the package does not maintain a runtime operator
 registry:
 
 ```python
-y = npu.Abs(x, _shape=x.shape, _dtype=x.dtype, _name="absolute")
+y = npu.Abs(x, _name="absolute")
 z = npu.SomeDriverSupportedOp(
     y,
     alpha=0.5,
@@ -49,9 +49,17 @@ ordinary keyword arguments     serialized operator attributes
 underscore keyword arguments   npunlock metadata
 ```
 
-For a single output, `_shape` and `_dtype` are required because `npunlock`
-does not implement general operator shape inference. Multiple outputs use
-`_outputs`:
+`npunlock` performs conservative output-spec inference for these operations:
+
+- shape-preserving unary `Abs`, `Exp`, `Log`, `Relu`, `Sigmoid`, `Sqrt`, and
+  `Tanh` inherit their one input's shape and dtype;
+- elementwise `Add`, `Divide`, `Maximum`, `Minimum`, `Multiply`, and `Subtract`
+  inherit a result only when their two symbolic input specs match exactly.
+
+This is frontend convenience, not general graph or broadcasting inference.
+Unknown operations, mismatched elementwise inputs, and shape-changing
+operations still require both `_shape` and `_dtype`. Explicit metadata remains
+available as an override. Multiple outputs use `_outputs`:
 
 ```python
 a, b = npu.SomeOp(

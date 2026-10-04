@@ -47,8 +47,8 @@ def main() -> None:
     x = npu.input("x", shape=shape, dtype="f16")
     y = npu.input("y", shape=shape, dtype="f16")
 
-    abs_x = npu.Abs(x, _shape=shape, _dtype="f16", _name="abs_x")
-    abs_y = npu.Abs(y, _shape=shape, _dtype="f16", _name="abs_y")
+    abs_x = npu.Abs(x, _name="abs_x")
+    abs_y = npu.Abs(y, _name="abs_y")
     mixed = npu.custom(
         abs_x,
         abs_y,
@@ -56,7 +56,7 @@ def main() -> None:
         carrier="Maximum",
         _name="weighted_mix",
     )
-    output = npu.Sqrt(mixed, _shape=shape, _dtype="f16", _name="output")
+    output = npu.Sqrt(mixed, _name="output")
 
     graph = npu.Graph(
         inputs=[x, y],

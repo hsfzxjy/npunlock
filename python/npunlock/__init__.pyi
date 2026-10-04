@@ -205,13 +205,13 @@ def load_native_file(
     timeout_ms: int = ...,
     libraries: Any = ...,
 ) -> Program: ...
-def Abs(x: Tensor, *, _shape: object, _dtype: object, _name: str | None = ...) -> Tensor: ...
+def Abs(x: Tensor, *, _shape: object = ..., _dtype: object = ..., _name: str | None = ...) -> Tensor: ...
 def Add(
     a: Tensor,
     b: Tensor,
     *,
-    _shape: object,
-    _dtype: object,
+    _shape: object = ...,
+    _dtype: object = ...,
     _name: str | None = ...,
     **attributes: object,
 ) -> Tensor: ...
@@ -229,8 +229,8 @@ def Multiply(
     a: Tensor,
     b: Tensor,
     *,
-    _shape: object,
-    _dtype: object,
+    _shape: object = ...,
+    _dtype: object = ...,
     _name: str | None = ...,
     **attributes: object,
 ) -> Tensor: ...

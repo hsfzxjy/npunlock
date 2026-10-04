@@ -52,8 +52,26 @@ class SymbolicTests(unittest.TestCase):
 
     def test_missing_output_contract_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "limited to documented same-spec operators"):
             npu.Unknown(x)
+
+    def test_documented_same_spec_operators_infer_output_contracts(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.input("y", shape=(1, 32), dtype="f16")
+
+        unary = npu.Sqrt(npu.Abs(x))
+        binary = npu.Maximum(x, y)
+
+        self.assertEqual(unary.spec, x.spec)
+        self.assertEqual(binary.spec, x.spec)
+
+    def test_same_spec_inference_rejects_mismatch_and_partial_override(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        different_shape = npu.input("different", shape=(1, 1), dtype="f16")
+        with self.assertRaisesRegex(ValueError, "requires _shape and _dtype"):
+            npu.Add(x, different_shape)
+        with self.assertRaisesRegex(ValueError, "require both _shape and _dtype"):
+            npu.Abs(x, _shape=x.shape)
 
     def test_custom_infers_single_output_contract_from_first_input(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
