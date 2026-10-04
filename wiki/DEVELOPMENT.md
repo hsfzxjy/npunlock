@@ -158,9 +158,12 @@ npurun build `
 ```
 
 `--patch-position` is a zero-based discovered ACT group, not a source node
-name. Explicit invocation/range and tensor-contract options exist for advanced
-validated layouts. The CLI argument overrides `NPUNLOCK_MOVITOOLS_DIR`; when
-the argument is omitted, the environment variable supplies the root.
+name. Positional selection first uses the original same-precision contract and
+automatically falls back to the per-tensor contract for supported unary
+FP32-to-FP16 and FP16-to-FP32 conversion groups. Explicit invocation/range and
+tensor-contract options retain the original same-precision contract. The CLI
+argument overrides `NPUNLOCK_MOVITOOLS_DIR`; when the argument is omitted, the
+environment variable supplies the root.
 
 The optional `--run-add1`, `--run-input`, and `--run-output` path is a narrow
 FP16 add-one oracle, not a general CLI semantic validator. General tensor

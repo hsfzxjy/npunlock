@@ -668,6 +668,7 @@ static int run_build(const build_arguments *build) {
   file_buffer run_input = {0};
   npunlock_view definition_views[MAX_DEFINITIONS];
   patchblob_target targets[MAX_TARGETS];
+  patchblob_target_v2 targets_v2[MAX_TARGETS];
   ir2blob_options ir_options = {0};
   shavecc_options shave_options = {0};
   patchblob_options patch_options = {0};
@@ -675,11 +676,13 @@ static int run_build(const build_arguments *build) {
   shavecc_result shave_result = {0};
   patchblob_result patch_result = {0};
   patchblob_discovery_result discovery_result = {0};
+  patchblob_discovery_result_v2 discovery_result_v2 = {0};
   graphinfer_result run_result = {0};
   build_provenance provenance = {0};
   npunlock_status status;
   size_t index;
   size_t selected_target_count = 0;
+  int use_v2_targets = 0;
   int success = 0;
 
   ir = read_file(build->ir_path, 0);
@@ -759,22 +762,48 @@ static int run_build(const build_arguments *build) {
   if (build->patch_position != PATCHBLOB_UNUSED_INDEX) {
     status = patchblob_discover_targets(
         (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size}, &discovery_result);
-    if (status != NPUNLOCK_STATUS_OK) {
-      print_diagnostic(&discovery_result.diagnostic);
-      goto cleanup;
-    }
-    if (build->patch_position >= discovery_result.group_count) {
-      fprintf(stderr, "--patch-position %u is outside the %zu discovered ACT groups\n",
-              build->patch_position, discovery_result.group_count);
-      goto cleanup;
-    }
-    for (index = 0; index < discovery_result.target_count; ++index) {
-      if (discovery_result.targets[index].group_index == build->patch_position) {
-        if (selected_target_count == MAX_TARGETS) {
-          fprintf(stderr, "selected ACT group exceeds the CLI target limit\n");
-          goto cleanup;
+    if (status == NPUNLOCK_STATUS_UNSUPPORTED) {
+      patchblob_discovery_result_release(&discovery_result);
+      status = patchblob_discover_targets_v2(
+          (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
+          &discovery_result_v2);
+      if (status != NPUNLOCK_STATUS_OK) {
+        print_diagnostic(&discovery_result_v2.diagnostic);
+        goto cleanup;
+      }
+      use_v2_targets = 1;
+      if (build->patch_position >= discovery_result_v2.group_count) {
+        fprintf(stderr, "--patch-position %u is outside the %zu discovered ACT groups\n",
+                build->patch_position, discovery_result_v2.group_count);
+        goto cleanup;
+      }
+      for (index = 0; index < discovery_result_v2.target_count; ++index) {
+        if (discovery_result_v2.targets[index].group_index == build->patch_position) {
+          if (selected_target_count == MAX_TARGETS) {
+            fprintf(stderr, "selected ACT group exceeds the CLI target limit\n");
+            goto cleanup;
+          }
+          targets_v2[selected_target_count++] = discovery_result_v2.targets[index].target;
         }
-        targets[selected_target_count++] = discovery_result.targets[index].target;
+      }
+    } else {
+      if (status != NPUNLOCK_STATUS_OK) {
+        print_diagnostic(&discovery_result.diagnostic);
+        goto cleanup;
+      }
+      if (build->patch_position >= discovery_result.group_count) {
+        fprintf(stderr, "--patch-position %u is outside the %zu discovered ACT groups\n",
+                build->patch_position, discovery_result.group_count);
+        goto cleanup;
+      }
+      for (index = 0; index < discovery_result.target_count; ++index) {
+        if (discovery_result.targets[index].group_index == build->patch_position) {
+          if (selected_target_count == MAX_TARGETS) {
+            fprintf(stderr, "selected ACT group exceeds the CLI target limit\n");
+            goto cleanup;
+          }
+          targets[selected_target_count++] = discovery_result.targets[index].target;
+        }
       }
     }
   } else {
@@ -794,10 +823,17 @@ static int run_build(const build_arguments *build) {
   patch_options.struct_size = sizeof(patch_options);
   patch_options.image_alignment = build->image_alignment;
   patch_options.tail_padding = build->tail_padding;
-  status = patchblob_patch(&patch_options,
-                           (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
-                           (npunlock_view){shave_result.elf.data, shave_result.elf.size}, targets,
-                           selected_target_count, &patch_result);
+  if (use_v2_targets) {
+    status = patchblob_patch_v2(
+        &patch_options, (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
+        (npunlock_view){shave_result.elf.data, shave_result.elf.size}, targets_v2,
+        selected_target_count, &patch_result);
+  } else {
+    status = patchblob_patch(&patch_options,
+                             (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
+                             (npunlock_view){shave_result.elf.data, shave_result.elf.size}, targets,
+                             selected_target_count, &patch_result);
+  }
   if (status != NPUNLOCK_STATUS_OK) {
     print_diagnostic(&patch_result.diagnostic);
     goto cleanup;
@@ -845,6 +881,7 @@ static int run_build(const build_arguments *build) {
 
 cleanup:
   graphinfer_result_release(&run_result);
+  patchblob_discovery_result_v2_release(&discovery_result_v2);
   patchblob_discovery_result_release(&discovery_result);
   patchblob_result_release(&patch_result);
   shavecc_result_release(&shave_result);
