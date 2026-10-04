@@ -260,7 +260,36 @@ See
 for a complete graph whose independent FP32 and FP16 branches require explicit
 binding because the compiler's ACT order differs from symbolic output order.
 
-## Save and load native graphs
+## Export and load a program bundle
+
+Use a self-describing `.npunlock` bundle when another process or machine needs
+to execute a compiled program without reconstructing its symbolic `Graph`:
+
+```python
+program.export("my_program.npunlock")
+
+loaded = npu.load("my_program.npunlock")
+output = loaded.run({"x": input_value})
+```
+
+The versioned bundle contains the patched native graph, static input/output
+names, shapes and dtypes, SHA-256 hashes, graph compiler and device provenance
+when available, and every patch report. It does not contain custom C source,
+MoviTools, Intel driver DLLs, or other proprietary binaries. Loading therefore
+does not require MoviTools or repeat graph/kernel compilation, but execution
+still requires a compatible Intel NPU driver and hardware.
+
+`loaded.input_contracts` and `loaded.output_contracts` expose immutable
+`TensorContract` values. `loaded.graph` is `None`: the bundle deliberately does
+not invent a symbolic graph or claim that one can be reconstructed from the
+native binary. The original manifest bytes remain available as
+`loaded.artifact_manifest` for provenance inspection.
+
+Bundle loading checks the schema, declared member set, size limits, tensor
+contract, and SHA-256 of the graph and patch reports before constructing a
+`Program`.
+
+## Save and load raw native graphs
 
 The final patched native graph can be retrieved as immutable bytes or written
 directly to a file:
@@ -280,11 +309,12 @@ from_file = npu.load_native_file("my_graph.blob", graph=graph)
 output = from_file.run({"x": input_value})
 ```
 
-The symbolic `graph` is required because `Program.run()` uses its input and
-output names, shapes, and dtypes as the Python tensor contract. `npunlock`
-does not try to reconstruct that high-level graph from the native binary, and
-it cannot prove that a caller-supplied graph describes an unrelated blob.
-Always load with the same graph contract that produced the native binary.
+Unlike a `.npunlock` bundle, a raw blob has no persisted tensor contract. The
+symbolic `graph` is therefore required because `Program.run()` needs its input
+and output names, shapes, and dtypes. `npunlock` does not try to reconstruct
+that high-level graph from the native binary, and it cannot prove that a
+caller-supplied graph describes an unrelated blob. Always load a raw blob with
+the same graph contract that produced it.
 
 A loaded program has `serialized_ir` and `ir_provenance` set to `None` and an
 empty `patch_reports` tuple because those build-time records cannot be

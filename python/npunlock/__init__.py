@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import io
+import json
 import os
+import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from math import prod
@@ -46,6 +50,7 @@ __all__ = [
     "Shape",
     "SharedArray",
     "Tensor",
+    "TensorContract",
     "TensorSpec",
     "compile",
     "configure",
@@ -54,6 +59,7 @@ __all__ = [
     "input",
     "load_native",
     "load_native_file",
+    "load",
     "op",
     "prepare",
     "serialize_ir",
@@ -198,15 +204,75 @@ class CustomMapping:
 
 
 @dataclass(frozen=True, slots=True)
+class TensorContract:
+    """A named static tensor at a saved program boundary."""
+
+    name: str
+    spec: TensorSpec
+
+    def __init__(self, name: str, shape: object, dtype: object):
+        if not isinstance(name, str) or not name:
+            raise ValueError("tensor contract name must be a non-empty string")
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "spec", TensorSpec(shape, dtype))
+
+    @property
+    def shape(self) -> Shape:
+        return self.spec.shape
+
+    @property
+    def dtype(self) -> DType:
+        return self.spec.dtype
+
+
+def _contract_json(contract: TensorContract) -> dict[str, object]:
+    return {"name": contract.name, "shape": list(contract.shape), "dtype": contract.dtype}
+
+
+def _write_zip_member(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
+    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o100644 << 16
+    archive.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+
+
+@dataclass(frozen=True, slots=True)
 class Program:
     graph_blob: bytes
-    graph: Graph
+    graph: Graph | None
     serialized_ir: SerializedIR | None
     ir_provenance: IrCompileResult | None
     patch_reports: tuple[bytes, ...]
     _libraries: NativeLibraries = field(repr=False, compare=False)
     _timeout_ms: int = field(repr=False, compare=False)
     _shared_state: _ProgramSharedState = field(default_factory=_ProgramSharedState, repr=False, compare=False)
+    _saved_inputs: tuple[TensorContract, ...] = field(default=(), repr=False, compare=False)
+    _saved_outputs: tuple[TensorContract, ...] = field(default=(), repr=False, compare=False)
+    artifact_manifest: bytes | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def input_contracts(self) -> tuple[TensorContract, ...]:
+        if self._saved_inputs:
+            return self._saved_inputs
+        if self.graph is None:
+            raise RuntimeError("program has no input contract")
+        values: list[TensorContract] = []
+        for tensor in self.graph.inputs:
+            if tensor.name is None:
+                raise ValueError("all graph inputs must have names")
+            values.append(TensorContract(tensor.name, tensor.shape, tensor.dtype))
+        return tuple(values)
+
+    @property
+    def output_contracts(self) -> tuple[TensorContract, ...]:
+        if self._saved_outputs:
+            return self._saved_outputs
+        if self.graph is None:
+            raise RuntimeError("program has no output contract")
+        return tuple(
+            TensorContract(tensor.name or f"Result_{index}", tensor.shape, tensor.dtype)
+            for index, tensor in enumerate(self.graph.outputs)
+        )
 
     def to_bytes(self) -> bytes:
         """Return the complete native graph blob."""
@@ -217,6 +283,51 @@ class Program:
         """Write the complete native graph blob to *destination*."""
 
         Path(destination).write_bytes(self.graph_blob)
+
+    def export(self, destination: str | Path) -> None:
+        """Write a self-describing, redistributable npunlock program bundle."""
+
+        input_contracts = self.input_contracts
+        output_contracts = self.output_contracts
+        patch_entries = tuple(
+            {
+                "path": f"patch-reports/{index:03d}.json",
+                "size": len(report),
+                "sha256": hashlib.sha256(report).hexdigest(),
+            }
+            for index, report in enumerate(self.patch_reports)
+        )
+        provenance = None
+        if self.ir_provenance is not None:
+            provenance = {
+                "driver_index": self.ir_provenance.driver_index,
+                "device_index": self.ir_provenance.device_index,
+                "driver_version": self.ir_provenance.driver_version,
+                "vendor_id": self.ir_provenance.vendor_id,
+                "device_id": self.ir_provenance.device_id,
+                "graph_extension_version": self.ir_provenance.graph_extension_version,
+                "compiler_version": list(self.ir_provenance.compiler_version),
+            }
+        manifest = {
+            "schema": "npunlock.program.v1",
+            "graph": {
+                "path": "graph.blob",
+                "size": len(self.graph_blob),
+                "sha256": hashlib.sha256(self.graph_blob).hexdigest(),
+            },
+            "inputs": [_contract_json(contract) for contract in input_contracts],
+            "outputs": [_contract_json(contract) for contract in output_contracts],
+            "provenance": provenance,
+            "patch_reports": list(patch_entries),
+        }
+        manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            _write_zip_member(archive, "manifest.json", manifest_bytes)
+            _write_zip_member(archive, "graph.blob", self.graph_blob)
+            for entry, report in zip(patch_entries, self.patch_reports):
+                _write_zip_member(archive, entry["path"], report)
+        Path(destination).write_bytes(archive_bytes.getvalue())
 
     def shared_array(self, shape: object, dtype: object) -> SharedArray:
         """Allocate a NumPy-compatible host/NPU shared tensor buffer."""
@@ -235,7 +346,7 @@ class Program:
     @staticmethod
     def _validate_shared_array(
         value: object,
-        tensor: Tensor,
+        tensor: TensorContract,
         name: str,
         session: InferenceSession,
     ) -> SharedArray:
@@ -265,17 +376,15 @@ class Program:
         }
         if not isinstance(inputs, Mapping):
             raise TypeError("Program.run() inputs must be a mapping")
-        expected_names = tuple(value.name for value in self.graph.inputs)
-        if any(name is None for name in expected_names):
-            raise ValueError("all graph inputs must have names")
+        input_contracts = self.input_contracts
+        output_contracts = self.output_contracts
+        expected_names = tuple(value.name for value in input_contracts)
         if set(inputs) != set(expected_names):
             raise ValueError(f"input names must exactly match {list(expected_names)!r}; got {list(inputs)!r}")
         if outputs is not None:
             if not isinstance(outputs, Mapping):
                 raise TypeError("Program.run() outputs must be a mapping")
-            expected_outputs = tuple(
-                tensor.name or f"Result_{index}" for index, tensor in enumerate(self.graph.outputs)
-            )
+            expected_outputs = tuple(tensor.name for tensor in output_contracts)
             if set(outputs) != set(expected_outputs):
                 raise ValueError(
                     f"output names must exactly match {list(expected_outputs)!r}; " f"got {list(outputs)!r}"
@@ -288,20 +397,19 @@ class Program:
                     name,
                     self._validate_shared_array(inputs[name], tensor, name, session)._allocation,
                 )
-                for tensor, name in zip(self.graph.inputs, expected_names)
+                for tensor, name in zip(input_contracts, expected_names)
             )
             shared_outputs = tuple(
                 (
                     name,
                     self._validate_shared_array(outputs[name], tensor, name, session)._allocation,
                 )
-                for tensor, name in zip(self.graph.outputs, expected_outputs)
+                for tensor, name in zip(output_contracts, expected_outputs)
             )
             session.infer(shared_inputs, shared_outputs)  # type: ignore[arg-type]
             return dict(outputs)
         native_inputs: list[InferenceInput] = []
-        for tensor, name in zip(self.graph.inputs, expected_names):
-            assert name is not None
+        for tensor, name in zip(input_contracts, expected_names):
             expected_dtype = numpy_dtypes.get(tensor.dtype)
             if expected_dtype is None:
                 raise ValueError("graphinfer currently supports only static FP16/FP32 tensors")
@@ -316,11 +424,11 @@ class Program:
             native_inputs,
             timeout_ms=self._timeout_ms,
         )
-        if len(inferred.outputs) != len(self.graph.outputs):
-            raise RuntimeError(f"graph returned {len(inferred.outputs)} outputs; expected {len(self.graph.outputs)}")
+        if len(inferred.outputs) != len(output_contracts):
+            raise RuntimeError(f"graph returned {len(inferred.outputs)} outputs; expected {len(output_contracts)}")
         values: dict[str, object] = {}
-        for index, (tensor, output) in enumerate(zip(self.graph.outputs, inferred.outputs)):
-            name = tensor.name or f"Result_{index}"
+        for tensor, output in zip(output_contracts, inferred.outputs):
+            name = tensor.name
             expected_dtype = numpy_dtypes.get(tensor.dtype)
             if expected_dtype is None:
                 raise RuntimeError(f"output {name!r} uses unsupported symbolic dtype {tensor.dtype!r}")
@@ -389,6 +497,141 @@ def load_native_file(
         native_dir=native_dir,
         timeout_ms=timeout_ms,
         libraries=libraries,
+    )
+
+
+def _bundle_member(
+    archive: zipfile.ZipFile,
+    name: str,
+    *,
+    maximum_size: int,
+) -> bytes:
+    try:
+        info = archive.getinfo(name)
+    except KeyError as exc:
+        raise ValueError(f"program bundle is missing {name!r}") from exc
+    if info.flag_bits & 1:
+        raise ValueError(f"program bundle member {name!r} must not be encrypted")
+    if info.file_size > maximum_size:
+        raise ValueError(f"program bundle member {name!r} exceeds the supported size")
+    data = archive.read(info)
+    if len(data) != info.file_size:
+        raise ValueError(f"program bundle member {name!r} is truncated")
+    return data
+
+
+def _manifest_contracts(value: object, label: str) -> tuple[TensorContract, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"program bundle {label} must be a non-empty list")
+    contracts: list[TensorContract] = []
+    names: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != {"name", "shape", "dtype"}:
+            raise ValueError(f"program bundle {label} contains an invalid tensor contract")
+        name = entry["name"]
+        shape = entry["shape"]
+        dtype = entry["dtype"]
+        if not isinstance(name, str) or name in names:
+            raise ValueError(f"program bundle {label} contains an empty or duplicate tensor name")
+        contract = TensorContract(name, shape, dtype)
+        if contract.dtype not in {"f16", "f32"} or len(contract.shape) > 5:
+            raise ValueError(f"program bundle tensor {name!r} is outside the graphinfer contract")
+        names.add(name)
+        contracts.append(contract)
+    return tuple(contracts)
+
+
+def _manifest_blob_entry(value: object, label: str) -> tuple[str, int, str]:
+    if not isinstance(value, dict) or set(value) != {"path", "size", "sha256"}:
+        raise ValueError(f"program bundle {label} entry is invalid")
+    path = value["path"]
+    size = value["size"]
+    digest = value["sha256"]
+    if not isinstance(path, str) or not path or path.startswith(("/", "\\")) or ".." in Path(path).parts:
+        raise ValueError(f"program bundle {label} path is invalid")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise ValueError(f"program bundle {label} size is invalid")
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError(f"program bundle {label} hash is invalid")
+    return path, size, digest
+
+
+def load(
+    source: str | Path,
+    *,
+    native_dir: str | Path | None = None,
+    timeout_ms: int = 20_000,
+    libraries: NativeLibraries | None = None,
+) -> Program:
+    """Load a self-describing program bundle without recompilation or MoviTools."""
+
+    source_path = Path(source)
+    try:
+        with zipfile.ZipFile(source_path, "r") as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError("program bundle contains duplicate member names")
+            manifest_bytes = _bundle_member(archive, "manifest.json", maximum_size=1024 * 1024)
+            try:
+                manifest = json.loads(manifest_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("program bundle manifest is not valid UTF-8 JSON") from exc
+            if not isinstance(manifest, dict) or manifest.get("schema") != "npunlock.program.v1":
+                raise ValueError("program bundle schema is unsupported")
+            required = {"schema", "graph", "inputs", "outputs", "provenance", "patch_reports"}
+            if set(manifest) != required:
+                raise ValueError("program bundle manifest fields are invalid")
+            if manifest["provenance"] is not None and not isinstance(manifest["provenance"], dict):
+                raise ValueError("program bundle provenance is invalid")
+            graph_path, graph_size, graph_hash = _manifest_blob_entry(manifest["graph"], "graph")
+            if graph_path != "graph.blob" or graph_size == 0:
+                raise ValueError("program bundle graph entry is invalid")
+            graph_blob = _bundle_member(archive, graph_path, maximum_size=2 * 1024 * 1024 * 1024)
+            if len(graph_blob) != graph_size or hashlib.sha256(graph_blob).hexdigest() != graph_hash:
+                raise ValueError("program bundle graph size or SHA-256 does not match its manifest")
+
+            inputs = _manifest_contracts(manifest["inputs"], "inputs")
+            outputs = _manifest_contracts(manifest["outputs"], "outputs")
+            report_values = manifest["patch_reports"]
+            if not isinstance(report_values, list) or len(report_values) > 1024:
+                raise ValueError("program bundle patch_reports is invalid")
+            reports: list[bytes] = []
+            report_paths: list[str] = []
+            total_report_size = 0
+            for index, entry in enumerate(report_values):
+                report_path, report_size, report_hash = _manifest_blob_entry(entry, f"patch report {index}")
+                if report_path != f"patch-reports/{index:03d}.json" or report_size > 16 * 1024 * 1024:
+                    raise ValueError(f"program bundle patch report {index} entry is invalid")
+                total_report_size += report_size
+                if total_report_size > 64 * 1024 * 1024:
+                    raise ValueError("program bundle patch reports exceed the supported total size")
+                report = _bundle_member(archive, report_path, maximum_size=16 * 1024 * 1024)
+                if len(report) != report_size or hashlib.sha256(report).hexdigest() != report_hash:
+                    raise ValueError(f"program bundle patch report {index} does not match its manifest")
+                report_paths.append(report_path)
+                reports.append(report)
+            expected_names = {"manifest.json", graph_path, *report_paths}
+            if set(names) != expected_names:
+                raise ValueError("program bundle contains undeclared members")
+    except zipfile.BadZipFile as exc:
+        raise ValueError("program bundle is not a valid ZIP archive") from exc
+
+    native = libraries or NativeLibraries(native_dir)
+    return Program(
+        graph_blob,
+        None,
+        None,
+        None,
+        tuple(reports),
+        native,
+        timeout_ms,
+        _saved_inputs=inputs,
+        _saved_outputs=outputs,
+        artifact_manifest=manifest_bytes,
     )
 
 

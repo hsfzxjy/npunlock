@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import ctypes
 import io
+import json
 import sys
 import unittest
 import warnings
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
@@ -708,6 +710,63 @@ class CompilationFlowTests(unittest.TestCase):
             npu.load_native("graph.blob", graph=graph, libraries=fake)  # type: ignore[arg-type]
         with self.assertRaisesRegex(TypeError, "requires a Graph"):
             npu.load_native(b"native", graph=object(), libraries=fake)  # type: ignore[arg-type]
+
+    def test_program_bundle_round_trip_needs_no_symbolic_graph(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
+        fake = FakeNative()
+        program = npu.compile(
+            npu.Graph([x], [y], name="bundle_test"),
+            native_dir="unused",
+            movi_dll_dir="movi",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        first_path = ROOT / "build" / "python-api-program-test.npunlock"
+        second_path = ROOT / "build" / "python-api-program-test-2.npunlock"
+        try:
+            program.export(first_path)
+            program.export(second_path)
+            self.assertEqual(first_path.read_bytes(), second_path.read_bytes())
+            with zipfile.ZipFile(first_path, "r") as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["schema"], "npunlock.program.v1")
+                self.assertEqual(manifest["inputs"], [{"dtype": "f16", "name": "x", "shape": [1, 32]}])
+                self.assertEqual(manifest["outputs"], [{"dtype": "f16", "name": "y", "shape": [1, 32]}])
+                self.assertEqual(archive.read("patch-reports/000.json"), b"{}")
+
+            loaded = npu.load(first_path, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            first_path.unlink(missing_ok=True)
+            second_path.unlink(missing_ok=True)
+
+        self.assertIsNone(loaded.graph)
+        self.assertIsNone(loaded.serialized_ir)
+        self.assertIsNone(loaded.ir_provenance)
+        self.assertEqual(loaded.patch_reports, (b"{}",))
+        self.assertIsNotNone(loaded.artifact_manifest)
+        self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "f16"),))
+        self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "f16"),))
+        value = np.zeros((1, 32), dtype=np.float16)
+        np.testing.assert_array_equal(loaded.run({"x": value})["y"], value + np.float16(1))
+
+    def test_program_bundle_rejects_graph_hash_mismatch(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x)
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        valid_path = ROOT / "build" / "python-api-valid-program.npunlock"
+        corrupt_path = ROOT / "build" / "python-api-corrupt-program.npunlock"
+        try:
+            program.export(valid_path)
+            with zipfile.ZipFile(valid_path, "r") as source, zipfile.ZipFile(corrupt_path, "w") as destination:
+                for name in source.namelist():
+                    data = b"corrupt" if name == "graph.blob" else source.read(name)
+                    destination.writestr(name, data)
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                npu.load(corrupt_path, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            valid_path.unlink(missing_ok=True)
+            corrupt_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

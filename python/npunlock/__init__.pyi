@@ -28,6 +28,15 @@ class Tensor:
     def __mul__(self, other: Tensor) -> Tensor: ...
     def __matmul__(self, other: Tensor) -> Tensor: ...
 
+class TensorContract:
+    name: str
+    spec: TensorSpec
+    def __init__(self, name: str, shape: object, dtype: object) -> None: ...
+    @property
+    def shape(self) -> Shape: ...
+    @property
+    def dtype(self) -> DType: ...
+
 class Graph:
     inputs: tuple[Tensor, ...]
     outputs: tuple[Tensor, ...]
@@ -113,12 +122,18 @@ class SharedArray(np.ndarray): ...
 
 class Program:
     graph_blob: bytes
-    graph: Graph
+    graph: Graph | None
     serialized_ir: SerializedIR | None
     ir_provenance: IrCompileResult | None
     patch_reports: tuple[bytes, ...]
+    artifact_manifest: bytes | None
+    @property
+    def input_contracts(self) -> tuple[TensorContract, ...]: ...
+    @property
+    def output_contracts(self) -> tuple[TensorContract, ...]: ...
     def to_bytes(self) -> bytes: ...
     def save(self, destination: str | PathLike[str]) -> None: ...
+    def export(self, destination: str | PathLike[str]) -> None: ...
     def shared_array(self, shape: object, dtype: object) -> SharedArray: ...
     def run(
         self,
@@ -201,6 +216,13 @@ def load_native_file(
     source: str | PathLike[str],
     *,
     graph: Graph,
+    native_dir: str | PathLike[str] | None = ...,
+    timeout_ms: int = ...,
+    libraries: Any = ...,
+) -> Program: ...
+def load(
+    source: str | PathLike[str],
+    *,
     native_dir: str | PathLike[str] | None = ...,
     timeout_ms: int = ...,
     libraries: Any = ...,

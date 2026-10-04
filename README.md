@@ -143,6 +143,7 @@ reference.
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
+- self-describing program bundles that load without C source or MoviTools
 - Python, CLI, and native C APIs
 
 ## Current limitations
