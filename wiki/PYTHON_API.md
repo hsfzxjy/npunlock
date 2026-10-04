@@ -168,6 +168,36 @@ Pass `None` to `configure()` to clear the process-local override. The supplied
 path must be the root containing `bin` and `lib`; passing `bin` itself is not
 supported. See [Getting MoviTools](GET_MOVITOOLS.md).
 
+## Environment diagnostics
+
+Inspect the installed native runtime, configured MoviTools layout, Intel NPU,
+graph extension, and graph compiler with:
+
+```powershell
+python -m npunlock doctor
+```
+
+The command compiles a tiny ordinary `Abs` carrier through the installed Intel
+driver to query the real device/compiler path. It does not invoke MoviTools or
+execute an NPU workload. All driver/compiler calls retain the finite timeout.
+
+The final capability lines are intentionally separate:
+
+- **run saved programs** requires the bundled native runtime plus the Intel NPU
+  driver/compiler path;
+- **compile custom C** additionally requires all expected DLLs and `mlibm.a`
+  under the configured `MVC_DEPEND` root.
+
+Use `--json` for schema `npunlock.doctor.v1`, or `--skip-driver` to inspect the
+package and MoviTools files without querying an NPU:
+
+```powershell
+python -m npunlock doctor --json
+python -m npunlock doctor --skip-driver
+```
+
+Source-tree developers may pass `--native-dir build\windows\Debug`.
+
 ## Compilation
 
 Compile a symbolic graph with:

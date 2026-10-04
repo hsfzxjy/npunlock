@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "python"))
 
 import npunlock as npu
 from npunlock import _native
+from npunlock.doctor import collect_diagnostics, human_report
 
 
 class SymbolicTests(unittest.TestCase):
@@ -227,6 +228,56 @@ class NativeLayoutTests(unittest.TestCase):
     def test_patch_target_integer_bounds(self) -> None:
         with self.assertRaises(ValueError):
             npu.PatchTarget(-1, 0, 1, 16, 32)
+
+
+class DoctorTests(unittest.TestCase):
+    def test_doctor_distinguishes_run_and_custom_compile_capabilities(self) -> None:
+        fake = FakeNative()
+        root = ROOT / "build" / "doctor-test-movitools"
+        files = tuple(
+            root / name
+            for name in (
+                "bin/moviCompile64.dll",
+                "bin/moviAsm64.dll",
+                "bin/moviLLD64.dll",
+                "lib/mlibm.a",
+            )
+        )
+        try:
+            for path in files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+            report = collect_diagnostics(
+                native_dir="unused",
+                movi_dll_dir=root,
+                libraries=fake,  # type: ignore[arg-type]
+            )
+        finally:
+            for path in files:
+                path.unlink(missing_ok=True)
+            for path in (root / "bin", root / "lib", root):
+                if path.exists():
+                    path.rmdir()
+
+        self.assertEqual(report["schema"], "npunlock.doctor.v1")
+        self.assertEqual(report["npu_driver"]["compiler_version"], [8, 3])  # type: ignore[index]
+        self.assertEqual(
+            report["capabilities"],
+            {"run_saved_program": True, "compile_custom_c": True},
+        )
+        self.assertIn("compiler: 8.3", human_report(report))
+
+        without_movi = collect_diagnostics(
+            native_dir="unused",
+            movi_dll_dir="",
+            check_driver=False,
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(without_movi["movitools"]["status"], "not-configured")  # type: ignore[index]
+        self.assertEqual(
+            without_movi["capabilities"],
+            {"run_saved_program": True, "compile_custom_c": False},
+        )
 
 
 class FakeNative:

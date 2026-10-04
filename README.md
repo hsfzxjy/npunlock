@@ -120,6 +120,19 @@ Extract the `MVC_DEPEND` payload from Lenovo's older
 Intel NPU driver package `31.0.100.1688`, but remember, **DO NOT install or downgrade to
 that driver**. All we need is the bundled MoviTools.
 
+## Check your setup
+
+After configuring `NPUNLOCK_MOVITOOLS_DIR`, inspect both runtime capabilities:
+
+```powershell
+python -m npunlock doctor
+```
+
+The report distinguishes running an already compiled program from compiling
+new custom C, which additionally requires MoviTools. See the
+[Python API guide](wiki/PYTHON_API.md#environment-diagnostics) for JSON and
+offline options.
+
 
 ## Run an example
 
