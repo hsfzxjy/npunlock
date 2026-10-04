@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,23 +91,34 @@ static void hash_view(npunlock_view view, char text[65]) {
   text[64] = 0;
 }
 
-static const char *precision_name(uint32_t flags) {
-  if ((flags & PATCHBLOB_CONTRACT_FP16) != 0 && (flags & PATCHBLOB_CONTRACT_FP32) == 0) {
+static const char *tensor_precision_name(uint32_t precision) {
+  if (precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2) {
     return "fp16";
   }
-  if ((flags & PATCHBLOB_CONTRACT_FP32) != 0 && (flags & PATCHBLOB_CONTRACT_FP16) == 0) {
+  if (precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2) {
     return "fp32";
   }
   return "unknown";
 }
 
+static const char *target_precision_name(const patchblob_target_v2 *target) {
+  uint32_t precision = target->tensors[0].precision;
+  size_t index;
+  for (index = 1; index < target->tensor_count; ++index) {
+    if (target->tensors[index].precision != precision) {
+      return "mixed";
+    }
+  }
+  return tensor_precision_name(precision);
+}
+
 static int write_report(FILE *stream, const char *graph_path, const file_buffer *graph,
-                        const patchblob_discovery_result *discovery) {
+                        const patchblob_discovery_result_v2 *discovery) {
   char graph_hash[65];
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v1\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v2\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream,
@@ -116,20 +128,37 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
     return 0;
   }
   for (index = 0; index < discovery->target_count; ++index) {
-    const patchblob_discovered_target *discovered = &discovery->targets[index];
-    const patchblob_target *target = &discovered->target;
+    const patchblob_discovered_target_v2 *discovered = &discovery->targets[index];
+    const patchblob_target_v2 *target = &discovered->target;
+    const patchblob_tensor_contract_v2 *output = &target->tensors[target->tensor_count - 1u];
+    size_t tensor_index;
+    bool input_1_scalar = target->tensor_count == 3u && target->tensors[1].element_count == 1u;
     if (fprintf(stream,
                 "%s    {\"group_index\": %u, \"invocation_index\": %u, "
                 "\"range_index\": %u, \"input_count\": %u, \"element_count\": "
-                "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_flags\": %u, "
-                "\"precision\": \"%s\", \"input_1_scalar\": %s}",
+                "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_version\": 2, "
+                "\"target_flags\": %u, \"precision\": \"%s\", "
+                "\"input_1_scalar\": %s, \"tensors\": [",
                 index == 0 ? "" : ",\n", discovered->group_index, target->invocation_index,
-                target->range_index, target->expected_input_count, target->expected_element_count,
-                target->expected_span_bytes, target->required_contract_flags,
-                precision_name(target->required_contract_flags),
-                (target->required_contract_flags & PATCHBLOB_CONTRACT_INPUT_1_SCALAR) != 0u
-                    ? "true"
-                    : "false") < 0) {
+                target->range_index, target->tensor_count - 1u, output->element_count,
+                output->span_bytes, target->target_flags, target_precision_name(target),
+                input_1_scalar ? "true" : "false") < 0) {
+      return 0;
+    }
+    for (tensor_index = 0; tensor_index < target->tensor_count; ++tensor_index) {
+      const patchblob_tensor_contract_v2 *tensor = &target->tensors[tensor_index];
+      const char *role = tensor->role == PATCHBLOB_TENSOR_ROLE_INPUT_V2 ? "input" : "output";
+      if (fprintf(stream,
+                  "%s{\"role\": \"%s\", \"index\": %u, \"precision\": \"%s\", "
+                  "\"element_count\": %" PRIu64 ", \"span_bytes\": %" PRIu64
+                  ", \"observed_flags\": %u}",
+                  tensor_index == 0 ? "" : ", ", role, tensor->tensor_index,
+                  tensor_precision_name(tensor->precision), tensor->element_count,
+                  tensor->span_bytes, tensor->observed_flags) < 0) {
+        return 0;
+      }
+    }
+    if (fprintf(stream, "]}") < 0) {
       return 0;
     }
   }
@@ -150,7 +179,7 @@ int main(int argc, char **argv) {
   const char *graph_path = NULL;
   const char *report_path = NULL;
   file_buffer graph = {0};
-  patchblob_discovery_result discovery = {0};
+  patchblob_discovery_result_v2 discovery = {0};
   npunlock_status status;
   FILE *report = stdout;
   int index;
@@ -185,7 +214,7 @@ int main(int argc, char **argv) {
   if (graph.size == SIZE_MAX) {
     goto cleanup;
   }
-  status = patchblob_discover_targets((npunlock_view){graph.data, graph.size}, &discovery);
+  status = patchblob_discover_targets_v2((npunlock_view){graph.data, graph.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK) {
     print_diagnostic(&discovery.diagnostic);
     goto cleanup;
@@ -222,7 +251,7 @@ cleanup:
   if (report_path != NULL && report != NULL) {
     fclose(report);
   }
-  patchblob_discovery_result_release(&discovery);
+  patchblob_discovery_result_v2_release(&discovery);
   free(graph.data);
   return success ? 0 : 1;
 }

@@ -35,11 +35,14 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The JSON report records the blob size and SHA-256 plus every discovered ACT
-group, invocation/range index, arity, element count, byte span, precision, and
-contract flags. Discovery means only that the file matches the narrow observed
-NPU3720/compiler-8.3 structures. It does not prove that a Linux driver, newer
-firmware, or different NPU can load or execute the blob.
+The version 2 JSON report records the blob size and SHA-256 plus every
+discovered ACT group, invocation/range index, arity, output size, and each
+tensor record's role, FP16/FP32 precision, element count, byte span, and
+observed flags. It can therefore inspect the supported unary FP16/FP32
+conversion carriers as well as uniform groups. Discovery means only that the
+file matches the narrow observed NPU3720/compiler-8.3 structures. It does not
+prove that a Linux driver, newer firmware, or different NPU can load or execute
+the blob.
 
 ### Milestone 2: reproducible probe bundle
 
