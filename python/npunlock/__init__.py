@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import threading
 import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -136,9 +137,34 @@ class SharedArray(np.ndarray):
         self._allocation = allocation if allocation.address <= address < allocation.address + allocation.size else None
 
 
-class _ProgramSharedState:
+class _ProgramExecutionState:
     def __init__(self) -> None:
         self.session: InferenceSession | None = None
+        self.closed = False
+        self.lock = threading.Lock()
+
+    def get_session(
+        self,
+        libraries: NativeLibraries,
+        graph_blob: bytes,
+        timeout_ms: int,
+    ) -> InferenceSession:
+        with self.lock:
+            if self.closed:
+                raise RuntimeError("program is closed")
+            if self.session is None:
+                self.session = libraries.create_inference_session(graph_blob, timeout_ms=timeout_ms)
+            return self.session
+
+    def close(self) -> None:
+        with self.lock:
+            if self.closed:
+                return
+            self.closed = True
+            session = self.session
+            self.session = None
+        if session is not None:
+            session.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +271,7 @@ class Program:
     patch_reports: tuple[bytes, ...]
     _libraries: NativeLibraries = field(repr=False, compare=False)
     _timeout_ms: int = field(repr=False, compare=False)
-    _shared_state: _ProgramSharedState = field(default_factory=_ProgramSharedState, repr=False, compare=False)
+    _execution_state: _ProgramExecutionState = field(default_factory=_ProgramExecutionState, repr=False, compare=False)
     _saved_inputs: tuple[TensorContract, ...] = field(default=(), repr=False, compare=False)
     _saved_outputs: tuple[TensorContract, ...] = field(default=(), repr=False, compare=False)
     artifact_manifest: bytes | None = field(default=None, repr=False, compare=False)
@@ -337,11 +363,35 @@ class Program:
         if numpy_dtype is None:
             raise ValueError("shared arrays currently support only f16 and f32")
         size = prod(spec.shape) * numpy_dtype.itemsize
-        session = self._shared_state.session
-        if session is None:
-            session = self._libraries.create_inference_session(self.graph_blob, timeout_ms=self._timeout_ms)
-            self._shared_state.session = session
+        session = self._execution_state.get_session(self._libraries, self.graph_blob, self._timeout_ms)
         return SharedArray(session.create_buffer(size), spec.shape, numpy_dtype)
+
+    def shared_inputs(self) -> dict[str, SharedArray]:
+        """Allocate one shared array for every graph input."""
+
+        return {tensor.name: self.shared_array(tensor.shape, tensor.dtype) for tensor in self.input_contracts}
+
+    def shared_outputs(self) -> dict[str, SharedArray]:
+        """Allocate one shared array for every graph output."""
+
+        return {tensor.name: self.shared_array(tensor.shape, tensor.dtype) for tensor in self.output_contracts}
+
+    @property
+    def closed(self) -> bool:
+        return self._execution_state.closed
+
+    def close(self) -> None:
+        """Release this program's graph session; outstanding shared arrays remain valid."""
+
+        self._execution_state.close()
+
+    def __enter__(self) -> Program:
+        if self.closed:
+            raise RuntimeError("program is closed")
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.close()
 
     @staticmethod
     def _validate_shared_array(
@@ -389,9 +439,7 @@ class Program:
                 raise ValueError(
                     f"output names must exactly match {list(expected_outputs)!r}; " f"got {list(outputs)!r}"
                 )
-            session = self._shared_state.session
-            if session is None:
-                raise ValueError("allocate shared tensors with this Program before shared inference")
+            session = self._execution_state.get_session(self._libraries, self.graph_blob, self._timeout_ms)
             shared_inputs = tuple(
                 (
                     name,
@@ -419,11 +467,8 @@ class Program:
             if not array.flags.c_contiguous:
                 array = np.ascontiguousarray(array)
             native_inputs.append(InferenceInput(name, array.tobytes(order="C")))
-        inferred = self._libraries.infer_graph(
-            self.graph_blob,
-            native_inputs,
-            timeout_ms=self._timeout_ms,
-        )
+        session = self._execution_state.get_session(self._libraries, self.graph_blob, self._timeout_ms)
+        inferred = session.infer_copied(native_inputs)
         if len(inferred.outputs) != len(output_contracts):
             raise RuntimeError(f"graph returned {len(inferred.outputs)} outputs; expected {len(output_contracts)}")
         values: dict[str, object] = {}

@@ -363,7 +363,6 @@ class InferenceSession:
             0xFFFFFFFF,
             0xFFFFFFFF,
             timeout_ms,
-            _View(None, 0),
         )
         self._result = _InferSessionResult()
         self._result.struct_size = ctypes.sizeof(_InferSessionResult)
@@ -449,6 +448,59 @@ class InferenceSession:
                 self._libraries._raise("graphinfer_session", status, result.diagnostic)
         finally:
             self._libraries.infer.graphinfer_session_infer_result_release(ctypes.byref(result))
+
+    def infer_copied(self, inputs: Iterable[InferenceInput]) -> InferenceResult:
+        if self._closed:
+            raise RuntimeError("inference session is closed")
+        input_values = tuple(inputs)
+        if not input_values:
+            raise ValueError("at least one inference input is required")
+        native_inputs = (_InferInput * len(input_values))()
+        owners: list[object] = []
+        for index, value in enumerate(input_values):
+            if not isinstance(value, InferenceInput):
+                raise TypeError("inputs must contain InferenceInput values")
+            if isinstance(value.selector, str):
+                argument_index = 0xFFFFFFFF
+                name_view, name_owner = _owned_view(value.selector.encode("utf-8"))
+            else:
+                argument_index = value.selector
+                name_view, name_owner = _owned_view(b"")
+            data_view, data_owner = _owned_view(value.data)
+            owners.extend((name_owner, data_owner))
+            native_inputs[index] = _InferInput(ctypes.sizeof(_InferInput), argument_index, name_view, data_view)
+        result = _InferResult()
+        result.struct_size = ctypes.sizeof(_InferResult)
+        status = self._libraries.infer.graphinfer_session_infer_copied(
+            self._result.session,
+            native_inputs,
+            len(input_values),
+            ctypes.byref(result),
+        )
+        _ = owners
+        try:
+            if status != 0:
+                self._libraries._raise("graphinfer_session", status, result.diagnostic)
+            outputs = tuple(
+                InferenceOutput(
+                    output.argument_index,
+                    _buffer_bytes(output.argument_name_utf8).decode("utf-8", errors="strict"),
+                    tuple(output.dims[: output.dims_count]),
+                    {1: "f32", 2: "f16"}.get(output.precision, f"precision-{output.precision}"),
+                    _buffer_bytes(output.data),
+                )
+                for output in result.outputs[: result.output_count]
+            )
+            return InferenceResult(
+                outputs,
+                result.selected_driver_index,
+                result.selected_device_index,
+                result.driver_version,
+                result.device_vendor_id,
+                result.device_id,
+            )
+        finally:
+            self._libraries.infer.graphinfer_result_release(ctypes.byref(result))
 
     def close(self) -> None:
         if not self._closed:
@@ -574,6 +626,13 @@ class NativeLibraries:
         ]
         self.infer.graphinfer_session_create.restype = ctypes.c_int
         self.infer.graphinfer_session_result_release.argtypes = [ctypes.POINTER(_InferSessionResult)]
+        self.infer.graphinfer_session_infer_copied.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(_InferInput),
+            ctypes.c_size_t,
+            ctypes.POINTER(_InferResult),
+        ]
+        self.infer.graphinfer_session_infer_copied.restype = ctypes.c_int
         self.infer.graphinfer_shared_buffer_create.argtypes = [
             ctypes.c_void_p,
             ctypes.c_size_t,

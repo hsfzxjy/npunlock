@@ -67,6 +67,7 @@ int main(void) {
   graphinfer_input graph_input = {0};
   graphinfer_result result = {0};
   graphinfer_session_result session_result = {0};
+  graphinfer_result copied_result = {0};
   graphinfer_shared_buffer shared_input = {0};
   graphinfer_shared_buffer shared_output = {0};
   graphinfer_shared_tensor input_binding = {0};
@@ -110,6 +111,20 @@ int main(void) {
     fprintf(stderr, "graphinfer_session_create failed: %s\n", npunlock_status_name(status));
     goto done;
   }
+  status = graphinfer_session_infer_copied(session_result.session, &graph_input, 1, &copied_result);
+  if (status != NPUNLOCK_STATUS_OK || copied_result.device_vendor_id != 0x8086 ||
+      copied_result.output_count != 1 ||
+      memcmp(copied_result.outputs[0].data.data, expected_fp16, sizeof(expected_fp16)) != 0) {
+    fprintf(stderr, "first reusable copied inference failed: %s\n", npunlock_status_name(status));
+    goto done;
+  }
+  graphinfer_result_release(&copied_result);
+  status = graphinfer_session_infer_copied(session_result.session, &graph_input, 1, &copied_result);
+  if (status != NPUNLOCK_STATUS_OK || copied_result.output_count != 1 ||
+      memcmp(copied_result.outputs[0].data.data, expected_fp16, sizeof(expected_fp16)) != 0) {
+    fprintf(stderr, "second reusable copied inference failed: %s\n", npunlock_status_name(status));
+    goto done;
+  }
   status =
       graphinfer_shared_buffer_create(session_result.session, sizeof(input_fp16), &shared_input);
   if (status == NPUNLOCK_STATUS_OK) {
@@ -144,6 +159,7 @@ int main(void) {
   return_code = 0;
 
 done:
+  graphinfer_result_release(&copied_result);
   graphinfer_session_infer_result_release(&shared_result);
   graphinfer_shared_buffer_release(&shared_output);
   graphinfer_shared_buffer_release(&shared_input);

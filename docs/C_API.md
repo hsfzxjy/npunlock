@@ -68,8 +68,27 @@ patchblob_result_release(&result);
 graphinfer_result_release(&result);
 ```
 
-For reusable host/NPU shared buffers, create an in-process session, allocate
-buffers from it, and bind every graph input and output:
+Create an in-process session when the same graph will run more than once. The
+ordinary copied path retains its internal Level Zero tensor allocations across
+calls while each returned result still owns an independent copy of its output
+bytes:
+
+```c
+graphinfer_session_result session = {0};
+graphinfer_result inference = {0};
+
+status = graphinfer_session_create(&options, graph_blob, &session);
+if (status == NPUNLOCK_STATUS_OK) {
+  status = graphinfer_session_infer_copied(session.session, inputs, input_count,
+                                           &inference);
+  /* Consume inference.outputs, then release it before the next call. */
+  graphinfer_result_release(&inference);
+}
+graphinfer_session_result_release(&session);
+```
+
+For reusable host/NPU shared buffers, allocate buffers from the same session
+and bind every graph input and output:
 
 ```c
 graphinfer_session_result session = {0};
@@ -112,8 +131,9 @@ copy. Bindings must exactly cover
 all graph inputs and outputs, use buffers from the same session, and match each
 argument's exact byte size.
 
-Both inference modes are in-process. They use finite fence waits but cannot
-forcibly terminate a driver call that never returns.
+Copied and shared calls on one session are serialized. Both inference modes
+are in-process. They use finite fence waits but cannot forcibly terminate a
+driver call that never returns.
 
 Result structures should be zero-initialized. Options, target, and input
 descriptors carry `struct_size` for ABI validation; calls populate the result's

@@ -7,6 +7,7 @@ import sys
 import unittest
 import warnings
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
@@ -288,6 +289,7 @@ class FakeNative:
         self.patch_calls: list[tuple[bytes, bytes, tuple[npu.PatchTarget, ...]]] = []
         self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 8, 16),),)
         self.infer_dtype = "f16"
+        self.sessions: list[FakeInferenceSession] = []
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.compile_ir_count += 1
@@ -327,7 +329,8 @@ class FakeNative:
 
     def create_inference_session(self, graph_blob: bytes, **kwargs: object) -> object:
         self.shared_session_args = (graph_blob, kwargs)
-        self.shared_session = FakeInferenceSession(self)
+        self.shared_session = FakeInferenceSession(self, graph_blob)
+        self.sessions.append(self.shared_session)
         return self.shared_session
 
 
@@ -340,14 +343,19 @@ class FakeSharedBuffer:
 
 
 class FakeInferenceSession:
-    def __init__(self, libraries: FakeNative):
+    def __init__(self, libraries: FakeNative, graph_blob: bytes):
         self._libraries = libraries
+        self.graph_blob = graph_blob
         self.calls: list[tuple[object, object]] = []
+        self.copied_calls: list[tuple[npu.InferenceInput, ...]] = []
+        self.closed = False
 
     def create_buffer(self, size: int) -> FakeSharedBuffer:
         return FakeSharedBuffer(self, size)
 
     def infer(self, inputs: object, outputs: object) -> None:
+        if self.closed:
+            raise RuntimeError("inference session is closed")
         input_values = tuple(inputs)  # type: ignore[arg-type]
         output_values = tuple(outputs)  # type: ignore[arg-type]
         self.calls.append((input_values, output_values))
@@ -359,6 +367,16 @@ class FakeInferenceSession:
         source = np.frombuffer(source_bytes, dtype=dtype)
         destination = np.frombuffer(output_bytes, dtype=dtype)
         destination[:] = source + dtype.type(1)
+
+    def infer_copied(self, inputs: object) -> npu.InferenceResult:
+        if self.closed:
+            raise RuntimeError("inference session is closed")
+        values = tuple(inputs)  # type: ignore[arg-type]
+        self.copied_calls.append(values)
+        return self._libraries.infer_graph(self.graph_blob, values)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class CompilationFlowTests(unittest.TestCase):
@@ -721,6 +739,72 @@ class CompilationFlowTests(unittest.TestCase):
         np.testing.assert_array_equal(squared, np.square(values + np.float16(2)))
         np.testing.assert_array_equal(shared_output, shared_input + np.float16(1))
         self.assertEqual(len(fake.shared_session.calls), 1)
+
+    def test_program_reuses_session_for_ordinary_inference(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x)
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        value = np.zeros((1, 32), dtype=np.float16)
+
+        first = program.run({"x": value})
+        second = program.run({"x": value + np.float16(2)})
+
+        self.assertEqual(len(fake.sessions), 1)
+        self.assertEqual(len(fake.sessions[0].copied_calls), 2)
+        np.testing.assert_array_equal(first["Result_0"], value + np.float16(1))
+        np.testing.assert_array_equal(second["Result_0"], value + np.float16(3))
+
+    def test_program_shared_tensor_dictionaries_and_close_lifecycle(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x)
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        inputs = program.shared_inputs()
+        outputs = program.shared_outputs()
+        inputs["x"][:] = np.arange(32, dtype=np.float16).reshape(1, 32)
+
+        result = program.run(inputs, outputs=outputs)
+        program.close()
+        program.close()
+
+        self.assertTrue(program.closed)
+        self.assertTrue(fake.sessions[0].closed)
+        self.assertIs(result["Result_0"], outputs["Result_0"])
+        np.testing.assert_array_equal(outputs["Result_0"], inputs["x"] + np.float16(1))
+        with self.assertRaisesRegex(RuntimeError, "program is closed"):
+            program.run({"x": np.zeros((1, 32), dtype=np.float16)})
+        with self.assertRaisesRegex(RuntimeError, "program is closed"):
+            program.shared_inputs()
+
+    def test_program_context_manager_closes_session(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x)
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+
+        with program as active:
+            active.run({"x": np.zeros((1, 32), dtype=np.float16)})
+
+        self.assertTrue(program.closed)
+        with self.assertRaisesRegex(RuntimeError, "program is closed"):
+            with program:
+                pass
+
+    def test_concurrent_program_runs_share_one_session(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x)
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        values = tuple(np.full((1, 32), index, dtype=np.float16) for index in range(4))
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = tuple(executor.map(lambda value: program.run({"x": value}), values))
+
+        self.assertEqual(len(fake.sessions), 1)
+        self.assertEqual(len(fake.sessions[0].copied_calls), 4)
+        for index, result in enumerate(results):
+            np.testing.assert_array_equal(result["Result_0"], values[index] + np.float16(1))
 
     def test_native_blob_bytes_file_and_reload(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

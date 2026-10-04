@@ -145,6 +145,11 @@ int main(void) {
   graphinfer_session_result_release(&session_result);
   graphinfer_session_result_release(&session_result);
 
+  CHECK(graphinfer_session_infer_copied(NULL, &infer_input, 1, &infer_result) ==
+        NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&infer_result.diagnostic, "invalid_argument"));
+  graphinfer_result_release(&infer_result);
+
   CHECK(graphinfer_shared_buffer_create(NULL, sizeof(tensor), &shared_buffer) ==
         NPUNLOCK_STATUS_INVALID_ARGUMENT);
   CHECK(check_diagnostic(&shared_buffer.diagnostic, "invalid_argument"));

@@ -387,22 +387,45 @@ boundary supports static FP16 and FP32 graph inputs and outputs with at most
 five dimensions.
 
 Returned arrays own their data. Native buffers are copied before the matching
-C release function is called.
+C release function is called. The first call lazily creates an execution
+session; later calls reuse the initialized graph and its internal tensor
+allocations. Calls through one `Program` are serialized by the native session.
+
+Use a context manager when the program has a clear execution scope, or call
+`close()` explicitly:
+
+```python
+with npu.load("my_program.npunlock") as program:
+    for batch in batches:
+        outputs = program.run({"x": batch})
+
+# Equivalent when a context manager is inconvenient.
+program.close()
+```
+
+Closing is idempotent. A closed program cannot run or allocate more shared
+arrays.
 
 ### Shared input and output buffers
 
-For repeated inference, allocate host/NPU shared arrays from the compiled
-program and provide every output explicitly:
+For repeated inference without tensor copies, allocate host/NPU shared arrays
+from the compiled program and provide every output explicitly. The dictionary
+helpers use the saved graph argument names, shapes, and dtypes:
 
 ```python
-shared_x = program.shared_array(x.shape, x.dtype)
-shared_y = program.shared_array(y.shape, y.dtype)
+shared_inputs = program.shared_inputs()
+shared_outputs = program.shared_outputs()
+shared_x = shared_inputs["x"]
+shared_y = shared_outputs["y"]
 
 np.copyto(shared_x, input_value)
 np.clip(shared_x, -4, 4, out=shared_x)
-outputs = program.run({"x": shared_x}, outputs={"y": shared_y})
+outputs = program.run(shared_inputs, outputs=shared_outputs)
 assert outputs["y"] is shared_y
 ```
+
+`program.shared_array(shape, dtype)` remains available for callers that need a
+manually shaped shared allocation.
 
 `SharedArray` is an `np.ndarray` subclass backed directly by a host-visible
 Level Zero shared allocation. Indexing, broadcasting assignments, ufuncs, and
@@ -414,7 +437,9 @@ Every shared input and output must be a complete contiguous array allocated by
 the same `Program`, with exactly the graph tensor's shape and dtype. Shared
 execution binds those allocations directly and returns the caller's output
 objects without copying tensor bytes. Array views retain the native allocation
-owner, so the allocation is released only after the final view is gone.
+owner, so the allocation is released only after the final view is gone. Their
+memory remains valid after `program.close()`, although the closed graph cannot
+execute again.
 
 Both tensor modes keep Level Zero graph execution in the Python process. Fence
 waits use `timeout_ms`, but a driver call that never returns cannot be

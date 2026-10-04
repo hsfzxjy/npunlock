@@ -28,6 +28,36 @@ static bool input_is_valid(const graphinfer_input *input) {
   return by_index != by_name;
 }
 
+static npunlock_status validate_inputs(const graphinfer_input *inputs, size_t input_count,
+                                       npunlock_diagnostic *diagnostic) {
+  size_t index;
+  if (input_count == 0 || input_count > GRAPHINFER_MAX_INPUTS || inputs == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "graphinfer.validate", "invalid input array");
+  }
+  for (index = 0; index < input_count; ++index) {
+    size_t previous;
+    if (!input_is_valid(&inputs[index])) {
+      return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                     "graphinfer.validate", "invalid input tensor descriptor");
+    }
+    for (previous = 0; previous < index; ++previous) {
+      bool same_index = inputs[index].argument_index != GRAPHINFER_AUTO_INDEX &&
+                        inputs[index].argument_index == inputs[previous].argument_index;
+      bool same_name =
+          inputs[index].argument_name_utf8.size != 0 &&
+          inputs[index].argument_name_utf8.size == inputs[previous].argument_name_utf8.size &&
+          memcmp(inputs[index].argument_name_utf8.data, inputs[previous].argument_name_utf8.data,
+                 inputs[index].argument_name_utf8.size) == 0;
+      if (same_index || same_name) {
+        return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                       "graphinfer.validate", "duplicate input selector");
+      }
+    }
+  }
+  return NPUNLOCK_STATUS_OK;
+}
+
 void graphinfer_result_release(graphinfer_result *result) {
   size_t index;
   if (result == NULL) {
@@ -47,38 +77,20 @@ npunlock_status graphinfer_infer(const graphinfer_options *options, npunlock_vie
                                  graphinfer_result *result) {
   graphinfer_session_result session_result = {0};
   npunlock_status status;
-  size_t index;
   if (result == NULL) {
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
   }
   memset(result, 0, sizeof(*result));
   result->struct_size = (uint32_t)sizeof(*result);
   if (options == NULL || options->struct_size < sizeof(*options) || options->timeout_ms == 0 ||
-      !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0 || input_count == 0 ||
-      input_count > GRAPHINFER_MAX_INPUTS || inputs == NULL) {
+      !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0) {
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
                                    "graphinfer.validate",
                                    "invalid options, graph blob, or input array");
   }
-  for (index = 0; index < input_count; ++index) {
-    size_t previous;
-    if (!input_is_valid(&inputs[index])) {
-      return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
-                                     "graphinfer.validate", "invalid input tensor descriptor");
-    }
-    for (previous = 0; previous < index; ++previous) {
-      bool same_index = inputs[index].argument_index != GRAPHINFER_AUTO_INDEX &&
-                        inputs[index].argument_index == inputs[previous].argument_index;
-      bool same_name =
-          inputs[index].argument_name_utf8.size != 0 &&
-          inputs[index].argument_name_utf8.size == inputs[previous].argument_name_utf8.size &&
-          memcmp(inputs[index].argument_name_utf8.data, inputs[previous].argument_name_utf8.data,
-                 inputs[index].argument_name_utf8.size) == 0;
-      if (same_index || same_name) {
-        return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
-                                       "graphinfer.validate", "duplicate input selector");
-      }
-    }
+  status = validate_inputs(inputs, input_count, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
   }
   status = graphinfer_session_create(options, graph_blob, &session_result);
   if (status != NPUNLOCK_STATUS_OK) {
@@ -95,4 +107,24 @@ npunlock_status graphinfer_infer(const graphinfer_options *options, npunlock_vie
   status = npunlock_graphinfer_infer_copied(session_result.session, inputs, input_count, result);
   graphinfer_session_result_release(&session_result);
   return status;
+}
+
+npunlock_status graphinfer_session_infer_copied(graphinfer_session *session,
+                                                const graphinfer_input *inputs, size_t input_count,
+                                                graphinfer_result *result) {
+  npunlock_status status;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (session == NULL) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "graphinfer.validate", "invalid inference session");
+  }
+  status = validate_inputs(inputs, input_count, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
+  }
+  return npunlock_graphinfer_infer_copied(session, inputs, input_count, result);
 }

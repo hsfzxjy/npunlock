@@ -80,6 +80,12 @@ struct graphinfer_session {
   size_t argument_count;
   size_t input_count;
   size_t output_count;
+  void **copied_allocations;
+  uint32_t selected_driver_index;
+  uint32_t selected_device_index;
+  uint32_t driver_version;
+  uint32_t device_vendor_id;
+  uint32_t device_id;
   uint32_t queue_ordinal;
   uint32_t init_stages;
   uint64_t fence_timeout_ns;
@@ -410,9 +416,19 @@ static npunlock_status find_compute_queue(graphinfer_session *session,
 }
 
 static void session_destroy(graphinfer_session *session) {
+  size_t index;
   if (session == NULL) {
     return;
   }
+  if (session->copied_allocations != NULL && session->context != NULL &&
+      session->ze.mem_free != NULL) {
+    for (index = 0; index < session->argument_count; ++index) {
+      if (session->copied_allocations[index] != NULL) {
+        session->ze.mem_free(session->context, session->copied_allocations[index]);
+      }
+    }
+  }
+  free(session->copied_allocations);
   free(session->arguments);
   if (session->handle != NULL && session->graph.destroy != NULL) {
     session->graph.destroy(session->handle);
@@ -582,6 +598,11 @@ npunlock_status graphinfer_session_create(const graphinfer_options *options,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  session->selected_driver_index = result->selected_driver_index;
+  session->selected_device_index = result->selected_device_index;
+  session->driver_version = result->driver_version;
+  session->device_vendor_id = result->device_vendor_id;
+  session->device_id = result->device_id;
   result->session = session;
   return NPUNLOCK_STATUS_OK;
 
@@ -843,12 +864,54 @@ static bool copied_input_matches(const graphinfer_input *input, const session_ar
          memcmp(input->argument_name_utf8.data, argument->name, argument->name_size) == 0;
 }
 
+static void release_copied_allocations(graphinfer_session *session) {
+  size_t index;
+  if (session->copied_allocations == NULL) {
+    return;
+  }
+  for (index = 0; index < session->argument_count; ++index) {
+    if (session->copied_allocations[index] != NULL) {
+      session->ze.mem_free(session->context, session->copied_allocations[index]);
+    }
+  }
+  free(session->copied_allocations);
+  session->copied_allocations = NULL;
+}
+
+static npunlock_status ensure_copied_allocations(graphinfer_session *session,
+                                                 npunlock_diagnostic *diagnostic) {
+  npunlock_ze_host_mem_alloc_desc host_desc = {0};
+  size_t index;
+  if (session->copied_allocations != NULL) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  session->copied_allocations =
+      (void **)calloc(session->argument_count, sizeof(*session->copied_allocations));
+  if (session->copied_allocations == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY, "graphinfer.infer",
+                                   "failed to allocate copied tensor state");
+  }
+  host_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC;
+  for (index = 0; index < session->argument_count; ++index) {
+    session_argument *argument = &session->arguments[index];
+    uint32_t code;
+    host_desc.flags = argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT
+                          ? NPUNLOCK_ZE_HOST_MEM_ALLOC_WRITE_COMBINED
+                          : 0;
+    code = session->ze.mem_alloc_host(session->context, &host_desc, argument->data_size,
+                                      SESSION_PAGE_SIZE, &session->copied_allocations[index]);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      release_copied_allocations(session);
+      return session_driver_error(diagnostic, "zeMemAllocHost(copied tensor)", code);
+    }
+  }
+  return NPUNLOCK_STATUS_OK;
+}
+
 npunlock_status npunlock_graphinfer_infer_copied(graphinfer_session *session,
                                                  const graphinfer_input *inputs, size_t input_count,
                                                  graphinfer_result *result) {
-  void *allocations[SESSION_MAX_ARGUMENTS] = {0};
   bool matched_inputs[SESSION_MAX_ARGUMENTS] = {false};
-  npunlock_ze_host_mem_alloc_desc host_desc = {0};
   npunlock_status status = NPUNLOCK_STATUS_OK;
   size_t index;
   if (result == NULL) {
@@ -858,7 +921,11 @@ npunlock_status npunlock_graphinfer_infer_copied(graphinfer_session *session,
     return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
                                    "graphinfer.infer", "inputs do not cover graph tensors");
   }
-  host_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC;
+  result->selected_driver_index = session->selected_driver_index;
+  result->selected_device_index = session->selected_device_index;
+  result->driver_version = session->driver_version;
+  result->device_vendor_id = session->device_vendor_id;
+  result->device_id = session->device_id;
   EnterCriticalSection(&session->lock);
   if (!session->active) {
     status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
@@ -895,31 +962,26 @@ npunlock_status npunlock_graphinfer_infer_copied(graphinfer_session *session,
                                      "graphinfer.infer", "failed to allocate output descriptors");
     goto done;
   }
+  status = ensure_copied_allocations(session, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto done;
+  }
   for (index = 0; index < session->argument_count; ++index) {
     session_argument *argument = &session->arguments[index];
-    uint32_t code;
-    host_desc.flags = argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT
-                          ? NPUNLOCK_ZE_HOST_MEM_ALLOC_WRITE_COMBINED
-                          : 0;
-    code = session->ze.mem_alloc_host(session->context, &host_desc, argument->data_size,
-                                      SESSION_PAGE_SIZE, &allocations[index]);
-    if (code != NPUNLOCK_ZE_SUCCESS) {
-      status = session_driver_error(&result->diagnostic, "zeMemAllocHost(copied tensor)", code);
-      goto done;
-    }
     if (argument->type == NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
       size_t input_index;
       for (input_index = 0; input_index < input_count; ++input_index) {
         if (copied_input_matches(&inputs[input_index], argument)) {
-          memcpy(allocations[index], inputs[input_index].data.data, argument->data_size);
+          memcpy(session->copied_allocations[index], inputs[input_index].data.data,
+                 argument->data_size);
           break;
         }
       }
     } else {
-      memset(allocations[index], 0, argument->data_size);
+      memset(session->copied_allocations[index], 0, argument->data_size);
     }
   }
-  status = execute_allocations_locked(session, allocations, &result->diagnostic);
+  status = execute_allocations_locked(session, session->copied_allocations, &result->diagnostic);
   if (status == NPUNLOCK_STATUS_OK) {
     size_t output_index = 0;
     for (index = 0; index < session->argument_count; ++index) {
@@ -938,8 +1000,9 @@ npunlock_status npunlock_graphinfer_infer_copied(graphinfer_session *session,
       status = npunlock_buffer_copy((npunlock_view){argument->name, argument->name_size},
                                     &output->argument_name_utf8);
       if (status == NPUNLOCK_STATUS_OK) {
-        status = npunlock_buffer_copy((npunlock_view){allocations[index], argument->data_size},
-                                      &output->data);
+        status = npunlock_buffer_copy(
+            (npunlock_view){session->copied_allocations[index], argument->data_size},
+            &output->data);
       }
       if (status != NPUNLOCK_STATUS_OK) {
         npunlock_set_diagnostic(&result->diagnostic, status, "graphinfer.infer",
@@ -950,11 +1013,6 @@ npunlock_status npunlock_graphinfer_infer_copied(graphinfer_session *session,
   }
 
 done:
-  for (index = 0; index < session->argument_count; ++index) {
-    if (allocations[index] != NULL) {
-      session->ze.mem_free(session->context, allocations[index]);
-    }
-  }
   LeaveCriticalSection(&session->lock);
   return status;
 }

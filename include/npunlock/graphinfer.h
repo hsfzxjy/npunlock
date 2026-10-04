@@ -134,6 +134,16 @@ NPUNLOCK_GRAPHINFER_API npunlock_status graphinfer_session_create(
  */
 NPUNLOCK_GRAPHINFER_API void graphinfer_session_result_release(graphinfer_session_result *result);
 
+/*
+ * Run copied inference through an existing session. Tensor storage allocated
+ * by graphinfer is retained and reused by later copied calls on the same
+ * session. Returned output buffers remain caller-owned through
+ * graphinfer_result_release(). Calls on one session are serialized internally.
+ */
+NPUNLOCK_GRAPHINFER_API npunlock_status
+graphinfer_session_infer_copied(graphinfer_session *session, const graphinfer_input *inputs,
+                                size_t input_count, graphinfer_result *result);
+
 NPUNLOCK_GRAPHINFER_API npunlock_status graphinfer_shared_buffer_create(
     graphinfer_session *session, size_t size, graphinfer_shared_buffer *buffer);
 
