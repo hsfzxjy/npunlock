@@ -466,6 +466,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision custom branches with prepared binding](../examples/example_mixed_precision_multi_custom.py)
+- [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 
 See [Current limitations](LIMITATIONS.md) before changing carrier, precision,
 shape, or graph structure.

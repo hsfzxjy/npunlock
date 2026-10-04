@@ -74,7 +74,9 @@ The same code is available as the runnable
 [FP16 GELU](examples/example_gelu.py) and
 [multi-layer two-input](examples/example_multilayer_multi_input.py) examples,
 plus a
-[mixed-precision graph with unary and binary custom branches](examples/example_mixed_precision_multi_custom.py).
+[mixed-precision graph with unary and binary custom branches](examples/example_mixed_precision_multi_custom.py)
+and a
+[branched network combining DPU work with three custom kernels](examples/example_branched_network.py).
 
 ## Why npunlock?
 
@@ -153,6 +155,7 @@ reference.
 - static dense FP16 unary and two-input custom kernels
 - verified unary and scalar-input binary FP32 paths
 - one graph containing independent FP32-unary and FP16-binary custom branches
+- a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers

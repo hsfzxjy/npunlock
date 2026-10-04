@@ -221,9 +221,23 @@ does not relax ELF validation.
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
+- [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 
 Each example includes a NumPy reference. Successful graph submission is not a
 correctness oracle; use equivalent host validation for every new kernel.
+
+The branched example deliberately uses three distinguishable contracts: FP32
+unary, FP16 scalar-second-input, and full FP16 binary. Its carrier has fewer
+ACT groups than symbolic computational nodes because `MatMul` is lowered to
+DPU work, so automatic positional mapping refuses the graph. The example uses
+`prepare()`, filters the validated group contracts, and explicitly binds each
+custom output before patching.
+
+On NPU3720 with graph compiler 8.3, this graph produced six ACT groups for
+seven computational nodes alongside nonempty DPU invariant and variant
+sections. Its connected FP16 result and independent FP32 result both matched
+the NumPy oracle exactly. This is one composition proof, not a claim that
+arbitrary branched graphs or matrix operations are supported.
 
 For the complete byte-level entry and ELF contract, see
 [ACT kernel ELF ABI](../ABI/KERNEL_ELF.md).
