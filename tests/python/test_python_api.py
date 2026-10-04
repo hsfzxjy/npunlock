@@ -253,6 +253,12 @@ class DoctorTests(unittest.TestCase):
                 movi_dll_dir=root,
                 libraries=fake,  # type: ignore[arg-type]
             )
+            full_report = collect_diagnostics(
+                native_dir="unused",
+                movi_dll_dir=root,
+                full_check=True,
+                libraries=fake,  # type: ignore[arg-type]
+            )
         finally:
             for path in files:
                 path.unlink(missing_ok=True)
@@ -260,13 +266,23 @@ class DoctorTests(unittest.TestCase):
                 if path.exists():
                     path.rmdir()
 
-        self.assertEqual(report["schema"], "npunlock.doctor.v1")
+        self.assertEqual(report["schema"], "npunlock.doctor.v2")
         self.assertEqual(report["npu_driver"]["compiler_version"], [8, 3])  # type: ignore[index]
         self.assertEqual(
             report["capabilities"],
             {"run_saved_program": True, "compile_custom_c": True},
         )
         self.assertIn("compiler: 8.3", human_report(report))
+        self.assertEqual(
+            full_report["custom_kernel_check"],
+            {
+                "status": "ok",
+                "oracle": "fp16_add1_exact",
+                "element_count": 32,
+                "mismatch_count": 0,
+            },
+        )
+        self.assertIn("full custom-kernel oracle: ok", human_report(full_report))
 
         without_movi = collect_diagnostics(
             native_dir="unused",
@@ -279,6 +295,13 @@ class DoctorTests(unittest.TestCase):
             without_movi["capabilities"],
             {"run_saved_program": True, "compile_custom_c": False},
         )
+        full_without_movi = collect_diagnostics(
+            native_dir="unused",
+            movi_dll_dir="",
+            full_check=True,
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(full_without_movi["custom_kernel_check"]["status"], "not-run")  # type: ignore[index]
 
 
 class FakeNative:

@@ -135,8 +135,9 @@ python -m npunlock doctor
 The report distinguishes running an already compiled program from compiling
 new custom C, which additionally requires MoviTools. See the
 [Python API guide](wiki/PYTHON_API.md#environment-diagnostics) for JSON and
-offline options.
-
+offline options. Use `python -m npunlock doctor --full` when you explicitly
+want an end-to-end custom-kernel compile, execution, and exact host-oracle
+check.
 
 ## Run an example
 

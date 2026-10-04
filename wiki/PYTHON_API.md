@@ -188,13 +188,24 @@ The final capability lines are intentionally separate:
 - **compile custom C** additionally requires all expected DLLs and `mlibm.a`
   under the configured `MVC_DEPEND` root.
 
-Use `--json` for schema `npunlock.doctor.v1`, or `--skip-driver` to inspect the
+Use `--json` for schema `npunlock.doctor.v2`, or `--skip-driver` to inspect the
 package and MoviTools files without querying an NPU:
 
 ```powershell
 python -m npunlock doctor --json
 python -m npunlock doctor --skip-driver
 ```
+
+An explicit full check exercises the entire supported path: compile a small C
+kernel with MoviTools, patch it into an FP16 carrier, execute it on the NPU,
+and compare all 32 output elements bit-for-bit with a host add-one oracle:
+
+```powershell
+python -m npunlock doctor --full
+```
+
+This invokes proprietary compiler DLLs and NPU execution, so it is never part
+of the default doctor run. `--full` and `--skip-driver` are mutually exclusive.
 
 Source-tree developers may pass `--native-dir build\windows\Debug`.
 
