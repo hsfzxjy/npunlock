@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-02:** Scalar broadcast inputs remain one-element ACT descriptors rather than expanded tensors; custom FP16 and FP32 kernels used them to match all 32 outputs exactly. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#14-scalar-broadcast-inputs-remain-scalar).
+> **Latest breakthrough — 2026-10-04:** Versioned per-tensor contracts now run connected custom FP32→FP16 and FP16→FP32 kernels in one graph, with exact host-oracle agreement. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#15-per-tensor-contracts-enable-connected-conversion-kernels).
 
 ## Quick example
 
@@ -77,6 +77,8 @@ plus a
 [mixed-precision graph with unary and binary custom branches](examples/example_mixed_precision_multi_custom.py)
 and a
 [branched network combining DPU work with three custom kernels](examples/example_branched_network.py).
+The [connected conversion example](examples/example_conversion_kernels.py)
+uses custom kernels on both sides of an ordinary FP16 graph operation.
 
 ## Why npunlock?
 
@@ -157,6 +159,7 @@ reference.
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
+- connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - self-describing program bundles that load without C source or MoviTools
@@ -166,10 +169,9 @@ reference.
 
 Support is experimental and currently limited to Windows x64, Meteor Lake /
 NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
-Connected FP32/FP16 custom conversion is experimentally confirmed in both
-directions, but the public target/discovery ABI cannot yet express its unequal
-input/output spans; the supported mixed-precision example therefore uses
-independent branches. Other NPU generations have not been verified. See
+Connected FP32/FP16 conversion is limited to the observed unary, equal-element
+contract and requires explicit prepared-group binding. Other NPU generations
+have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 
 ## Help test Linux and newer NPUs

@@ -308,12 +308,10 @@ The reverse linked kernel ELF SHA-256 was
 its 208-byte executable image SHA-256 was
 `3d9c6375e491c1c764902004b26045ac27e82f207a225bf46b0a07f051b50e9f`.
 
-This is ABI evidence, not yet a supported public patching mode.
-`patchblob_target` currently carries one precision flag and one expected span,
-so it cannot express separate input and output contracts. Discovery continues
-to fail closed. Before exposing this path, the target ABI needs per-record
-element type/span expectations and a safer way to distinguish active work
-partitions from compiler-emitted matching ranges.
+At the time of this experiment, `patchblob_target` carried one precision flag
+and one expected span, so it could not express separate input and output
+contracts. Section 15 records the later versioned per-tensor implementation
+and connected public-API proof; the original target remains unchanged.
 
 ## 12. Matching ranges can be tile-local replicas
 
@@ -355,10 +353,9 @@ field and the network-output DMA source together explain which replica is
 host-visible.
 
 **Consequence:** replicas must not be treated as output partitions whose
-element counts are summed. A future mixed-type target model must describe
-per-record types and spans, recognize the replica relationship, and replace
-all required replicas rather than only whichever tile currently feeds the
-network output.
+element counts are summed. The later version 2 target model describes
+per-record types and spans and replaces the complete explicitly selected
+group rather than only whichever tile currently feeds the network output.
 
 **Still open:** whether the same tile relationship and `0x200000` CMX delta
 hold across other shapes, operators, compiler versions, or NPU generations;
@@ -502,6 +499,53 @@ older uniform contracts remain unchanged.
 ranks, other shapes and operators, other compiler versions, and a general
 per-record type/count/span target model. This narrowly implemented contract
 does not enable general broadcasting support.
+
+## 15. Per-tensor contracts enable connected conversion kernels
+
+On 2026-10-04, `patchblob_target_v2` made every validated invocation tensor an
+explicit public record: input/output role, index, FP16/FP32 precision, element
+count, byte span, and observed static/dense/CMX flags. The original target ABI
+was retained unchanged and continues to reject unequal precision.
+
+The first implementation deliberately accepts mixed precision only for unary
+FP32-to-FP16 and FP16-to-FP32 records with equal element counts. Discovery
+returns both compiler-generated tile replicas in one positional group. Python
+exposes their separate input/output dtypes and requires an explicit
+prepared-graph binding, avoiding both guessed source mapping and erroneous
+partition summation.
+
+A connected `[1,16]` graph exercised both directions:
+
+```text
+FP32 input
+  -> custom FP32-to-FP16 conversion
+  -> ordinary FP16 Abs
+  -> custom FP16-to-FP32 conversion
+  -> FP32 output
+```
+
+The first kernel computed `(__fp16)(x * 0.5f + 1.0f)`. The second computed
+`(float)x * 2.0f - 0.25f`. Both targets in each conversion group selected the
+same replacement image. The graph executed without an NPU-side error and all
+16 final FP32 values matched a NumPy oracle exactly.
+
+Evidence from the successful run:
+
+```text
+device                 0x7d1d
+driver                 0x000f57e4
+graph compiler         8.3
+carrier blob SHA-256   6f07ea9ce3eca512c62087356e5a55ad73eb7ba29d05a5a75a720bdca89f6316
+FP32->FP16 ELF SHA-256 a149409eb5efa60c1ca42bf7cf51ec21b1098679acb18f4439aa671eae85fce0
+FP16->FP32 ELF SHA-256 2cecb079381eca8d91f086a549547c0638ee874157727cf1a2dded352cc67836
+patched blob SHA-256   6b7a313be113eb801a8435b9977504fa7a4de7145418a4188880e8e4a49b6b75
+```
+
+The runnable proof is
+[`example_conversion_kernels.py`](../examples/example_conversion_kernels.py).
+This result supports only the stated unary conversion contract. It does not
+establish arbitrary mixed-dtype arity, integer records, element-count changes,
+broadcasting, or automatic conversion placement.
 
 ## What remains deliberately unresolved
 

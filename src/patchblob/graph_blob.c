@@ -656,6 +656,160 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
   return NPUNLOCK_STATUS_OK;
 }
 
+static uint32_t public_precision_v2(uint32_t dtype_kind) {
+  return dtype_kind == NPUNLOCK_DTYPE_F16 ? PATCHBLOB_TENSOR_PRECISION_FP16_V2
+                                          : PATCHBLOB_TENSOR_PRECISION_FP32_V2;
+}
+
+static uint32_t dtype_from_public_precision_v2(uint32_t precision) {
+  if (precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2) {
+    return NPUNLOCK_DTYPE_F16;
+  }
+  if (precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2) {
+    return NPUNLOCK_DTYPE_F32;
+  }
+  return 0;
+}
+
+static npunlock_status validate_target_v2(const graph_layout *layout,
+                                          const uint64_t *parameter_bases, size_t invocation_count,
+                                          const patchblob_target_v2 *target,
+                                          npunlock_patch_detail *detail,
+                                          npunlock_diagnostic *diagnostic) {
+  const graph_section *invocations = &layout->sections[layout->invocations_index];
+  const graph_section *params = &layout->sections[layout->params_index];
+  const graph_section *ranges = &layout->sections[layout->ranges_index];
+  memref_contract actual[PATCHBLOB_TARGET_V2_MAX_TENSORS];
+  const patchblob_tensor_contract_v2 *output;
+  uint64_t base;
+  uint64_t limit;
+  size_t invocation_offset;
+  size_t range_offset;
+  size_t input_count;
+  size_t index;
+  bool mixed_precision = false;
+  const uint32_t input_flags =
+      PATCHBLOB_TENSOR_STATIC_V2 | PATCHBLOB_TENSOR_DENSE_V2 | PATCHBLOB_TENSOR_CMX_V2;
+  const uint32_t output_flags = input_flags | PATCHBLOB_TENSOR_DISJOINT_FROM_INPUTS_V2;
+
+  if (target->abi_version != PATCHBLOB_TARGET_V2_ABI_VERSION || target->tensor_count < 2u ||
+      target->tensor_count > PATCHBLOB_TARGET_V2_MAX_TENSORS ||
+      target->invocation_index >= invocation_count ||
+      target->range_index >= ranges->size / ACT_RANGE_SIZE) {
+    return unsupported(diagnostic, "version 2 target is outside the supported ACT contract");
+  }
+  input_count = target->tensor_count - 1u;
+  output = &target->tensors[input_count];
+  for (index = 0; index < target->tensor_count; ++index) {
+    const patchblob_tensor_contract_v2 *tensor = &target->tensors[index];
+    uint32_t dtype = dtype_from_public_precision_v2(tensor->precision);
+    uint32_t expected_role =
+        index < input_count ? PATCHBLOB_TENSOR_ROLE_INPUT_V2 : PATCHBLOB_TENSOR_ROLE_OUTPUT_V2;
+    uint32_t expected_index = index < input_count ? (uint32_t)index : 0u;
+    uint32_t expected_flags = index < input_count ? input_flags : output_flags;
+    if (tensor->struct_size < sizeof(*tensor) || tensor->role != expected_role ||
+        tensor->tensor_index != expected_index || dtype == 0 || tensor->element_count == 0 ||
+        tensor->span_bytes == 0 || tensor->observed_flags != expected_flags) {
+      return unsupported(diagnostic,
+                         "version 2 tensor records must use the observed static dense CMX layout");
+    }
+    if (tensor->element_count > UINT64_MAX / dtype_table[dtype].size_bytes ||
+        tensor->span_bytes != tensor->element_count * dtype_table[dtype].size_bytes) {
+      return unsupported(diagnostic, "version 2 tensor byte span does not match its precision");
+    }
+    if (index > 0 && tensor->precision != target->tensors[0].precision) {
+      mixed_precision = true;
+    }
+  }
+  if (mixed_precision) {
+    if (target->target_flags != PATCHBLOB_TARGET_UNARY_CONVERSION_V2 || input_count != 1u ||
+        target->tensors[0].precision == output->precision ||
+        target->tensors[0].element_count != output->element_count) {
+      return unsupported(
+          diagnostic,
+          "mixed precision is limited to the observed unary FP16/FP32 conversion contract");
+    }
+  } else {
+    if (target->target_flags != 0u || target->tensors[0].element_count != output->element_count ||
+        target->tensors[0].span_bytes != output->span_bytes) {
+      return unsupported(diagnostic, "version 2 same-precision tensor contract is unsupported");
+    }
+    for (index = 1; index < input_count; ++index) {
+      const patchblob_tensor_contract_v2 *input = &target->tensors[index];
+      bool observed_scalar = input_count == 2u && index == 1u && input->element_count == 1u;
+      if (!observed_scalar && (input->element_count != output->element_count ||
+                               input->span_bytes != output->span_bytes)) {
+        return unsupported(diagnostic, "version 2 input tensor shape is unsupported");
+      }
+    }
+  }
+
+  invocation_offset = invocations->offset + (size_t)target->invocation_index * ACT_INVOCATION_SIZE;
+  if (read_u32(layout->blob.data + invocation_offset) != target->range_index) {
+    return unsupported(diagnostic, "selected invocation does not reference the selected range");
+  }
+  base = parameter_bases[target->invocation_index];
+  limit = invocation_parameter_limit(parameter_bases, invocation_count, base, params->size);
+  if (limit - base < (uint64_t)target->tensor_count * MEMREF_SIZE) {
+    return unsupported(diagnostic, "selected invocation parameter block is too small");
+  }
+  {
+    size_t special_count;
+    npunlock_status status =
+        count_data_pointer_relocations(layout, base, limit, &special_count, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      return status;
+    }
+    if (special_count != target->tensor_count) {
+      return unsupported(
+          diagnostic, "selected invocation parameter block has an unexpected data-pointer layout");
+    }
+  }
+  for (index = 0; index < target->tensor_count; ++index) {
+    const patchblob_tensor_contract_v2 *expected = &target->tensors[index];
+    uint32_t dtype = dtype_from_public_precision_v2(expected->precision);
+    npunlock_status status =
+        validate_memref(layout, base + (uint64_t)index * MEMREF_SIZE, &actual[index], diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      return status;
+    }
+    if (actual[index].element_count != expected->element_count ||
+        actual[index].span_bytes != expected->span_bytes || actual[index].dtype_kind != dtype) {
+      return unsupported(diagnostic, "tensor does not match the version 2 element contract");
+    }
+  }
+  for (index = 0; index < input_count; ++index) {
+    if (actual[index].data_symbol != actual[input_count].data_symbol) {
+      return unsupported(diagnostic,
+                         "selected invocation tensors do not share the observed address space");
+    }
+    if (spans_overlap((uint64_t)actual[index].data_addend, actual[index].span_bytes,
+                      (uint64_t)actual[input_count].data_addend, actual[input_count].span_bytes)) {
+      return unsupported(diagnostic, "selected invocation output overlaps an input tensor");
+    }
+  }
+  range_offset = ranges->offset + (size_t)target->range_index * ACT_RANGE_SIZE;
+  if (read_u32(layout->blob.data + range_offset + 4u) != GRAPH_CODE_ADDRESS ||
+      read_u32(layout->blob.data + range_offset + 8u) != 0u) {
+    return unsupported(diagnostic,
+                       "selected range does not use the observed ACT code-address form");
+  }
+  memset(detail, 0, sizeof(*detail));
+  detail->invocation_index = target->invocation_index;
+  detail->range_index = target->range_index;
+  detail->input_count = (uint32_t)input_count;
+  detail->parameter_base = base;
+  detail->element_count = output->element_count;
+  detail->span_bytes = output->span_bytes;
+  detail->target_flags_v2 = target->target_flags;
+  detail->tensor_count_v2 = target->tensor_count;
+  memcpy(detail->tensors_v2, target->tensors,
+         (size_t)target->tensor_count * sizeof(target->tensors[0]));
+  detail->extent_file_offset = range_offset + 0x0cu;
+  detail->old_extent = read_u32(layout->blob.data + detail->extent_file_offset);
+  return NPUNLOCK_STATUS_OK;
+}
+
 static npunlock_status find_range_relocation(const graph_layout *layout, uint32_t range_index,
                                              graph_relocation *found,
                                              npunlock_diagnostic *diagnostic) {
@@ -854,6 +1008,163 @@ fail:
   return status;
 }
 
+static bool tensor_contracts_v2_equal(const patchblob_target_v2 *left,
+                                      const patchblob_target_v2 *right) {
+  size_t index;
+  if (left->tensor_count != right->tensor_count || left->target_flags != right->target_flags) {
+    return false;
+  }
+  for (index = 0; index < left->tensor_count; ++index) {
+    const patchblob_tensor_contract_v2 *a = &left->tensors[index];
+    const patchblob_tensor_contract_v2 *b = &right->tensors[index];
+    if (a->role != b->role || a->tensor_index != b->tensor_index || a->precision != b->precision ||
+        a->element_count != b->element_count || a->span_bytes != b->span_bytes ||
+        a->observed_flags != b->observed_flags) {
+      return false;
+    }
+  }
+  return true;
+}
+
+npunlock_status npunlock_discover_graph_targets_v2(npunlock_view graph_blob,
+                                                   patchblob_discovered_target_v2 **targets,
+                                                   size_t *target_count, size_t *group_count,
+                                                   npunlock_diagnostic *diagnostic) {
+  graph_layout layout;
+  uint64_t *parameter_bases = NULL;
+  patchblob_discovered_target_v2 *discovered = NULL;
+  size_t invocation_count = 0;
+  size_t discovered_group_count = 0;
+  size_t index;
+  npunlock_status status;
+
+  *targets = NULL;
+  *target_count = 0;
+  *group_count = 0;
+  memset(&layout, 0, sizeof(layout));
+  status = parse_graph(graph_blob, &layout, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
+  }
+  status = invocation_parameter_bases(&layout, &parameter_bases, &invocation_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    graph_layout_release(&layout);
+    return status;
+  }
+  if (invocation_count == 0 || invocation_count > UINT32_MAX ||
+      layout.sections[layout.ranges_index].size / ACT_RANGE_SIZE > UINT32_MAX) {
+    status = unsupported(diagnostic, "ACT carrier has no discoverable invocation sequence");
+    goto fail;
+  }
+  discovered = (patchblob_discovered_target_v2 *)calloc(invocation_count, sizeof(*discovered));
+  if (discovered == NULL) {
+    status = npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.discover_v2", "could not allocate target metadata");
+    goto fail;
+  }
+  for (index = 0; index < invocation_count; ++index) {
+    const graph_section *invocations = &layout.sections[layout.invocations_index];
+    const graph_section *params = &layout.sections[layout.params_index];
+    const uint8_t *record = layout.blob.data + invocations->offset + index * ACT_INVOCATION_SIZE;
+    patchblob_target_v2 *target = &discovered[index].target;
+    npunlock_patch_detail detail;
+    graph_relocation range_relocation;
+    uint64_t base = parameter_bases[index];
+    uint64_t limit =
+        invocation_parameter_limit(parameter_bases, invocation_count, base, params->size);
+    size_t record_count;
+    size_t tensor_index;
+    size_t other;
+
+    status = count_data_pointer_relocations(&layout, base, limit, &record_count, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    if (record_count < 2u || record_count > PATCHBLOB_TARGET_V2_MAX_TENSORS ||
+        limit - base < record_count * MEMREF_SIZE) {
+      status = unsupported(diagnostic,
+                           "ACT invocation does not have a discoverable input/output contract");
+      goto fail;
+    }
+    discovered[index].struct_size = (uint32_t)sizeof(discovered[index]);
+    target->struct_size = (uint32_t)sizeof(*target);
+    target->abi_version = PATCHBLOB_TARGET_V2_ABI_VERSION;
+    target->invocation_index = (uint32_t)index;
+    target->range_index = read_u32(record);
+    target->tensor_count = (uint32_t)record_count;
+    for (tensor_index = 0; tensor_index < record_count; ++tensor_index) {
+      memref_contract actual;
+      patchblob_tensor_contract_v2 *tensor = &target->tensors[tensor_index];
+      bool is_output = tensor_index + 1u == record_count;
+      status = validate_memref(&layout, base + (uint64_t)tensor_index * MEMREF_SIZE, &actual,
+                               diagnostic);
+      if (status != NPUNLOCK_STATUS_OK) {
+        goto fail;
+      }
+      tensor->struct_size = (uint32_t)sizeof(*tensor);
+      tensor->role = is_output ? PATCHBLOB_TENSOR_ROLE_OUTPUT_V2 : PATCHBLOB_TENSOR_ROLE_INPUT_V2;
+      tensor->tensor_index = is_output ? 0u : (uint32_t)tensor_index;
+      tensor->precision = public_precision_v2(actual.dtype_kind);
+      tensor->element_count = actual.element_count;
+      tensor->span_bytes = actual.span_bytes;
+      tensor->observed_flags = PATCHBLOB_TENSOR_STATIC_V2 | PATCHBLOB_TENSOR_DENSE_V2 |
+                               PATCHBLOB_TENSOR_CMX_V2 |
+                               (is_output ? PATCHBLOB_TENSOR_DISJOINT_FROM_INPUTS_V2 : 0u);
+    }
+    for (tensor_index = 1; tensor_index < record_count; ++tensor_index) {
+      if (target->tensors[tensor_index].precision != target->tensors[0].precision) {
+        target->target_flags = PATCHBLOB_TARGET_UNARY_CONVERSION_V2;
+      }
+    }
+    status =
+        validate_target_v2(&layout, parameter_bases, invocation_count, target, &detail, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    status = find_range_relocation(&layout, target->range_index, &range_relocation, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    for (other = 0; other < index; ++other) {
+      if (discovered[other].target.range_index == target->range_index) {
+        status = unsupported(diagnostic, "ACT discovery found a range used more than once");
+        goto fail;
+      }
+    }
+    if (index == 0 || !invocation_group_identity_equal(&layout, index - 1u, index)) {
+      for (other = 0; other < index; ++other) {
+        if ((other == 0 || discovered[other - 1u].group_index != discovered[other].group_index) &&
+            invocation_group_identity_equal(&layout, other, index)) {
+          status = unsupported(diagnostic, "ACT group identity is non-contiguous and ambiguous");
+          goto fail;
+        }
+      }
+      if (discovered_group_count == UINT32_MAX) {
+        status = unsupported(diagnostic, "ACT group count exceeds the supported index range");
+        goto fail;
+      }
+      ++discovered_group_count;
+    } else if (!tensor_contracts_v2_equal(&discovered[index - 1u].target, target)) {
+      status = unsupported(diagnostic, "ACT group contains inconsistent tensor contracts");
+      goto fail;
+    }
+    discovered[index].group_index = (uint32_t)(discovered_group_count - 1u);
+  }
+
+  free(parameter_bases);
+  graph_layout_release(&layout);
+  *targets = discovered;
+  *target_count = invocation_count;
+  *group_count = discovered_group_count;
+  return NPUNLOCK_STATUS_OK;
+
+fail:
+  free(discovered);
+  free(parameter_bases);
+  graph_layout_release(&layout);
+  return status;
+}
+
 static bool old_byte_may_change(const graph_layout *layout, const npunlock_patch_summary *summary,
                                 size_t offset) {
   size_t index;
@@ -962,11 +1273,13 @@ void npunlock_patch_summary_release(npunlock_patch_summary *summary) {
   memset(summary, 0, sizeof(*summary));
 }
 
-npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,
-                                          const patchblob_target *targets, size_t target_count,
-                                          uint32_t image_alignment, uint32_t tail_padding,
-                                          npunlock_buffer *output, npunlock_patch_summary *summary,
-                                          npunlock_diagnostic *diagnostic) {
+static npunlock_status patch_graph_blob_impl(npunlock_view graph_blob, npunlock_view image,
+                                             const patchblob_target *targets,
+                                             const patchblob_target_v2 *targets_v2,
+                                             size_t target_count, uint32_t image_alignment,
+                                             uint32_t tail_padding, npunlock_buffer *output,
+                                             npunlock_patch_summary *summary,
+                                             npunlock_diagnostic *diagnostic) {
   graph_layout layout;
   graph_layout patched_layout;
   uint64_t *parameter_bases = NULL;
@@ -1004,25 +1317,63 @@ npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_vie
   summary->detail_count = target_count;
   for (index = 0; index < target_count; ++index) {
     graph_relocation relocation;
+    uint32_t invocation_index =
+        targets_v2 != NULL ? targets_v2[index].invocation_index : targets[index].invocation_index;
+    uint32_t range_index =
+        targets_v2 != NULL ? targets_v2[index].range_index : targets[index].range_index;
     size_t other;
     for (other = 0; other < index; ++other) {
-      if (targets[other].invocation_index == targets[index].invocation_index ||
-          targets[other].range_index == targets[index].range_index) {
+      uint32_t other_invocation =
+          targets_v2 != NULL ? targets_v2[other].invocation_index : targets[other].invocation_index;
+      uint32_t other_range =
+          targets_v2 != NULL ? targets_v2[other].range_index : targets[other].range_index;
+      if (other_invocation == invocation_index || other_range == range_index) {
         status = unsupported(diagnostic, "target invocation and range selections must be unique");
         goto fail;
       }
     }
-    status = validate_target(&layout, parameter_bases, invocation_count, &targets[index],
-                             &summary->details[index], diagnostic);
+    status = targets_v2 != NULL
+                 ? validate_target_v2(&layout, parameter_bases, invocation_count,
+                                      &targets_v2[index], &summary->details[index], diagnostic)
+                 : validate_target(&layout, parameter_bases, invocation_count, &targets[index],
+                                   &summary->details[index], diagnostic);
     if (status != NPUNLOCK_STATUS_OK) {
       goto fail;
     }
-    status = find_range_relocation(&layout, targets[index].range_index, &relocation, diagnostic);
+    status = find_range_relocation(&layout, range_index, &relocation, diagnostic);
     if (status != NPUNLOCK_STATUS_OK) {
       goto fail;
     }
     summary->details[index].addend_file_offset = relocation.file_offset + 16u;
     summary->details[index].old_addend = relocation.addend;
+  }
+  if (targets_v2 != NULL) {
+    for (index = 0; index < target_count; ++index) {
+      size_t invocation_index;
+      if ((targets_v2[index].target_flags & PATCHBLOB_TARGET_UNARY_CONVERSION_V2) == 0u) {
+        continue;
+      }
+      for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
+        size_t selected_index;
+        bool selected = false;
+        if (!invocation_group_identity_equal(&layout, targets_v2[index].invocation_index,
+                                             invocation_index)) {
+          continue;
+        }
+        for (selected_index = 0; selected_index < target_count; ++selected_index) {
+          if (targets_v2[selected_index].invocation_index == invocation_index) {
+            selected = true;
+            break;
+          }
+        }
+        if (!selected) {
+          status = unsupported(
+              diagnostic,
+              "version 2 conversion targets must include the complete ACT replica group");
+          goto fail;
+        }
+      }
+    }
   }
   text = &layout.sections[layout.kernel_text_index];
   summary->insertion_file_offset = text->offset + text->size;
@@ -1141,4 +1492,23 @@ fail:
   graph_layout_release(&layout);
   npunlock_patch_summary_release(summary);
   return status;
+}
+
+npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,
+                                          const patchblob_target *targets, size_t target_count,
+                                          uint32_t image_alignment, uint32_t tail_padding,
+                                          npunlock_buffer *output, npunlock_patch_summary *summary,
+                                          npunlock_diagnostic *diagnostic) {
+  return patch_graph_blob_impl(graph_blob, image, targets, NULL, target_count, image_alignment,
+                               tail_padding, output, summary, diagnostic);
+}
+
+npunlock_status npunlock_patch_graph_blob_v2(npunlock_view graph_blob, npunlock_view image,
+                                             const patchblob_target_v2 *targets,
+                                             size_t target_count, uint32_t image_alignment,
+                                             uint32_t tail_padding, npunlock_buffer *output,
+                                             npunlock_patch_summary *summary,
+                                             npunlock_diagnostic *diagnostic) {
+  return patch_graph_blob_impl(graph_blob, image, NULL, targets, target_count, image_alignment,
+                               tail_padding, output, summary, diagnostic);
 }

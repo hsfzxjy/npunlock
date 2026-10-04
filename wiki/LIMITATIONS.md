@@ -15,7 +15,7 @@ output does not match that contract.
 | SHAVE target | `3720xx` |
 | graph compiler | current path validated with version 8.3 |
 | primary custom tensors | static, dense FP16 |
-| FP32 | validated unary accuracy-mode carrier and one same-precision scalar-input binary carrier |
+| FP32 | validated unary accuracy-mode carrier, one same-precision scalar-input binary carrier, and explicit unary FP16/FP32 conversion |
 | binary custom kernel | static dense FP16 carriers with uniform inputs or a scalar second input; one FP32 scalar-input carrier |
 | kernel image | one linked executable image, shareable by selected ranges |
 | execution | installed Intel NPU driver through Level Zero |
@@ -92,20 +92,22 @@ Static dense FP16 is the established general MVP path. FP32 support is limited
 to the documented unary carrier and one scalar-second-input binary carrier,
 both with precision-conversion suppression and accuracy-mode graph compilation.
 
-Other dtypes, mixed-precision custom groups, FP32 binary kernels beyond the
-scalar-second-input carrier, and implicit dtype conversion are unsupported.
+Other dtypes, mixed-precision contracts beyond unary FP16/FP32 conversion,
+FP32 binary kernels beyond the scalar-second-input carrier, and implicit dtype
+conversion are unsupported.
 
 One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those
 ACT groups remains internally single-precision.
 
-A later pair of connected conversion experiments established that custom ACT
-invocations can convert 32 dense FP32 elements to FP16 and 32 dense FP16
-elements to FP32. Those results are ABI evidence, not current product support:
-the public `patchblob_target` has only one precision flag and one span, so
-discovery still rejects this unequal-span contract. The test also found a matching full-tensor
-range that was not observable at the selected graph output, making automatic
-group-to-partition mapping unsafe without more scheduling evidence.
+The version 2 patch contract describes every input and output record
+independently. It supports the observed unary FP32-to-FP16 and FP16-to-FP32
+layouts when input and output have equal element counts and their spans match
+their precision. Both compiler-generated tile replicas must be selected. The
+Python frontend exposes these groups but requires explicit prepared-graph
+binding; it does not treat the replicas as partitions or automatically map an
+inserted conversion to a source node. The connected conversion example has
+executed both directions in one graph and matched its host oracle exactly.
 
 A later `[1,32]` binary-carrier experiment preserved a host-provided `[1,1]`
 operand as one scalar ACT descriptor beside eight-element input/output chunks.

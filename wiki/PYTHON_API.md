@@ -274,6 +274,24 @@ source-name mapping. Group filtering is a convenience over validated metadata,
 not proof that a group implements the caller's intended operation; ambiguous
 graphs still require an informed explicit choice.
 
+Mixed-precision unary conversion groups use version 2 per-tensor targets.
+Their `ActGroup.input_dtypes` and `ActGroup.output_dtype` properties expose the
+separate contracts, and `ActGroup.unary_conversion` identifies the currently
+supported FP16/FP32 conversion form:
+
+```python
+(to_f16,) = prepared.find_groups(
+    input_dtypes=("f32",), output_dtype="f16"
+)
+program = prepared.build(bindings={converted: to_f16})
+```
+
+These groups always require explicit binding. The compiler-generated targets
+are full-tensor tile replicas, so the frontend patches the complete selected
+group without summing its element counts. See
+[`example_conversion_kernels.py`](../examples/example_conversion_kernels.py)
+for both directions in one connected graph.
+
 Pass MoviTools and kernel-build settings to `prepared.build()` in the same way
 as `npu.compile()`:
 

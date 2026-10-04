@@ -120,6 +120,13 @@ source-node-name lookup. Fused, optimized-away, inserted-conversion,
 DPU-containing, or otherwise ambiguous graphs require explicit validated
 targets or are rejected.
 
+The version 2 contract records each invocation tensor separately—role,
+precision, element count, byte span, and observed layout flags. It is currently
+used only for equal-element unary FP32-to-FP16 and FP16-to-FP32 conversion
+groups. Their two full-tensor tile replicas are patched together and are not
+summed as output partitions. Python exposes these groups for explicit binding;
+automatic source mapping remains disabled for them.
+
 ## 5. Substitute the executable image
 
 `patchblob` extracts `.text` from the validated SHAVE ELF, appends it to the

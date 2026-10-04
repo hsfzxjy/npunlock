@@ -220,11 +220,14 @@ binary operation: input A at +0x00, input B at +0x28, output at +0x50
 ```
 
 An FP16 span is `element_count * 2`; an FP32 span is
-`element_count * 4`. The output span must not alias an input span. The
-currently supported patch-target ABI requires all inputs and the output to
-describe matching element counts, one precision, and one byte span. Those are
-product constraints, not universal record rules: the experimental conversion
-and scalar-broadcast observations below demonstrate unequal spans and counts.
+`element_count * 4`. The output span must not alias an input span. The original
+`patchblob_target` ABI requires all inputs and the output to describe one
+precision and normally one byte span, with one explicit scalar-second-input
+exception. The additive `patchblob_target_v2` ABI instead records each
+tensor's role, precision, element count, span, and observed flags. Version 2
+currently accepts only the same established layouts plus equal-element unary
+FP32-to-FP16 and FP16-to-FP32 conversion. It is not a general mixed-dtype or
+broadcasting ABI.
 
 ## Validated examples
 

@@ -58,8 +58,11 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
   size_t capacity;
   report_writer writer;
   size_t index;
+  const char *schema = summary->detail_count != 0 && summary->details[0].tensor_count_v2 != 0u
+                           ? "npunlock.patchblob.v2"
+                           : "npunlock.patchblob.v1";
 
-  if (!npunlock_checked_mul_size(summary->detail_count, 640u, &target_space) ||
+  if (!npunlock_checked_mul_size(summary->detail_count, 2048u, &target_space) ||
       !npunlock_checked_add_size(2048u, target_space, &capacity)) {
     return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OVERFLOW, "patchblob.report",
                                    "patch report size overflows");
@@ -78,7 +81,7 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
   digest_hex(elf_digest, elf_hash);
   digest_hex(output_digest, output_hash);
   if (!report_append(&writer,
-                     "{\"schema\":\"npunlock.patchblob.v1\","
+                     "{\"schema\":\"%s\","
                      "\"input_graph_sha256\":\"%s\",\"shave_elf_sha256\":\"%s\","
                      "\"output_graph_sha256\":\"%s\","
                      "\"append\":{\"file_offset\":%zu,\"inserted_size\":%zu,"
@@ -86,7 +89,7 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
                      "\"section_table\":{\"old_offset\":%zu,\"new_offset\":%zu},"
                      "\"validation\":{\"section_contents_preserved\":true,"
                      "\"mutation_set_preserved\":true},\"targets\":[",
-                     graph_hash, elf_hash, output_hash, summary->insertion_file_offset,
+                     schema, graph_hash, elf_hash, output_hash, summary->insertion_file_offset,
                      summary->inserted_size, summary->image_base, summary->image_size,
                      summary->old_section_table_offset, summary->new_section_table_offset)) {
     free(writer.data);
@@ -95,6 +98,46 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
   }
   for (index = 0; index < summary->detail_count; ++index) {
     const npunlock_patch_detail *detail = &summary->details[index];
+    if (detail->tensor_count_v2 != 0u) {
+      size_t tensor_index;
+      if (!report_append(&writer,
+                         "%s{\"invocation_index\":%u,\"range_index\":%u,\"input_count\":%u,"
+                         "\"parameter_base\":%" PRIu64 ",\"contract_version\":2,"
+                         "\"target_flags\":%u,\"extent\":{\"file_offset\":%zu,"
+                         "\"old\":%u,\"new\":%u},\"code_relocation_addend\":{"
+                         "\"file_offset\":%zu,\"old\":%" PRId64 ",\"new\":%" PRId64
+                         "},\"tensors\":[",
+                         index == 0 ? "" : ",", detail->invocation_index, detail->range_index,
+                         detail->input_count, detail->parameter_base, detail->target_flags_v2,
+                         detail->extent_file_offset, detail->old_extent, detail->new_extent,
+                         detail->addend_file_offset, detail->old_addend, detail->new_addend)) {
+        free(writer.data);
+        return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.report", "patch report buffer was too small");
+      }
+      for (tensor_index = 0; tensor_index < detail->tensor_count_v2; ++tensor_index) {
+        const patchblob_tensor_contract_v2 *tensor = &detail->tensors_v2[tensor_index];
+        const char *role = tensor->role == PATCHBLOB_TENSOR_ROLE_INPUT_V2 ? "input" : "output";
+        const char *precision =
+            tensor->precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2 ? "fp16" : "fp32";
+        if (!report_append(&writer,
+                           "%s{\"role\":\"%s\",\"tensor_index\":%u,\"precision\":\"%s\","
+                           "\"element_count\":%" PRIu64 ",\"span_bytes\":%" PRIu64
+                           ",\"observed_flags\":%u}",
+                           tensor_index == 0 ? "" : ",", role, tensor->tensor_index, precision,
+                           tensor->element_count, tensor->span_bytes, tensor->observed_flags)) {
+          free(writer.data);
+          return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                         "patchblob.report", "patch report buffer was too small");
+        }
+      }
+      if (!report_append(&writer, "]}")) {
+        free(writer.data);
+        return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.report", "patch report buffer was too small");
+      }
+      continue;
+    }
     const char *precision =
         (detail->contract_flags & PATCHBLOB_CONTRACT_FP16) != 0u ? "fp16" : "fp32";
     const char *scalar_contract = (detail->contract_flags & PATCHBLOB_CONTRACT_INPUT_1_SCALAR) != 0u
@@ -124,6 +167,24 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
                                    "patch report buffer was too small");
   }
   return npunlock_buffer_adopt_malloc((uint8_t *)writer.data, writer.size, report);
+}
+
+static bool valid_target_v2(const patchblob_target_v2 *target) {
+  size_t index;
+  if (target->struct_size < sizeof(*target) ||
+      target->abi_version != PATCHBLOB_TARGET_V2_ABI_VERSION ||
+      target->invocation_index == PATCHBLOB_UNUSED_INDEX ||
+      target->range_index == PATCHBLOB_UNUSED_INDEX || target->tensor_count < 2u ||
+      target->tensor_count > PATCHBLOB_TARGET_V2_MAX_TENSORS) {
+    return false;
+  }
+  for (index = 0; index < target->tensor_count; ++index) {
+    if (target->tensors[index].struct_size < sizeof(target->tensors[index]) ||
+        target->tensors[index].element_count == 0 || target->tensors[index].span_bytes == 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 npunlock_status patchblob_patch(const patchblob_options *options, npunlock_view graph_blob,
@@ -184,6 +245,60 @@ npunlock_status patchblob_patch(const patchblob_options *options, npunlock_view 
   return NPUNLOCK_STATUS_OK;
 }
 
+npunlock_status patchblob_patch_v2(const patchblob_options *options, npunlock_view graph_blob,
+                                   npunlock_view shave_elf, const patchblob_target_v2 *targets,
+                                   size_t target_count, patchblob_result *result) {
+  npunlock_shave_image shave_image;
+  npunlock_patch_summary summary;
+  npunlock_buffer patched = {0};
+  npunlock_buffer report = {0};
+  npunlock_status status;
+  size_t index;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  memset(&summary, 0, sizeof(summary));
+  if (options == NULL || options->struct_size < sizeof(*options) ||
+      !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0 ||
+      !npunlock_view_is_valid(shave_elf) || shave_elf.size == 0 || targets == NULL ||
+      target_count == 0 || options->image_alignment == 0 ||
+      (options->image_alignment & (options->image_alignment - 1)) != 0) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.validate_v2",
+                                   "invalid options, input views, or target list");
+  }
+  for (index = 0; index < target_count; ++index) {
+    if (!valid_target_v2(&targets[index])) {
+      return npunlock_set_diagnostic(
+          &result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT, "patchblob.validate_target_v2",
+          "each version 2 target requires explicit selectors and tensor contracts");
+    }
+  }
+  status = npunlock_parse_shave_elf(shave_elf, &shave_image, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
+  }
+  status = npunlock_patch_graph_blob_v2(
+      graph_blob, (npunlock_view){shave_elf.data + shave_image.file_offset, shave_image.size},
+      targets, target_count, options->image_alignment, options->tail_padding, &patched, &summary,
+      &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
+  }
+  status = build_report(graph_blob, shave_elf, (npunlock_view){patched.data, patched.size},
+                        &summary, &report, &result->diagnostic);
+  npunlock_patch_summary_release(&summary);
+  if (status != NPUNLOCK_STATUS_OK) {
+    npunlock_buffer_release(&patched);
+    return status;
+  }
+  result->graph_blob = patched;
+  result->report_json = report;
+  return NPUNLOCK_STATUS_OK;
+}
+
 npunlock_status patchblob_discover_targets(npunlock_view graph_blob,
                                            patchblob_discovery_result *result) {
   if (result == NULL) {
@@ -200,6 +315,30 @@ npunlock_status patchblob_discover_targets(npunlock_view graph_blob,
 }
 
 void patchblob_discovery_result_release(patchblob_discovery_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->targets);
+  npunlock_diagnostic_release(&result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
+npunlock_status patchblob_discover_targets_v2(npunlock_view graph_blob,
+                                              patchblob_discovery_result_v2 *result) {
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (!npunlock_view_is_valid(graph_blob) || graph_blob.size == 0) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.discover_v2", "graph blob view is invalid or empty");
+  }
+  return npunlock_discover_graph_targets_v2(graph_blob, &result->targets, &result->target_count,
+                                            &result->group_count, &result->diagnostic);
+}
+
+void patchblob_discovery_result_v2_release(patchblob_discovery_result_v2 *result) {
   if (result == NULL) {
     return;
   }

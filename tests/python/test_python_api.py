@@ -312,6 +312,10 @@ class FakeNative:
         self.discovery_blob = graph_blob
         return self.discovery_groups
 
+    def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTargetV2, ...], ...]:
+        self.discovery_v2_blob = graph_blob
+        return self.discovery_groups_v2
+
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
         self.infer_args = (graph_blob, values, kwargs)
@@ -518,6 +522,40 @@ class CompilationFlowTests(unittest.TestCase):
         prepared = npu.prepare(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
         program = prepared.build(bindings={y: prepared.groups}, movi_dll_dir="movi")
 
+        self.assertEqual(fake.patch_args[2], targets)
+        self.assertEqual(program.graph_blob, b"patched")
+
+    def test_prepared_graph_exposes_mixed_precision_tensor_contracts(self) -> None:
+        class MixedNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"mixed precision")
+
+        tensors = (
+            npu.PatchTensorContract("input", 0, "f32", 16, 64, 0x07),
+            npu.PatchTensorContract("output", 0, "f16", 16, 32, 0x0F),
+        )
+        targets = tuple(npu.PatchTargetV2(index, index, tensors, 1) for index in range(2))
+        reverse_tensors = (
+            npu.PatchTensorContract("input", 0, "f16", 16, 32, 0x07),
+            npu.PatchTensorContract("output", 0, "f32", 16, 64, 0x0F),
+        )
+        reverse_targets = tuple(npu.PatchTargetV2(index + 2, index + 2, reverse_tensors, 1) for index in range(2))
+        fake = MixedNative()
+        fake.discovery_groups_v2 = (targets, reverse_targets)
+        x = npu.input("x", shape=(1, 16), dtype="f32")
+        y = npu.custom(x, source=b"convert", carrier="Abs", _dtype="f16", _name="converted")
+
+        prepared = npu.prepare(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+
+        self.assertEqual(fake.discovery_v2_blob, b"native")
+        self.assertEqual(prepared.mappings[0].status, "explicit-required")
+        self.assertEqual(prepared.mappings[0].group_indices, ())
+        (group,) = prepared.find_groups(input_dtypes=("f32",), output_dtype="f16")
+        self.assertTrue(group.unary_conversion)
+        self.assertIn("f32->f16", prepared.explain())
+        with self.assertRaisesRegex(ValueError, "tensor precisions"):
+            prepared.build(bindings={y: prepared.groups[1]}, movi_dll_dir="movi")
+        program = prepared.build(bindings={y: group}, movi_dll_dir="movi")
         self.assertEqual(fake.patch_args[2], targets)
         self.assertEqual(program.graph_blob, b"patched")
 

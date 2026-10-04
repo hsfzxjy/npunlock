@@ -231,11 +231,7 @@ mutation, and returns a new blob plus a JSON preservation report.
 
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
-carrier and same-precision scalar-second-input binary carrier. Controlled
-experiments have executed both FP32-input/FP16-output and FP16-input/FP32-output
-ACT kernels, but this public structure cannot express their separate record
-spans or precisions and therefore does not make conversion groups
-patch-compatible.
+carrier and same-precision scalar-second-input binary carrier.
 
 `PATCHBLOB_CONTRACT_INPUT_1_SCALAR` describes the one supported unequal-count
 case. It is valid only for two-input, same-precision targets: input 0 and the
@@ -250,6 +246,29 @@ the result with `patchblob_discovery_result_release()`. Discovery is based on a
 narrow observed NPU3720/compiler-8.3 invocation identity and tensor contract;
 callers must correlate the group count and order with their own graph before
 patching.
+
+The additive version 2 API describes every tensor record independently:
+
+```text
+patchblob_tensor_contract_v2
+  role + tensor index + FP16/FP32 precision + element count + byte span + flags
+
+patchblob_target_v2
+  ABI version + invocation/range selectors + fixed tensor-contract array
+```
+
+Use `patchblob_discover_targets_v2()` and
+`patchblob_discovery_result_v2_release()` for discovery, then
+`patchblob_patch_v2()` to patch those targets. The fixed nine-record array
+covers the current maximum of eight inputs plus one output without placing
+caller-owned pointers inside the ABI structure.
+
+Mixed precision is intentionally limited to equal-element unary FP32-to-FP16
+and FP16-to-FP32 conversion. A patch must include the complete positional
+replica group; selecting only one tile replica is rejected. Version 2 does not
+enable arbitrary mixed types, broadcasting, element-count conversion, or
+multiple outputs. The original API remains unchanged and continues to reject
+unequal input/output precision.
 
 Do not use source-level graph node names as patch selectors. Unsupported or
 ambiguous graph structures fail closed.
@@ -308,5 +327,6 @@ waits. Each caller chooses copied or shared tensors and sets a finite timeout.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
-unary FP32 accuracy-mode carrier. Other devices, dtypes, layouts, dynamic
-shapes, and arbitrary source-node mapping are not implied.
+unary FP32 accuracy-mode carrier and explicit unary FP16/FP32 conversion.
+Other devices, dtypes, layouts, dynamic shapes, and arbitrary source-node
+mapping are not implied.

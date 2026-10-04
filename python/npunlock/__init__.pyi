@@ -54,9 +54,43 @@ class PatchTarget:
         contract_flags: int = ...,
     ) -> None: ...
 
+class PatchTensorContract:
+    role: str
+    index: int
+    dtype: str
+    element_count: int
+    span_bytes: int
+    observed_flags: int
+    def __init__(
+        self,
+        role: str,
+        index: int,
+        dtype: str,
+        element_count: int,
+        span_bytes: int,
+        observed_flags: int,
+    ) -> None: ...
+
+class PatchTargetV2:
+    invocation_index: int
+    range_index: int
+    tensors: tuple[PatchTensorContract, ...]
+    target_flags: int
+    def __init__(
+        self,
+        invocation_index: int,
+        range_index: int,
+        tensors: tuple[PatchTensorContract, ...],
+        target_flags: int = ...,
+    ) -> None: ...
+    @property
+    def input_count(self) -> int: ...
+    @property
+    def output(self) -> PatchTensorContract: ...
+
 class ActGroup:
     index: int
-    targets: tuple[PatchTarget, ...]
+    targets: tuple[PatchTarget | PatchTargetV2, ...]
     @property
     def input_count(self) -> int | None: ...
     @property
@@ -73,6 +107,12 @@ class ActGroup:
     def range_indices(self) -> tuple[int, ...]: ...
     @property
     def input_1_scalar(self) -> bool: ...
+    @property
+    def input_dtypes(self) -> tuple[str, ...] | None: ...
+    @property
+    def output_dtype(self) -> str | None: ...
+    @property
+    def unary_conversion(self) -> bool: ...
 
 class CustomMapping:
     output: Tensor
@@ -117,6 +157,7 @@ class SerializedIR:
 
 class NativeLibraries:
     def __init__(self, directory: str | PathLike[str] | None = ...) -> None: ...
+    def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[PatchTargetV2, ...], ...]: ...
 
 class SharedArray(np.ndarray): ...
 
@@ -160,6 +201,8 @@ class PreparedGraph:
         *,
         input_count: int | None = ...,
         dtype: str | None = ...,
+        input_dtypes: tuple[str, ...] | None = ...,
+        output_dtype: str | None = ...,
         element_count: int | None = ...,
         input_1_scalar: bool | None = ...,
     ) -> tuple[ActGroup, ...]: ...
@@ -186,7 +229,7 @@ def custom(
     _dtype: object | None = ...,
     _outputs: Sequence[TensorSpec] | None = ...,
     _name: str | None = ...,
-    _patch_targets: Sequence[PatchTarget] | None = ...,
+    _patch_targets: Sequence[PatchTarget | PatchTargetV2] | None = ...,
     **attributes: object,
 ) -> Tensor | tuple[Tensor, ...]: ...
 def prepare(

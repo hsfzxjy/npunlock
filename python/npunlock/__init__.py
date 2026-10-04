@@ -26,6 +26,8 @@ from ._native import (
     NativeSharedBuffer,
     PatchResult,
     PatchTarget,
+    PatchTargetV2,
+    PatchTensorContract,
 )
 from .graph import Graph, Node, constant, custom, input, op
 from .ir import SerializedIR, serialize_ir
@@ -45,6 +47,8 @@ __all__ = [
     "Node",
     "PatchResult",
     "PatchTarget",
+    "PatchTargetV2",
+    "PatchTensorContract",
     "PreparedGraph",
     "Program",
     "SerializedIR",
@@ -172,7 +176,7 @@ class ActGroup:
     """One validated positional ACT group discovered in a native carrier."""
 
     index: int
-    targets: tuple[PatchTarget, ...]
+    targets: tuple[PatchTarget | PatchTargetV2, ...]
 
     @property
     def input_count(self) -> int | None:
@@ -181,6 +185,14 @@ class ActGroup:
 
     @property
     def dtype(self) -> str | None:
+        if any(isinstance(target, PatchTargetV2) for target in self.targets):
+            values = {
+                tensor.dtype
+                for target in self.targets
+                if isinstance(target, PatchTargetV2)
+                for tensor in target.tensors
+            }
+            return next(iter(values)) if len(values) == 1 else None
         values = {
             (
                 "f16"
@@ -193,14 +205,22 @@ class ActGroup:
 
     @property
     def element_count(self) -> int:
+        if self.targets and all(isinstance(target, PatchTargetV2) for target in self.targets):
+            values = {target.output.element_count for target in self.targets if isinstance(target, PatchTargetV2)}
+            return next(iter(values)) if len(values) == 1 else sum(values)
         return sum(target.element_count for target in self.targets)
 
     @property
     def span_bytes(self) -> int:
+        if self.targets and all(isinstance(target, PatchTargetV2) for target in self.targets):
+            values = {target.output.span_bytes for target in self.targets if isinstance(target, PatchTargetV2)}
+            return next(iter(values)) if len(values) == 1 else sum(values)
         return sum(target.span_bytes for target in self.targets)
 
     @property
     def contract_flags(self) -> int | None:
+        if any(isinstance(target, PatchTargetV2) for target in self.targets):
+            return None
         values = {target.contract_flags for target in self.targets}
         return next(iter(values)) if len(values) == 1 else None
 
@@ -216,6 +236,32 @@ class ActGroup:
     def input_1_scalar(self) -> bool:
         flags = self.contract_flags
         return flags is not None and bool(flags & 0x40)
+
+    @property
+    def input_dtypes(self) -> tuple[str, ...] | None:
+        if not self.targets or not all(isinstance(target, PatchTargetV2) for target in self.targets):
+            dtype = self.dtype
+            count = self.input_count
+            return (dtype,) * count if dtype is not None and count is not None else None
+        values = {
+            tuple(tensor.dtype for tensor in target.tensors if tensor.role == "input")
+            for target in self.targets
+            if isinstance(target, PatchTargetV2)
+        }
+        return next(iter(values)) if len(values) == 1 else None
+
+    @property
+    def output_dtype(self) -> str | None:
+        if not self.targets or not all(isinstance(target, PatchTargetV2) for target in self.targets):
+            return self.dtype
+        values = {target.output.dtype for target in self.targets if isinstance(target, PatchTargetV2)}
+        return next(iter(values)) if len(values) == 1 else None
+
+    @property
+    def unary_conversion(self) -> bool:
+        return bool(self.targets) and all(
+            isinstance(target, PatchTargetV2) and target.target_flags == 1 for target in self.targets
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -795,19 +841,30 @@ def _automatic_group_indices(
     return tuple(solutions[0][node] for node in custom_nodes), "unique exact-cover partition mapping"
 
 
-def _embedded_target_groups(custom_nodes: tuple[Node, ...]) -> tuple[tuple[PatchTarget, ...], ...] | None:
+PatchTargetContract = PatchTarget | PatchTargetV2
+
+
+def _embedded_target_groups(
+    custom_nodes: tuple[Node, ...],
+) -> tuple[tuple[PatchTargetContract, ...], ...] | None:
     if not custom_nodes:
         return None
     supplied = tuple(node.metadata.get("_patch_targets") for node in custom_nodes)
     if not any(value is not None for value in supplied):
         return None
     if not all(
-        isinstance(value, tuple) and value and all(isinstance(target, PatchTarget) for target in value)
+        isinstance(value, tuple)
+        and value
+        and all(isinstance(target, (PatchTarget, PatchTargetV2)) for target in value)
+        and (
+            all(isinstance(target, PatchTarget) for target in value)
+            or all(isinstance(target, PatchTargetV2) for target in value)
+        )
         for value in supplied
     ):
         raise ValueError(
             "either omit _patch_targets for every custom node or provide a non-empty "
-            "PatchTarget sequence for every custom node"
+            "same-version PatchTarget sequence for every custom node"
         )
     return supplied  # type: ignore[return-value]
 
@@ -841,13 +898,15 @@ class PreparedGraph:
     _libraries: NativeLibraries = field(repr=False, compare=False)
     _timeout_ms: int = field(repr=False, compare=False)
     _automatic_indices: tuple[tuple[int, ...], ...] | None = field(repr=False, compare=False)
-    _embedded_targets: tuple[tuple[PatchTarget, ...], ...] | None = field(repr=False, compare=False)
+    _embedded_targets: tuple[tuple[PatchTargetContract, ...], ...] | None = field(repr=False, compare=False)
 
     def find_groups(
         self,
         *,
         input_count: int | None = None,
         dtype: str | None = None,
+        input_dtypes: tuple[str, ...] | None = None,
+        output_dtype: str | None = None,
         element_count: int | None = None,
         input_1_scalar: bool | None = None,
     ) -> tuple[ActGroup, ...]:
@@ -859,6 +918,14 @@ class PreparedGraph:
             raise ValueError("input_count must be a positive integer or None")
         if dtype is not None and dtype not in {"f16", "f32"}:
             raise ValueError("dtype must be 'f16', 'f32', or None")
+        if input_dtypes is not None and (
+            not isinstance(input_dtypes, tuple)
+            or not input_dtypes
+            or any(value not in {"f16", "f32"} for value in input_dtypes)
+        ):
+            raise ValueError("input_dtypes must be a non-empty tuple of 'f16'/'f32' values or None")
+        if output_dtype is not None and output_dtype not in {"f16", "f32"}:
+            raise ValueError("output_dtype must be 'f16', 'f32', or None")
         if element_count is not None and (
             isinstance(element_count, bool) or not isinstance(element_count, int) or element_count <= 0
         ):
@@ -870,6 +937,8 @@ class PreparedGraph:
             for group in self.groups
             if (input_count is None or group.input_count == input_count)
             and (dtype is None or group.dtype == dtype)
+            and (input_dtypes is None or group.input_dtypes == input_dtypes)
+            and (output_dtype is None or group.output_dtype == output_dtype)
             and (element_count is None or group.element_count == element_count)
             and (input_1_scalar is None or group.input_1_scalar == input_1_scalar)
         )
@@ -886,7 +955,11 @@ class PreparedGraph:
             lines.append("  (none discovered or raw explicit targets are in use)")
         for group in self.groups:
             flags = "mixed" if group.contract_flags is None else f"0x{group.contract_flags:08x}"
-            dtype = group.dtype or "unknown"
+            dtype = group.dtype or (
+                f"{','.join(group.input_dtypes or ('?',))}->{group.output_dtype or '?'}"
+                if group.unary_conversion
+                else "unknown"
+            )
             lines.append(
                 f"  [{group.index}] inputs={group.input_count} dtype={dtype} "
                 f"elements={group.element_count} span={group.span_bytes} "
@@ -952,7 +1025,7 @@ class PreparedGraph:
         if self._embedded_targets is not None and supplied_bindings:
             raise ValueError("prepared bindings cannot be combined with embedded _patch_targets")
 
-        target_groups: tuple[tuple[PatchTarget, ...], ...]
+        target_groups: tuple[tuple[PatchTargetContract, ...], ...]
         if self._embedded_targets is not None:
             target_groups = self._embedded_targets
         else:
@@ -978,7 +1051,7 @@ class PreparedGraph:
                 )
 
             used: dict[int, Node] = {}
-            selected_targets: list[tuple[PatchTarget, ...]] = []
+            selected_targets: list[tuple[PatchTargetContract, ...]] = []
             for node in custom_nodes:
                 indices = bound_indices[node] if node in bound_indices else automatic[node]
                 for index in indices:
@@ -997,7 +1070,22 @@ class PreparedGraph:
                             f"ACT group {indices[0]} does not match custom node "
                             f"{node.name or '<unnamed>'!r} input arity"
                         )
+                    if targets and all(isinstance(target, PatchTargetV2) for target in targets):
+                        input_dtypes = {
+                            tuple(tensor.dtype for tensor in target.tensors if tensor.role == "input")
+                            for target in targets
+                        }
+                        output_dtypes = {target.output.dtype for target in targets}
+                        expected_inputs = tuple(value.dtype for value in node.inputs)
+                        expected_output = node.outputs[0].dtype
+                        if input_dtypes != {expected_inputs} or output_dtypes != {expected_output}:
+                            raise ValueError(
+                                f"ACT group {indices[0]} tensor precisions do not match custom node "
+                                f"{node.name or '<unnamed>'!r}"
+                            )
                 else:
+                    if any(isinstance(target, PatchTargetV2) for group in groups for target in group):
+                        raise ValueError("version 2 per-tensor ACT contracts require one explicit group")
                     combined = _combined_custom_targets(node, groups)
                     if combined is None:
                         raise ValueError(
@@ -1083,9 +1171,20 @@ def prepare(
                 for node in serialized.custom_nodes
             )
         else:
-            discovered = native.discover_patch_targets(ir_result.graph_blob)
-            groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered))
-            automatic_indices, reason = _automatic_group_indices(graph, serialized.custom_nodes, discovered)
+            try:
+                discovered = native.discover_patch_targets(ir_result.graph_blob)
+            except NativeError as error:
+                if error.status != 5:
+                    raise
+                discovered_v2 = native.discover_patch_targets_v2(ir_result.graph_blob)
+                groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered_v2))
+                reason = (
+                    "per-tensor version 2 discovery found a mixed-precision ACT contract; "
+                    "explicit group binding is required"
+                )
+            else:
+                groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered))
+                automatic_indices, reason = _automatic_group_indices(graph, serialized.custom_nodes, discovered)
             mappings = tuple(
                 CustomMapping(
                     node.outputs[0],

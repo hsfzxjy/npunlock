@@ -140,6 +140,48 @@ class _PatchDiscoveredTarget(ctypes.Structure):
     ]
 
 
+class _PatchTensorContractV2(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("role", ctypes.c_uint32),
+        ("tensor_index", ctypes.c_uint32),
+        ("precision", ctypes.c_uint32),
+        ("element_count", ctypes.c_uint64),
+        ("span_bytes", ctypes.c_uint64),
+        ("observed_flags", ctypes.c_uint32),
+    ]
+
+
+class _PatchTargetV2(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("invocation_index", ctypes.c_uint32),
+        ("range_index", ctypes.c_uint32),
+        ("tensor_count", ctypes.c_uint32),
+        ("target_flags", ctypes.c_uint32),
+        ("tensors", _PatchTensorContractV2 * 9),
+    ]
+
+
+class _PatchDiscoveredTargetV2(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("group_index", ctypes.c_uint32),
+        ("target", _PatchTargetV2),
+    ]
+
+
+class _PatchDiscoveryResultV2(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("targets", ctypes.POINTER(_PatchDiscoveredTargetV2)),
+        ("target_count", ctypes.c_size_t),
+        ("group_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _PatchDiscoveryResult(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -261,6 +303,57 @@ class PatchTarget:
                 raise ValueError(f"{name} must be a positive uint64")
         if self.input_count == 0:
             raise ValueError("input_count must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class PatchTensorContract:
+    role: str
+    index: int
+    dtype: str
+    element_count: int
+    span_bytes: int
+    observed_flags: int
+
+    def __post_init__(self) -> None:
+        if self.role not in {"input", "output"}:
+            raise ValueError("tensor role must be 'input' or 'output'")
+        if self.dtype not in {"f16", "f32"}:
+            raise ValueError("tensor dtype must be 'f16' or 'f32'")
+        for name in ("index", "observed_flags"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFF:
+                raise ValueError(f"{name} must fit uint32")
+        for name in ("element_count", "span_bytes"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= 0xFFFFFFFFFFFFFFFF:
+                raise ValueError(f"{name} must be a positive uint64")
+
+
+@dataclass(frozen=True, slots=True)
+class PatchTargetV2:
+    invocation_index: int
+    range_index: int
+    tensors: tuple[PatchTensorContract, ...]
+    target_flags: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("invocation_index", "range_index", "target_flags"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFF:
+                raise ValueError(f"{name} must fit uint32")
+        if not 2 <= len(self.tensors) <= 9 or not all(isinstance(value, PatchTensorContract) for value in self.tensors):
+            raise ValueError("version 2 targets require two to nine tensor contracts")
+
+    @property
+    def input_count(self) -> int:
+        return sum(value.role == "input" for value in self.tensors)
+
+    @property
+    def output(self) -> PatchTensorContract:
+        outputs = tuple(value for value in self.tensors if value.role == "output")
+        if len(outputs) != 1:
+            raise ValueError("version 2 target must contain exactly one output")
+        return outputs[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,6 +696,15 @@ class NativeLibraries:
             ctypes.POINTER(_PatchResult),
         ]
         self.patch.patchblob_patch.restype = ctypes.c_int
+        self.patch.patchblob_patch_v2.argtypes = [
+            ctypes.POINTER(_PatchOptions),
+            _View,
+            _View,
+            ctypes.POINTER(_PatchTargetV2),
+            ctypes.c_size_t,
+            ctypes.POINTER(_PatchResult),
+        ]
+        self.patch.patchblob_patch_v2.restype = ctypes.c_int
         self.patch.patchblob_result_release.argtypes = [ctypes.POINTER(_PatchResult)]
         self.patch.patchblob_discover_targets.argtypes = [
             _View,
@@ -610,6 +712,12 @@ class NativeLibraries:
         ]
         self.patch.patchblob_discover_targets.restype = ctypes.c_int
         self.patch.patchblob_discovery_result_release.argtypes = [ctypes.POINTER(_PatchDiscoveryResult)]
+        self.patch.patchblob_discover_targets_v2.argtypes = [
+            _View,
+            ctypes.POINTER(_PatchDiscoveryResultV2),
+        ]
+        self.patch.patchblob_discover_targets_v2.restype = ctypes.c_int
+        self.patch.patchblob_discovery_result_v2_release.argtypes = [ctypes.POINTER(_PatchDiscoveryResultV2)]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -788,7 +896,7 @@ class NativeLibraries:
         self,
         graph_blob: bytes,
         shave_elf: bytes,
-        targets: Iterable[PatchTarget],
+        targets: Iterable[PatchTarget | PatchTargetV2],
         *,
         image_alignment: int = 0x400,
         tail_padding: int = 0x80,
@@ -796,31 +904,58 @@ class NativeLibraries:
         target_values = tuple(targets)
         if not target_values:
             raise ValueError("at least one explicit patch target is required")
-        native_targets = (_PatchTarget * len(target_values))(
-            *(
-                _PatchTarget(
-                    ctypes.sizeof(_PatchTarget),
-                    target.invocation_index,
-                    target.range_index,
-                    target.input_count,
-                    target.element_count,
-                    target.span_bytes,
-                    target.contract_flags,
+        v2 = all(isinstance(target, PatchTargetV2) for target in target_values)
+        if not v2 and not all(isinstance(target, PatchTarget) for target in target_values):
+            raise TypeError("patch targets must use one contract version")
+        if v2:
+            native_targets_v2 = (_PatchTargetV2 * len(target_values))()
+            for target_index, target_value in enumerate(target_values):
+                target = target_value
+                assert isinstance(target, PatchTargetV2)
+                native = native_targets_v2[target_index]
+                native.struct_size = ctypes.sizeof(_PatchTargetV2)
+                native.abi_version = 2
+                native.invocation_index = target.invocation_index
+                native.range_index = target.range_index
+                native.tensor_count = len(target.tensors)
+                native.target_flags = target.target_flags
+                for tensor_index, tensor in enumerate(target.tensors):
+                    native_tensor = native.tensors[tensor_index]
+                    native_tensor.struct_size = ctypes.sizeof(_PatchTensorContractV2)
+                    native_tensor.role = {"input": 1, "output": 2}[tensor.role]
+                    native_tensor.tensor_index = tensor.index
+                    native_tensor.precision = {"f16": 1, "f32": 2}[tensor.dtype]
+                    native_tensor.element_count = tensor.element_count
+                    native_tensor.span_bytes = tensor.span_bytes
+                    native_tensor.observed_flags = tensor.observed_flags
+        else:
+            native_targets = (_PatchTarget * len(target_values))(
+                *(
+                    _PatchTarget(
+                        ctypes.sizeof(_PatchTarget),
+                        target.invocation_index,
+                        target.range_index,
+                        target.input_count,
+                        target.element_count,
+                        target.span_bytes,
+                        target.contract_flags,
+                    )
+                    for target in target_values
+                    if isinstance(target, PatchTarget)
                 )
-                for target in target_values
             )
-        )
         graph_view, graph_owner = _owned_view(graph_blob)
         elf_view, elf_owner = _owned_view(shave_elf)
         _ = (graph_owner, elf_owner)
         options = _PatchOptions(ctypes.sizeof(_PatchOptions), image_alignment, tail_padding)
         result = _PatchResult()
         result.struct_size = ctypes.sizeof(_PatchResult)
-        status = self.patch.patchblob_patch(
+        patch_function = self.patch.patchblob_patch_v2 if v2 else self.patch.patchblob_patch
+        status = patch_function(
             ctypes.byref(options),
             graph_view,
             elf_view,
-            native_targets,
+            native_targets_v2 if v2 else native_targets,
             len(target_values),
             ctypes.byref(result),
         )
@@ -861,6 +996,52 @@ class NativeLibraries:
             return tuple(tuple(group) for group in groups)
         finally:
             self.patch.patchblob_discovery_result_release(ctypes.byref(result))
+
+    def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[PatchTargetV2, ...], ...]:
+        graph_view, graph_owner = _owned_view(graph_blob)
+        _ = graph_owner
+        result = _PatchDiscoveryResultV2()
+        result.struct_size = ctypes.sizeof(_PatchDiscoveryResultV2)
+        status = self.patch.patchblob_discover_targets_v2(graph_view, ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise("patchblob discovery v2", status, result.diagnostic)
+            groups: list[list[PatchTargetV2]] = [[] for _ in range(result.group_count)]
+            roles = {1: "input", 2: "output"}
+            precisions = {1: "f16", 2: "f32"}
+            for index in range(result.target_count):
+                discovered = result.targets[index]
+                if discovered.group_index >= result.group_count:
+                    raise RuntimeError("patchblob returned an invalid discovered group index")
+                target = discovered.target
+                tensors: list[PatchTensorContract] = []
+                for tensor_index in range(target.tensor_count):
+                    tensor = target.tensors[tensor_index]
+                    if tensor.role not in roles or tensor.precision not in precisions:
+                        raise RuntimeError("patchblob returned an unknown tensor role or precision")
+                    tensors.append(
+                        PatchTensorContract(
+                            roles[tensor.role],
+                            tensor.tensor_index,
+                            precisions[tensor.precision],
+                            tensor.element_count,
+                            tensor.span_bytes,
+                            tensor.observed_flags,
+                        )
+                    )
+                groups[discovered.group_index].append(
+                    PatchTargetV2(
+                        target.invocation_index,
+                        target.range_index,
+                        tuple(tensors),
+                        target.target_flags,
+                    )
+                )
+            if any(not group for group in groups):
+                raise RuntimeError("patchblob returned an empty discovered target group")
+            return tuple(tuple(group) for group in groups)
+        finally:
+            self.patch.patchblob_discovery_result_v2_release(ctypes.byref(result))
 
     def infer_graph(
         self,

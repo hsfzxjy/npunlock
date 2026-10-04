@@ -15,6 +15,9 @@ typedef struct npunlock_patch_detail {
   uint64_t element_count;
   uint64_t span_bytes;
   uint32_t contract_flags;
+  uint32_t target_flags_v2;
+  uint32_t tensor_count_v2;
+  patchblob_tensor_contract_v2 tensors_v2[PATCHBLOB_TARGET_V2_MAX_TENSORS];
   size_t extent_file_offset;
   size_t addend_file_offset;
   uint32_t old_extent;
@@ -41,10 +44,20 @@ npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_vie
                                           uint32_t image_alignment, uint32_t tail_padding,
                                           npunlock_buffer *output, npunlock_patch_summary *summary,
                                           npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_patch_graph_blob_v2(npunlock_view graph_blob, npunlock_view image,
+                                             const patchblob_target_v2 *targets,
+                                             size_t target_count, uint32_t image_alignment,
+                                             uint32_t tail_padding, npunlock_buffer *output,
+                                             npunlock_patch_summary *summary,
+                                             npunlock_diagnostic *diagnostic);
 void npunlock_patch_summary_release(npunlock_patch_summary *summary);
 npunlock_status npunlock_discover_graph_targets(npunlock_view graph_blob,
                                                 patchblob_discovered_target **targets,
                                                 size_t *target_count, size_t *group_count,
                                                 npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_discover_graph_targets_v2(npunlock_view graph_blob,
+                                                   patchblob_discovered_target_v2 **targets,
+                                                   size_t *target_count, size_t *group_count,
+                                                   npunlock_diagnostic *diagnostic);
 
 #endif

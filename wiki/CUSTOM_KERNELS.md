@@ -113,6 +113,46 @@ carriers or multi-input support.
 Although the symbolic IR serializer accepts additional data-type names, that
 does not make them valid custom-kernel or `Program.run()` contracts.
 
+## Mixed-precision conversion kernels
+
+The version 2 target ABI supports the two execution-tested unary conversion
+layouts: dense FP32 input to FP16 output and dense FP16 input to FP32 output,
+with equal element counts. A conversion kernel uses the ordinary descriptor
+positions but gives the pointers different C types:
+
+```c
+const float *input = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
+__fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);
+```
+
+The reverse direction uses `const __fp16 *` and `float *`. The graph compiler
+emits two full-tensor tile replicas for each tested conversion group, so select
+the complete discovered group; do not interpret the two targets as output
+partitions.
+
+Python deliberately requires explicit prepared-graph binding for these
+groups. Filter on the independently validated input and output contracts:
+
+```python
+prepared = npu.prepare(graph)
+(to_f16_group,) = prepared.find_groups(
+    input_dtypes=("f32",), output_dtype="f16"
+)
+program = prepared.build(bindings={custom_output: to_f16_group})
+```
+
+The native C interface represents the same information with
+`patchblob_tensor_contract_v2`, `patchblob_target_v2`,
+`patchblob_discover_targets_v2()`, and `patchblob_patch_v2()`. The original
+target ABI remains available and still rejects unequal input/output
+precisions. Version 2 does not imply arbitrary mixed input types, element-count
+changes, broadcasting, or automatic conversion insertion.
+
+See the complete
+[connected conversion example](../examples/example_conversion_kernels.py),
+which runs custom conversions in both directions around an ordinary FP16
+operation and checks the final FP32 tensor against NumPy.
+
 ## Invocation-local memory
 
 The Intel compiler partitions tensors into ACT invocations. The descriptor
