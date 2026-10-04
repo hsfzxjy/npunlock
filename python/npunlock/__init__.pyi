@@ -45,6 +45,33 @@ class PatchTarget:
         contract_flags: int = ...,
     ) -> None: ...
 
+class ActGroup:
+    index: int
+    targets: tuple[PatchTarget, ...]
+    @property
+    def input_count(self) -> int | None: ...
+    @property
+    def dtype(self) -> str | None: ...
+    @property
+    def element_count(self) -> int: ...
+    @property
+    def span_bytes(self) -> int: ...
+    @property
+    def contract_flags(self) -> int | None: ...
+    @property
+    def invocation_indices(self) -> tuple[int, ...]: ...
+    @property
+    def range_indices(self) -> tuple[int, ...]: ...
+    @property
+    def input_1_scalar(self) -> bool: ...
+
+class CustomMapping:
+    output: Tensor
+    name: str
+    status: str
+    group_indices: tuple[int, ...]
+    reason: str
+
 class InferenceInput:
     selector: int | str
     data: bytes
@@ -100,6 +127,31 @@ class Program:
         outputs: Mapping[str, object] | None = ...,
     ) -> Mapping[str, object]: ...
 
+class PreparedGraph:
+    graph: Graph
+    serialized_ir: SerializedIR
+    ir_provenance: IrCompileResult
+    groups: tuple[ActGroup, ...]
+    mappings: tuple[CustomMapping, ...]
+    def find_groups(
+        self,
+        *,
+        input_count: int | None = ...,
+        dtype: str | None = ...,
+        element_count: int | None = ...,
+        input_1_scalar: bool | None = ...,
+    ) -> tuple[ActGroup, ...]: ...
+    def explain(self) -> str: ...
+    def build(
+        self,
+        *,
+        bindings: Mapping[Tensor, object] | None = ...,
+        movi_dll_dir: str | PathLike[str] | None = ...,
+        linker_script: str | PathLike[str] | bytes | None = ...,
+        definitions: tuple[str, ...] = ...,
+        movi_worker: str | None = ...,
+    ) -> Program: ...
+
 def input(name: str, *, shape: object, dtype: object) -> Tensor: ...
 def configure(*, movi_dll_dir: str | PathLike[str] | None) -> None: ...
 def constant(value: object, *, name: str | None = ...) -> Tensor: ...
@@ -115,6 +167,15 @@ def custom(
     _patch_targets: Sequence[PatchTarget] | None = ...,
     **attributes: object,
 ) -> Tensor | tuple[Tensor, ...]: ...
+def prepare(
+    graph: Graph,
+    *,
+    native_dir: str | PathLike[str] | None = ...,
+    build_flags: str = ...,
+    timeout_ms: int = ...,
+    ir_worker: str | None = ...,
+    libraries: Any = ...,
+) -> PreparedGraph: ...
 def compile(
     graph: Graph,
     *,

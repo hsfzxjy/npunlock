@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from math import prod
 from pathlib import Path
@@ -26,6 +27,8 @@ from .ir import SerializedIR, serialize_ir
 from .tensor import DType, Shape, Tensor, TensorSpec
 
 __all__ = [
+    "ActGroup",
+    "CustomMapping",
     "DType",
     "Graph",
     "InferenceInput",
@@ -37,6 +40,7 @@ __all__ = [
     "Node",
     "PatchResult",
     "PatchTarget",
+    "PreparedGraph",
     "Program",
     "SerializedIR",
     "Shape",
@@ -51,6 +55,7 @@ __all__ = [
     "load_native",
     "load_native_file",
     "op",
+    "prepare",
     "serialize_ir",
 ]
 
@@ -128,6 +133,68 @@ class SharedArray(np.ndarray):
 class _ProgramSharedState:
     def __init__(self) -> None:
         self.session: InferenceSession | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActGroup:
+    """One validated positional ACT group discovered in a native carrier."""
+
+    index: int
+    targets: tuple[PatchTarget, ...]
+
+    @property
+    def input_count(self) -> int | None:
+        values = {target.input_count for target in self.targets}
+        return next(iter(values)) if len(values) == 1 else None
+
+    @property
+    def dtype(self) -> str | None:
+        values = {
+            (
+                "f16"
+                if target.contract_flags & 0x04 and not target.contract_flags & 0x20
+                else "f32" if target.contract_flags & 0x20 and not target.contract_flags & 0x04 else None
+            )
+            for target in self.targets
+        }
+        return next(iter(values)) if len(values) == 1 else None
+
+    @property
+    def element_count(self) -> int:
+        return sum(target.element_count for target in self.targets)
+
+    @property
+    def span_bytes(self) -> int:
+        return sum(target.span_bytes for target in self.targets)
+
+    @property
+    def contract_flags(self) -> int | None:
+        values = {target.contract_flags for target in self.targets}
+        return next(iter(values)) if len(values) == 1 else None
+
+    @property
+    def invocation_indices(self) -> tuple[int, ...]:
+        return tuple(target.invocation_index for target in self.targets)
+
+    @property
+    def range_indices(self) -> tuple[int, ...]:
+        return tuple(target.range_index for target in self.targets)
+
+    @property
+    def input_1_scalar(self) -> bool:
+        flags = self.contract_flags
+        return flags is not None and bool(flags & 0x40)
+
+
+@dataclass(frozen=True, slots=True)
+class CustomMapping:
+    """The prepared carrier's current mapping decision for one custom node."""
+
+    output: Tensor
+    name: str
+    status: str
+    group_indices: tuple[int, ...]
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,31 +437,33 @@ def _combined_custom_targets(
     return targets
 
 
-def _automatic_target_groups(
+def _automatic_group_indices(
     graph: Graph,
     custom_nodes: tuple[Node, ...],
     discovered_groups: tuple[tuple[PatchTarget, ...], ...],
-) -> tuple[tuple[PatchTarget, ...], ...]:
+) -> tuple[tuple[tuple[int, ...], ...] | None, str]:
     computational_nodes = tuple(node for node in graph.nodes if node.op not in {"Parameter", "Const"})
 
     # Keep the established positional contract unchanged when it applies.
     if len(discovered_groups) == len(computational_nodes):
-        node_groups = dict(zip(computational_nodes, discovered_groups))
-        selected = tuple(node_groups[node] for node in custom_nodes)
-        for node, targets in zip(custom_nodes, selected):
+        node_groups = {node: index for index, node in enumerate(computational_nodes)}
+        selected = tuple((node_groups[node],) for node in custom_nodes)
+        for node, indices in zip(custom_nodes, selected):
+            targets = discovered_groups[indices[0]]
             if any(target.input_count != len(node.inputs) for target in targets):
-                raise ValueError(
-                    f"discovered ACT group for custom node {node.name or '<unnamed>'!r} "
-                    "does not match its input arity"
+                return (
+                    None,
+                    f"discovered ACT group {indices[0]} for custom node "
+                    f"{node.name or '<unnamed>'!r} does not match its input arity",
                 )
-        return selected
+        return selected, "one-to-one positional mapping"
 
-    solutions: list[dict[Node, tuple[PatchTarget, ...]]] = []
+    solutions: list[dict[Node, tuple[int, ...]]] = []
 
     def visit(
         node_index: int,
         group_index: int,
-        selected: dict[Node, tuple[PatchTarget, ...]],
+        selected: dict[Node, tuple[int, ...]],
     ) -> None:
         if len(solutions) > 1:
             return
@@ -422,20 +491,334 @@ def _automatic_target_groups(
                 if targets is None:
                     continue
             if node in custom_nodes:
-                selected[node] = targets
+                selected[node] = tuple(range(group_index, group_index + take))
             visit(node_index + 1, group_index + take, selected)
             selected.pop(node, None)
 
     visit(0, 0, {})
     if len(solutions) != 1:
         reason = "no" if not solutions else "multiple"
-        raise ValueError(
+        return None, (
             f"native graph has {len(discovered_groups)} positional ACT groups for "
             f"{len(computational_nodes)} computational nodes and {reason} valid mapping; "
             "automatic selection requires a one-to-one positional mapping or one unique "
-            "exact-cover partition mapping, otherwise provide explicit _patch_targets"
+            "exact-cover partition mapping"
         )
-    return tuple(solutions[0][node] for node in custom_nodes)
+    return tuple(solutions[0][node] for node in custom_nodes), "unique exact-cover partition mapping"
+
+
+def _embedded_target_groups(custom_nodes: tuple[Node, ...]) -> tuple[tuple[PatchTarget, ...], ...] | None:
+    if not custom_nodes:
+        return None
+    supplied = tuple(node.metadata.get("_patch_targets") for node in custom_nodes)
+    if not any(value is not None for value in supplied):
+        return None
+    if not all(
+        isinstance(value, tuple) and value and all(isinstance(target, PatchTarget) for target in value)
+        for value in supplied
+    ):
+        raise ValueError(
+            "either omit _patch_targets for every custom node or provide a non-empty "
+            "PatchTarget sequence for every custom node"
+        )
+    return supplied  # type: ignore[return-value]
+
+
+def _effective_build_flags(serialized: SerializedIR, build_flags: str) -> str:
+    preserves_fp32_custom = any(
+        any(output.dtype == "f32" for output in node.outputs) for node in serialized.custom_nodes
+    )
+    if not preserves_fp32_custom:
+        return build_flags
+    accuracy_flag = 'EXECUTION_MODE_HINT="ACCURACY"'
+    if not build_flags:
+        return f"--config {accuracy_flag}"
+    if accuracy_flag not in build_flags:
+        raise ValueError(
+            "FP32 custom kernels require build_flags containing "
+            'EXECUTION_MODE_HINT="ACCURACY" to prevent FP16 lowering'
+        )
+    return build_flags
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedGraph:
+    """A carrier compiled once and ready for custom-kernel target binding."""
+
+    graph: Graph
+    serialized_ir: SerializedIR
+    ir_provenance: IrCompileResult
+    groups: tuple[ActGroup, ...]
+    mappings: tuple[CustomMapping, ...]
+    _libraries: NativeLibraries = field(repr=False, compare=False)
+    _timeout_ms: int = field(repr=False, compare=False)
+    _automatic_indices: tuple[tuple[int, ...], ...] | None = field(repr=False, compare=False)
+    _embedded_targets: tuple[tuple[PatchTarget, ...], ...] | None = field(repr=False, compare=False)
+
+    def find_groups(
+        self,
+        *,
+        input_count: int | None = None,
+        dtype: str | None = None,
+        element_count: int | None = None,
+        input_1_scalar: bool | None = None,
+    ) -> tuple[ActGroup, ...]:
+        """Return groups matching caller-specified validated contract fields."""
+
+        if input_count is not None and (
+            isinstance(input_count, bool) or not isinstance(input_count, int) or input_count <= 0
+        ):
+            raise ValueError("input_count must be a positive integer or None")
+        if dtype is not None and dtype not in {"f16", "f32"}:
+            raise ValueError("dtype must be 'f16', 'f32', or None")
+        if element_count is not None and (
+            isinstance(element_count, bool) or not isinstance(element_count, int) or element_count <= 0
+        ):
+            raise ValueError("element_count must be a positive integer or None")
+        if input_1_scalar is not None and not isinstance(input_1_scalar, bool):
+            raise TypeError("input_1_scalar must be bool or None")
+        return tuple(
+            group
+            for group in self.groups
+            if (input_count is None or group.input_count == input_count)
+            and (dtype is None or group.dtype == dtype)
+            and (element_count is None or group.element_count == element_count)
+            and (input_1_scalar is None or group.input_1_scalar == input_1_scalar)
+        )
+
+    def explain(self) -> str:
+        """Render the discovered groups and mapping decisions deterministically."""
+
+        lines = [
+            f"graph {self.graph.name!r}: {len(self.groups)} ACT groups, "
+            f"{len(self.serialized_ir.custom_nodes)} custom nodes",
+            "ACT groups:",
+        ]
+        if not self.groups:
+            lines.append("  (none discovered or raw explicit targets are in use)")
+        for group in self.groups:
+            flags = "mixed" if group.contract_flags is None else f"0x{group.contract_flags:08x}"
+            dtype = group.dtype or "unknown"
+            lines.append(
+                f"  [{group.index}] inputs={group.input_count} dtype={dtype} "
+                f"elements={group.element_count} span={group.span_bytes} "
+                f"targets={len(group.targets)} flags={flags}"
+            )
+        lines.append("Custom mappings:")
+        if not self.mappings:
+            lines.append("  (no custom nodes)")
+        for mapping in self.mappings:
+            groups = ",".join(str(index) for index in mapping.group_indices) or "none"
+            lines.append(f"  {mapping.name}: {mapping.status}; groups={groups}; {mapping.reason}")
+        return "\n".join(lines)
+
+    def _normalize_binding(self, value: object) -> tuple[int, ...]:
+        values: tuple[object, ...]
+        if isinstance(value, (int, ActGroup)) and not isinstance(value, bool):
+            values = (value,)
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            values = tuple(value)
+        else:
+            raise TypeError("a prepared binding must be an ActGroup, group index, or sequence of them")
+        if not values:
+            raise ValueError("a prepared binding must select at least one ACT group")
+        indices: list[int] = []
+        for item in values:
+            if isinstance(item, bool):
+                raise TypeError("ACT group indices must be integers")
+            if isinstance(item, ActGroup):
+                index = item.index
+                if not 0 <= index < len(self.groups) or self.groups[index] != item:
+                    raise ValueError("ActGroup does not belong to this PreparedGraph")
+            elif isinstance(item, int):
+                index = item
+                if not 0 <= index < len(self.groups):
+                    raise ValueError(f"ACT group index {index} is out of range")
+            else:
+                raise TypeError("prepared binding sequences may contain only ActGroup or int values")
+            if index in indices:
+                raise ValueError(f"ACT group {index} is selected more than once for one custom node")
+            indices.append(index)
+        return tuple(indices)
+
+    def build(
+        self,
+        *,
+        bindings: Mapping[Tensor, object] | None = None,
+        movi_dll_dir: str | Path | None = None,
+        linker_script: str | Path | bytes | None = None,
+        definitions: tuple[str, ...] = (),
+        movi_worker: str | None = None,
+    ) -> Program:
+        """Compile and patch custom kernels into this prepared carrier."""
+
+        custom_nodes = self.serialized_ir.custom_nodes
+        resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
+        if custom_nodes and resolved_movi_dll_dir is None:
+            raise ValueError(
+                "custom kernels require an MVC_DEPEND root from movi_dll_dir, " "configure(), or NPUNLOCK_MOVITOOLS_DIR"
+            )
+        if bindings is not None and not isinstance(bindings, Mapping):
+            raise TypeError("bindings must be a mapping from custom output tensors to ACT groups")
+        supplied_bindings = {} if bindings is None else dict(bindings)
+        if self._embedded_targets is not None and supplied_bindings:
+            raise ValueError("prepared bindings cannot be combined with embedded _patch_targets")
+
+        target_groups: tuple[tuple[PatchTarget, ...], ...]
+        if self._embedded_targets is not None:
+            target_groups = self._embedded_targets
+        else:
+            bound_indices: dict[Node, tuple[int, ...]] = {}
+            for output, value in supplied_bindings.items():
+                if not isinstance(output, Tensor) or output.producer not in custom_nodes:
+                    raise ValueError("prepared binding keys must be outputs of custom nodes in this graph")
+                node = output.producer
+                if node in bound_indices:
+                    raise ValueError(f"custom node {node.name or '<unnamed>'!r} is bound more than once")
+                if len(node.outputs) != 1:
+                    raise ValueError("prepared group bindings currently require one output per custom node")
+                bound_indices[node] = self._normalize_binding(value)
+
+            automatic = dict(zip(custom_nodes, self._automatic_indices)) if self._automatic_indices is not None else {}
+            missing = [node for node in custom_nodes if node not in bound_indices and node not in automatic]
+            if missing:
+                names = ", ".join(repr(node.name or "<unnamed>") for node in missing)
+                reason = self.mappings[0].reason if self.mappings else "no automatic mapping"
+                raise ValueError(
+                    f"prepared graph needs explicit bindings for custom nodes {names}: {reason}; "
+                    "pass bindings={custom_output: prepared_group}"
+                )
+
+            used: dict[int, Node] = {}
+            selected_targets: list[tuple[PatchTarget, ...]] = []
+            for node in custom_nodes:
+                indices = bound_indices[node] if node in bound_indices else automatic[node]
+                for index in indices:
+                    previous = used.get(index)
+                    if previous is not None:
+                        raise ValueError(
+                            f"ACT group {index} is assigned to both "
+                            f"{previous.name or '<unnamed>'!r} and {node.name or '<unnamed>'!r}"
+                        )
+                    used[index] = node
+                groups = tuple(self.groups[index].targets for index in indices)
+                if len(groups) == 1:
+                    targets = groups[0]
+                    if any(target.input_count != len(node.inputs) for target in targets):
+                        raise ValueError(
+                            f"ACT group {indices[0]} does not match custom node "
+                            f"{node.name or '<unnamed>'!r} input arity"
+                        )
+                else:
+                    combined = _combined_custom_targets(node, groups)
+                    if combined is None:
+                        raise ValueError(
+                            f"ACT groups {indices!r} do not form a compatible exact cover for "
+                            f"custom node {node.name or '<unnamed>'!r}"
+                        )
+                    targets = combined
+                selected_targets.append(targets)
+            target_groups = tuple(selected_targets)
+
+        blob = self.ir_provenance.graph_blob
+        reports: list[bytes] = []
+        if custom_nodes:
+            assert resolved_movi_dll_dir is not None
+            script = (
+                linker_script
+                if isinstance(linker_script, bytes) or linker_script is None
+                else Path(linker_script).read_bytes()
+            )
+            for node, target_values in zip(custom_nodes, target_groups):
+                elf = self._libraries.compile_shave(
+                    _kernel_source(node.metadata.get("_kernel")),
+                    movi_dll_dir=resolved_movi_dll_dir,
+                    linker_script=script,
+                    definitions=definitions,
+                    timeout_ms=self._timeout_ms,
+                    worker=movi_worker,
+                )
+                patched = self._libraries.patch_graph(blob, elf, target_values)
+                blob = patched.graph_blob
+                reports.append(patched.report_json)
+        return Program(
+            blob,
+            self.graph,
+            self.serialized_ir,
+            self.ir_provenance,
+            tuple(reports),
+            self._libraries,
+            self._timeout_ms,
+        )
+
+
+def prepare(
+    graph: Graph,
+    *,
+    native_dir: str | Path | None = None,
+    build_flags: str = "",
+    timeout_ms: int = 20_000,
+    ir_worker: str | None = None,
+    libraries: NativeLibraries | None = None,
+) -> PreparedGraph:
+    """Compile a carrier graph once and expose its validated ACT groups."""
+
+    if not isinstance(graph, Graph):
+        raise TypeError("prepare() requires a Graph")
+    serialized = serialize_ir(graph)
+    build_flags = _effective_build_flags(serialized, build_flags)
+    embedded_targets = _embedded_target_groups(serialized.custom_nodes)
+    if embedded_targets is None and any(len(node.outputs) != 1 for node in serialized.custom_nodes):
+        raise ValueError("automatic and prepared patch selection currently require one output per custom node")
+    native = libraries or NativeLibraries(native_dir)
+    ir_result = native.compile_ir(
+        serialized.xml,
+        serialized.weights,
+        build_flags=build_flags,
+        timeout_ms=timeout_ms,
+        worker=ir_worker,
+    )
+
+    groups: tuple[ActGroup, ...] = ()
+    automatic_indices: tuple[tuple[int, ...], ...] | None = None
+    mappings: tuple[CustomMapping, ...] = ()
+    if serialized.custom_nodes:
+        if embedded_targets is not None:
+            mappings = tuple(
+                CustomMapping(
+                    node.outputs[0],
+                    node.name or "<unnamed>",
+                    "raw-explicit",
+                    (),
+                    "using caller-supplied _patch_targets; positional discovery was skipped",
+                )
+                for node in serialized.custom_nodes
+            )
+        else:
+            discovered = native.discover_patch_targets(ir_result.graph_blob)
+            groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered))
+            automatic_indices, reason = _automatic_group_indices(graph, serialized.custom_nodes, discovered)
+            mappings = tuple(
+                CustomMapping(
+                    node.outputs[0],
+                    node.name or "<unnamed>",
+                    "automatic" if automatic_indices is not None else "explicit-required",
+                    automatic_indices[index] if automatic_indices is not None else (),
+                    reason,
+                )
+                for index, node in enumerate(serialized.custom_nodes)
+            )
+    return PreparedGraph(
+        graph,
+        serialized,
+        ir_result,
+        groups,
+        mappings,
+        native,
+        timeout_ms,
+        automatic_indices,
+        embedded_targets,
+    )
 
 
 def compile(
@@ -453,82 +836,17 @@ def compile(
 ) -> Program:
     if not isinstance(graph, Graph):
         raise TypeError("compile() requires a Graph")
-    serialized = serialize_ir(graph)
-    preserves_fp32_custom = any(
-        any(output.dtype == "f32" for output in node.outputs) for node in serialized.custom_nodes
-    )
-    if preserves_fp32_custom:
-        accuracy_flag = 'EXECUTION_MODE_HINT="ACCURACY"'
-        if not build_flags:
-            build_flags = f"--config {accuracy_flag}"
-        elif accuracy_flag not in build_flags:
-            raise ValueError(
-                "FP32 custom kernels require build_flags containing "
-                'EXECUTION_MODE_HINT="ACCURACY" to prevent FP16 lowering'
-            )
-    resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
-    explicit_target_groups: tuple[tuple[PatchTarget, ...], ...] | None = None
-    if serialized.custom_nodes:
-        if resolved_movi_dll_dir is None:
-            raise ValueError(
-                "custom kernels require an MVC_DEPEND root from movi_dll_dir, " "configure(), or NPUNLOCK_MOVITOOLS_DIR"
-            )
-        supplied = tuple(node.metadata.get("_patch_targets") for node in serialized.custom_nodes)
-        if any(value is not None for value in supplied):
-            if not all(
-                isinstance(value, tuple) and value and all(isinstance(target, PatchTarget) for target in value)
-                for value in supplied
-            ):
-                raise ValueError(
-                    "either omit _patch_targets for every custom node or provide a non-empty "
-                    "PatchTarget sequence for every custom node"
-                )
-            explicit_target_groups = supplied  # type: ignore[assignment]
-        else:
-            if any(len(node.outputs) != 1 for node in serialized.custom_nodes):
-                raise ValueError("automatic patch selection currently requires one output per custom node")
-    native = libraries or NativeLibraries(native_dir)
-    ir_result = native.compile_ir(
-        serialized.xml,
-        serialized.weights,
+    prepared = prepare(
+        graph,
+        native_dir=native_dir,
         build_flags=build_flags,
         timeout_ms=timeout_ms,
-        worker=ir_worker,
+        ir_worker=ir_worker,
+        libraries=libraries,
     )
-    blob = ir_result.graph_blob
-    reports: list[bytes] = []
-    if serialized.custom_nodes:
-        assert resolved_movi_dll_dir is not None
-        script = (
-            linker_script
-            if isinstance(linker_script, bytes) or linker_script is None
-            else Path(linker_script).read_bytes()
-        )
-        target_groups = explicit_target_groups
-        if target_groups is None:
-            target_groups = _automatic_target_groups(
-                graph,
-                serialized.custom_nodes,
-                native.discover_patch_targets(blob),
-            )
-        for node, target_values in zip(serialized.custom_nodes, target_groups):
-            elf = native.compile_shave(
-                _kernel_source(node.metadata.get("_kernel")),
-                movi_dll_dir=resolved_movi_dll_dir,
-                linker_script=script,
-                definitions=definitions,
-                timeout_ms=timeout_ms,
-                worker=movi_worker,
-            )
-            patched = native.patch_graph(blob, elf, target_values)
-            blob = patched.graph_blob
-            reports.append(patched.report_json)
-    return Program(
-        blob,
-        graph,
-        serialized,
-        ir_result,
-        tuple(reports),
-        native,
-        timeout_ms,
+    return prepared.build(
+        movi_dll_dir=movi_dll_dir,
+        linker_script=linker_script,
+        definitions=definitions,
+        movi_worker=movi_worker,
     )

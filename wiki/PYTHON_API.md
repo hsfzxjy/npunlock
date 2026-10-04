@@ -107,13 +107,18 @@ compiled separately and installed after the native graph is returned. See
 [Custom kernels](CUSTOM_KERNELS.md) for the bundled NPU3720 include, entry
 function, tensor helpers, and math-link compatibility macro.
 
-Advanced callers may supply `_patch_targets`, but invocation and range indices
-are native compiler-output details. Normal code should rely on automatic
-selection only for graphs satisfying the documented positional contract. The
-usual case maps one ACT group to each computational node. If the compiler
-partitions one large custom operation into several consecutive groups,
-`npunlock` also accepts them when one unique exact-cover mapping can be proven
-from the declared output size and the groups' compatible ABI metadata.
+Normal code can rely on automatic selection only for graphs satisfying the
+documented positional contract. The usual case maps one ACT group to each
+computational node. If the compiler partitions one large custom operation into
+several consecutive groups, `npunlock` also accepts them when one unique
+exact-cover mapping can be proven from the declared output size and the
+groups' compatible ABI metadata.
+
+When compiler placement makes that mapping ambiguous, use a prepared graph as
+described in [Inspect and bind a prepared graph](#inspect-and-bind-a-prepared-graph).
+The lowest-level `_patch_targets` metadata remains available for callers with
+independently validated invocation and range indices, but it is not needed for
+the normal prepared-graph workflow.
 
 One unequal-input case is implemented: a static same-precision two-input
 carrier whose second input is a one-element scalar. Discovery records that
@@ -185,6 +190,67 @@ flags are otherwise empty. Caller-supplied flags for such a graph must include
 
 Compilation returns a `Program` containing the final graph bytes, serialized
 IR, driver/compiler provenance, and patch reports.
+
+## Inspect and bind a prepared graph
+
+`npu.prepare()` serializes the graph, asks the Intel graph compiler for the
+native carrier once, and discovers its validated ACT groups without compiling
+or patching the custom C yet:
+
+```python
+prepared = npu.prepare(graph)
+print(prepared.explain())
+```
+
+`prepared.groups` contains immutable `ActGroup` values. Each group reports its
+index, input count, FP16/FP32 dtype when uniform, total element and byte span,
+contract flags, and invocation/range indices. `prepared.mappings` records
+whether each custom node has an automatic mapping or needs an explicit caller
+choice.
+
+Filter groups by validated contract fields and bind them to the actual
+symbolic custom outputs:
+
+```python
+(unary_f32,) = prepared.find_groups(input_count=1, dtype="f32")
+(binary_f16,) = prepared.find_groups(input_count=2, dtype="f16")
+
+program = prepared.build(
+    bindings={
+        scaled_output: unary_f32,
+        mixed_output: binary_f16,
+    }
+)
+```
+
+A binding may use one `ActGroup`, its integer index, or an ordered sequence of
+groups for a compiler-partitioned custom operation. `build()` checks input
+arity, exact-cover requirements for multi-group operations, duplicate group
+assignment, and completeness before compiling the C kernels. It patches the
+carrier already held by `PreparedGraph`; it does not run graph compilation a
+second time.
+
+The binding key is a symbolic `Tensor` from the caller's graph, not an IR node
+name recovered from the native blob. Native blobs do not expose a proven
+source-name mapping. Group filtering is a convenience over validated metadata,
+not proof that a group implements the caller's intended operation; ambiguous
+graphs still require an informed explicit choice.
+
+Pass MoviTools and kernel-build settings to `prepared.build()` in the same way
+as `npu.compile()`:
+
+```python
+program = prepared.build(
+    bindings={custom_output: selected_group},
+    movi_dll_dir=r"C:\path\to\MVC_DEPEND",
+    definitions=("MODE=1",),
+)
+```
+
+See
+[`example_mixed_precision_multi_custom.py`](../examples/example_mixed_precision_multi_custom.py)
+for a complete graph whose independent FP32 and FP16 branches require explicit
+binding because the compiler's ACT order differs from symbolic output order.
 
 ## Save and load native graphs
 
@@ -306,6 +372,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
+- [Mixed-precision custom branches with prepared binding](../examples/example_mixed_precision_multi_custom.py)
 
 See [Current limitations](LIMITATIONS.md) before changing carrier, precision,
 shape, or graph structure.

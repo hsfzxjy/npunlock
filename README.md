@@ -140,6 +140,7 @@ reference.
 - static dense FP16 unary and two-input custom kernels
 - verified unary and scalar-input binary FP32 paths
 - one graph containing independent FP32-unary and FP16-binary custom branches
+- prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - Python, CLI, and native C APIs

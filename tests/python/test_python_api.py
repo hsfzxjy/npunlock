@@ -213,11 +213,13 @@ class FakeNative:
     def __init__(self) -> None:
         self.xml = b""
         self.weights = b""
+        self.compile_ir_count = 0
         self.patch_calls: list[tuple[bytes, bytes, tuple[npu.PatchTarget, ...]]] = []
         self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 8, 16),),)
         self.infer_dtype = "f16"
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
+        self.compile_ir_count += 1
         self.xml = xml
         self.weights = weights
         self.compile_ir_kwargs = kwargs
@@ -354,6 +356,81 @@ class CompilationFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(fake.patch_args[2], targets)
+
+    def test_prepared_graph_explains_and_builds_ambiguous_branches_once(self) -> None:
+        shape = (1, 32)
+        x = npu.input("x", shape=shape, dtype="f32")
+        a = npu.input("a", shape=shape, dtype="f16")
+        b = npu.input("b", shape=shape, dtype="f16")
+        scaled = npu.custom(x, source=b"scale", carrier="Abs", _name="scaled")
+        mixed = npu.custom(a, b, source=b"mix", carrier="Maximum", _name="mixed")
+        graph = npu.Graph([x, a, b], [mixed, scaled], name="ambiguous_branches")
+
+        unary = (npu.PatchTarget(0, 0, 1, 32, 128, 0x3B),)
+        binary = (npu.PatchTarget(1, 1, 2, 32, 64, 0x1F),)
+        fake = FakeNative()
+        fake.discovery_groups = (unary, binary)
+
+        prepared = npu.prepare(graph, native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        self.assertEqual(fake.compile_ir_count, 1)
+        self.assertEqual(tuple(mapping.status for mapping in prepared.mappings), ("explicit-required",) * 2)
+        self.assertIn("does not match its input arity", prepared.explain())
+        (unary_group,) = prepared.find_groups(input_count=1, dtype="f32")
+        (binary_group,) = prepared.find_groups(input_count=2, dtype="f16")
+
+        program = prepared.build(
+            bindings={scaled: unary_group, mixed: binary_group},
+            movi_dll_dir="movi",
+        )
+
+        self.assertEqual(fake.compile_ir_count, 1)
+        self.assertEqual(fake.patch_calls[0][2], binary)
+        self.assertEqual(fake.patch_calls[1][2], unary)
+        self.assertEqual(program.graph_blob, b"patched2")
+
+    def test_prepared_graph_rejects_incomplete_duplicate_and_incompatible_bindings(self) -> None:
+        shape = (1, 32)
+        x = npu.input("x", shape=shape, dtype="f32")
+        a = npu.input("a", shape=shape, dtype="f16")
+        b = npu.input("b", shape=shape, dtype="f16")
+        scaled = npu.custom(x, source=b"scale", carrier="Abs", _name="scaled")
+        mixed = npu.custom(a, b, source=b"mix", carrier="Maximum", _name="mixed")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 128, 0x3B),),
+            (npu.PatchTarget(1, 1, 2, 32, 64, 0x1F),),
+        )
+        prepared = npu.prepare(
+            npu.Graph([x, a, b], [mixed, scaled]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        with self.assertRaisesRegex(ValueError, "needs explicit bindings"):
+            prepared.build(bindings={scaled: prepared.groups[0]}, movi_dll_dir="movi")
+        with self.assertRaisesRegex(ValueError, "input arity"):
+            prepared.build(
+                bindings={scaled: prepared.groups[1], mixed: prepared.groups[0]},
+                movi_dll_dir="movi",
+            )
+        with self.assertRaisesRegex(ValueError, "assigned to both"):
+            prepared.build(
+                bindings={scaled: prepared.groups[1], mixed: prepared.groups[1]},
+                movi_dll_dir="movi",
+            )
+
+    def test_prepared_graph_accepts_explicit_partition_group_sequence(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f32")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="partitioned")
+        targets = tuple(npu.PatchTarget(index, index, 1, 8, 32, 0x3B) for index in range(4))
+        fake = FakeNative()
+        fake.discovery_groups = tuple((target,) for target in targets)
+
+        prepared = npu.prepare(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        program = prepared.build(bindings={y: prepared.groups}, movi_dll_dir="movi")
+
+        self.assertEqual(fake.patch_args[2], targets)
+        self.assertEqual(program.graph_blob, b"patched")
 
     def test_partition_groups_must_exactly_cover_custom_output(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f32")

@@ -1,8 +1,8 @@
 """One graph with independent FP32-unary and FP16-binary custom branches.
 
 The compiler reorders these independent ACT groups relative to symbolic output
-order. This example therefore discovers the carrier groups first and supplies
-explicit targets selected by their validated arity and element width.
+order. A prepared graph exposes the validated groups and lets the caller bind
+the symbolic custom outputs without compiling the carrier twice.
 """
 
 import numpy as np
@@ -50,10 +50,7 @@ def reference(
     return scaled, mixed
 
 
-def build_graph(
-    unary_targets: tuple[npu.PatchTarget, ...] | None = None,
-    binary_targets: tuple[npu.PatchTarget, ...] | None = None,
-) -> npu.Graph:
+def build_graph() -> tuple[npu.Graph, npu.Tensor, npu.Tensor]:
     shape = (1, 32)
     x = npu.input("x", shape=shape, dtype="f32")
     a = npu.input("a", shape=shape, dtype="f16")
@@ -64,7 +61,6 @@ def build_graph(
         source=scale_f32_c,
         carrier="Abs",
         _name="scale_f32",
-        _patch_targets=unary_targets,
     )
     mixed = npu.custom(
         a,
@@ -72,52 +68,26 @@ def build_graph(
         source=mix_f16_c,
         carrier="Maximum",
         _name="weighted_mix_f16",
-        _patch_targets=binary_targets,
     )
 
-    return npu.Graph(
-        inputs=[x, a, b],
-        outputs=[mixed, scaled],
-        name="mixed_precision_multi_custom",
+    return (
+        npu.Graph(
+            inputs=[x, a, b],
+            outputs=[mixed, scaled],
+            name="mixed_precision_multi_custom",
+        ),
+        scaled,
+        mixed,
     )
-
-
-def select_group(
-    groups: tuple[tuple[npu.PatchTarget, ...], ...],
-    *,
-    input_count: int,
-    item_size: int,
-) -> tuple[npu.PatchTarget, ...]:
-    matches = tuple(
-        group
-        for group in groups
-        if group
-        and all(
-            target.input_count == input_count and target.span_bytes == target.element_count * item_size
-            for target in group
-        )
-    )
-    if len(matches) != 1:
-        raise RuntimeError(f"expected one {input_count}-input/{item_size}-byte ACT group; found {len(matches)}")
-    return matches[0]
 
 
 def main() -> None:
-    native = npu.NativeLibraries()
-    probe_graph = build_graph()
-    serialized = npu.serialize_ir(probe_graph)
-    carrier = native.compile_ir(
-        serialized.xml,
-        serialized.weights,
-        build_flags='--config EXECUTION_MODE_HINT="ACCURACY"',
-    )
-    groups = native.discover_patch_targets(carrier.graph_blob)
-    unary_targets = select_group(groups, input_count=1, item_size=4)
-    binary_targets = select_group(groups, input_count=2, item_size=2)
-
-    program = npu.compile(
-        build_graph(unary_targets, binary_targets),
-        libraries=native,
+    graph, scaled, mixed = build_graph()
+    prepared = npu.prepare(graph)
+    (unary_group,) = prepared.find_groups(input_count=1, dtype="f32")
+    (binary_group,) = prepared.find_groups(input_count=2, dtype="f16")
+    program = prepared.build(
+        bindings={scaled: unary_group, mixed: binary_group},
     )
 
     shape = (1, 32)
