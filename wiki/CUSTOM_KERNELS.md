@@ -135,7 +135,7 @@ groups. Filter on the independently validated input and output contracts:
 
 ```python
 prepared = npu.prepare(graph)
-(to_f16_group,) = prepared.find_groups(
+to_f16_group = prepared.find_group(
     input_dtypes=("f32",), output_dtype="f16"
 )
 program = prepared.build(bindings={custom_output: to_f16_group})

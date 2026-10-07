@@ -280,6 +280,16 @@ class ActGroup:
         )
 
 
+def _act_group_summary(group: ActGroup) -> str:
+    input_dtypes = group.input_dtypes
+    inputs = ",".join(input_dtypes) if input_dtypes is not None else "unknown"
+    return (
+        f"group[{group.index}](inputs={group.input_count}, input_dtypes={inputs}, "
+        f"output_dtype={group.output_dtype or 'unknown'}, elements={group.element_count}, "
+        f"input_1_scalar={group.input_1_scalar}, invocations={group.invocation_indices})"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CustomMapping:
     """The prepared carrier's current mapping decision for one custom node."""
@@ -1314,6 +1324,46 @@ class PreparedGraph:
             and (element_count is None or group.element_count == element_count)
             and (input_1_scalar is None or group.input_1_scalar == input_1_scalar)
         )
+
+    def find_group(
+        self,
+        *,
+        input_count: int | None = None,
+        dtype: str | None = None,
+        input_dtypes: tuple[str, ...] | None = None,
+        output_dtype: str | None = None,
+        element_count: int | None = None,
+        input_1_scalar: bool | None = None,
+    ) -> ActGroup:
+        """Return the only group matching validated contract fields."""
+
+        filters = {
+            "input_count": input_count,
+            "dtype": dtype,
+            "input_dtypes": input_dtypes,
+            "output_dtype": output_dtype,
+            "element_count": element_count,
+            "input_1_scalar": input_1_scalar,
+        }
+        matches = self.find_groups(
+            input_count=input_count,
+            dtype=dtype,
+            input_dtypes=input_dtypes,
+            output_dtype=output_dtype,
+            element_count=element_count,
+            input_1_scalar=input_1_scalar,
+        )
+        if len(matches) == 1:
+            return matches[0]
+        query = ", ".join(f"{name}={value!r}" for name, value in filters.items() if value is not None) or "no filters"
+        if matches:
+            candidates = "; ".join(_act_group_summary(group) for group in matches)
+            raise ValueError(
+                f"ACT group filter ({query}) is ambiguous; matched {len(matches)} groups: {candidates}; "
+                "add more validated contract fields or select an explicit group index"
+            )
+        available = "; ".join(_act_group_summary(group) for group in self.groups) or "none"
+        raise ValueError(f"no ACT group matches filter ({query}); available groups: {available}")
 
     def explain(self) -> str:
         """Render the discovered groups and mapping decisions deterministically."""

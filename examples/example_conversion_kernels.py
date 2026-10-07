@@ -55,8 +55,8 @@ y = npu.custom(
 )
 
 prepared = npu.prepare(npu.Graph([x], [y], name="conversion_kernels"))
-(to_f16_group,) = prepared.find_groups(input_dtypes=("f32",), output_dtype="f16")
-(to_f32_group,) = prepared.find_groups(input_dtypes=("f16",), output_dtype="f32")
+to_f16_group = prepared.find_group(input_dtypes=("f32",), output_dtype="f16")
+to_f32_group = prepared.find_group(input_dtypes=("f16",), output_dtype="f32")
 program = prepared.build(bindings={half: to_f16_group, y: to_f32_group})
 
 input_value = np.linspace(-5.0, 3.0, 16, dtype=np.float32).reshape(shape)

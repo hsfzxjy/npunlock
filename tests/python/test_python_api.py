@@ -512,8 +512,16 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.compile_ir_count, 1)
         self.assertEqual(tuple(mapping.status for mapping in prepared.mappings), ("explicit-required",) * 2)
         self.assertIn("does not match its input arity", prepared.explain())
-        (unary_group,) = prepared.find_groups(input_count=1, dtype="f32")
-        (binary_group,) = prepared.find_groups(input_count=2, dtype="f16")
+        unary_group = prepared.find_group(input_count=1, dtype="f32")
+        binary_group = prepared.find_group(input_count=2, dtype="f16")
+        with self.assertRaisesRegex(ValueError, "is ambiguous") as ambiguous:
+            prepared.find_group()
+        self.assertIn("group[0]", str(ambiguous.exception))
+        self.assertIn("group[1]", str(ambiguous.exception))
+        with self.assertRaisesRegex(ValueError, "no ACT group matches") as missing:
+            prepared.find_group(element_count=7)
+        self.assertIn("available groups: group[0]", str(missing.exception))
+        self.assertIn("group[1]", str(missing.exception))
 
         plan = prepared.plan(
             bindings={scaled: unary_group, mixed: binary_group},

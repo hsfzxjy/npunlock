@@ -241,6 +241,16 @@ class PreparedGraph:
         element_count: int | None = ...,
         input_1_scalar: bool | None = ...,
     ) -> tuple[ActGroup, ...]: ...
+    def find_group(
+        self,
+        *,
+        input_count: int | None = ...,
+        dtype: str | None = ...,
+        input_dtypes: tuple[str, ...] | None = ...,
+        output_dtype: str | None = ...,
+        element_count: int | None = ...,
+        input_1_scalar: bool | None = ...,
+    ) -> ActGroup: ...
     def explain(self) -> str: ...
     def plan(
         self,

@@ -105,9 +105,9 @@ def reference(data: np.ndarray, peer: np.ndarray) -> np.ndarray:
 
 
 def make_plan(prepared: npu.PreparedGraph, half: npu.Tensor, blended: npu.Tensor, output: npu.Tensor) -> npu.BuildPlan:
-    (to_f16_group,) = prepared.find_groups(input_dtypes=("f32",), output_dtype="f16")
-    (blend_group,) = prepared.find_groups(input_dtypes=("f16", "f16"), output_dtype="f16")
-    (to_f32_group,) = prepared.find_groups(input_dtypes=("f16",), output_dtype="f32")
+    to_f16_group = prepared.find_group(input_dtypes=("f32",), output_dtype="f16")
+    blend_group = prepared.find_group(input_dtypes=("f16", "f16"), output_dtype="f16")
+    to_f32_group = prepared.find_group(input_dtypes=("f16",), output_dtype="f32")
     return prepared.plan(bindings={half: to_f16_group, blended: blend_group, output: to_f32_group})
 
 

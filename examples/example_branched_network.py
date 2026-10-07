@@ -139,17 +139,17 @@ def reference(
 def main() -> None:
     graph, biased, blended, control_output = build_graph()
     prepared = npu.prepare(graph)
-    (scalar_group,) = prepared.find_groups(
+    scalar_group = prepared.find_group(
         input_count=2,
         dtype="f16",
         input_1_scalar=True,
     )
-    (binary_group,) = prepared.find_groups(
+    binary_group = prepared.find_group(
         input_count=2,
         dtype="f16",
         input_1_scalar=False,
     )
-    (unary_f32_group,) = prepared.find_groups(input_count=1, dtype="f32")
+    unary_f32_group = prepared.find_group(input_count=1, dtype="f32")
     print(prepared.explain())
     compiler_major, compiler_minor = prepared.ir_provenance.compiler_version
     print(

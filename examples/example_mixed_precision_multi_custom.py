@@ -84,8 +84,8 @@ def build_graph() -> tuple[npu.Graph, npu.Tensor, npu.Tensor]:
 def main() -> None:
     graph, scaled, mixed = build_graph()
     prepared = npu.prepare(graph)
-    (unary_group,) = prepared.find_groups(input_count=1, dtype="f32")
-    (binary_group,) = prepared.find_groups(input_count=2, dtype="f16")
+    unary_group = prepared.find_group(input_count=1, dtype="f32")
+    binary_group = prepared.find_group(input_count=2, dtype="f16")
     program = prepared.build(
         bindings={scaled: unary_group, mixed: binary_group},
     )

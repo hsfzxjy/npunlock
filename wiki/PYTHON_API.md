@@ -261,8 +261,8 @@ Filter groups by validated contract fields and bind them to the actual
 symbolic custom outputs:
 
 ```python
-(unary_f32,) = prepared.find_groups(input_count=1, dtype="f32")
-(binary_f16,) = prepared.find_groups(input_count=2, dtype="f16")
+unary_f32 = prepared.find_group(input_count=1, dtype="f32")
+binary_f16 = prepared.find_group(input_count=2, dtype="f16")
 
 program = prepared.build(
     bindings={
@@ -282,6 +282,11 @@ name recovered from the native blob. Native blobs do not expose a proven
 source-name mapping. Group filtering is a convenience over validated metadata,
 not proof that a group implements the caller's intended operation; ambiguous
 graphs still require an informed explicit choice.
+
+`find_group()` requires exactly one match and reports the applied filter plus
+candidate contract summaries when the result is missing or ambiguous. Use
+`find_groups()` when zero or several results are expected and the caller will
+handle them deliberately.
 
 ### Review a multi-kernel build plan
 
@@ -329,7 +334,7 @@ separate contracts, and `ActGroup.unary_conversion` identifies the currently
 supported FP16/FP32 conversion form:
 
 ```python
-(to_f16,) = prepared.find_groups(
+to_f16 = prepared.find_group(
     input_dtypes=("f32",), output_dtype="f16"
 )
 program = prepared.build(bindings={converted: to_f16})
