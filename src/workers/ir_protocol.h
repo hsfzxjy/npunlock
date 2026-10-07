@@ -14,6 +14,11 @@ enum {
   NPUNLOCK_IR_MAX_DIAGNOSTIC_SIZE = 64 * 1024
 };
 
+typedef enum npunlock_ir_worker_mode {
+  NPUNLOCK_IR_WORKER_COMPILE = 0,
+  NPUNLOCK_IR_WORKER_QUERY = 1
+} npunlock_ir_worker_mode;
+
 typedef enum npunlock_ir_worker_status {
   NPUNLOCK_IR_WORKER_OK = 0,
   NPUNLOCK_IR_WORKER_BAD_REQUEST = 1,

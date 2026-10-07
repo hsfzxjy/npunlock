@@ -24,6 +24,7 @@
 #define IR2BLOB_AUTO_INDEX UINT32_MAX
 
 typedef struct ir_request {
+  uint32_t mode;
   uint32_t driver_index;
   uint32_t device_index;
   const uint8_t *xml;
@@ -80,14 +81,18 @@ static bool parse_request(const uint8_t *data, size_t size, ir_request *request)
   size_t offset;
   memset(request, 0, sizeof(*request));
   if (size < NPUNLOCK_IR_REQUEST_HEADER_SIZE || load_u32(data) != NPUNLOCK_IR_REQUEST_MAGIC ||
-      load_u32(data + 4) != NPUNLOCK_IR_PROTOCOL_VERSION || load_u32(data + 36) != 0 ||
-      load_u64(data + 40) != 0) {
+      load_u32(data + 4) != NPUNLOCK_IR_PROTOCOL_VERSION ||
+      load_u32(data + 36) > NPUNLOCK_IR_WORKER_QUERY || load_u64(data + 40) != 0) {
     return false;
   }
   xml_size = load_u64(data + 16);
   weights_size = load_u64(data + 24);
   flags_size = load_u32(data + 32);
-  if (xml_size == 0 || xml_size > SIZE_MAX || weights_size > SIZE_MAX ||
+  request->mode = load_u32(data + 36);
+  if ((request->mode == NPUNLOCK_IR_WORKER_COMPILE && xml_size == 0) ||
+      (request->mode == NPUNLOCK_IR_WORKER_QUERY &&
+       (xml_size != 0 || weights_size != 0 || flags_size != 0)) ||
+      xml_size > SIZE_MAX || weights_size > SIZE_MAX ||
       !checked_add(expected, (size_t)xml_size, &expected) ||
       !checked_add(expected, (size_t)weights_size, &expected) ||
       !checked_add(expected, flags_size, &expected) || expected != size) {
@@ -443,6 +448,11 @@ static void compile_ir(const ir_request *request, ir_result *result) {
   if (result->graph_version == 0 ||
       !get_graph_ddi(&ze, driver, result->graph_version, result, &ddi) ||
       !query_graph_contract(ddi, device, result)) {
+    goto done;
+  }
+  if (request->mode == NPUNLOCK_IR_WORKER_QUERY) {
+    result->status = NPUNLOCK_IR_WORKER_OK;
+    result->driver_result = NPUNLOCK_ZE_SUCCESS;
     goto done;
   }
   serialized = package_ir(request, result, &serialized_size);

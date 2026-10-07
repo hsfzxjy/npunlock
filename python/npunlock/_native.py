@@ -686,6 +686,11 @@ class NativeLibraries:
             ctypes.POINTER(_IrResult),
         ]
         self.ir.ir2blob_compile.restype = ctypes.c_int
+        self.ir.ir2blob_query.argtypes = [
+            ctypes.POINTER(_IrOptions),
+            ctypes.POINTER(_IrResult),
+        ]
+        self.ir.ir2blob_query.restype = ctypes.c_int
         self.ir.ir2blob_result_release.argtypes = [ctypes.POINTER(_IrResult)]
         self.patch.patchblob_patch.argtypes = [
             ctypes.POINTER(_PatchOptions),
@@ -822,6 +827,54 @@ class NativeLibraries:
             )
             return IrCompileResult(
                 _buffer_bytes(result.graph_blob),
+                result.selected_driver_index,
+                result.selected_device_index,
+                result.driver_version,
+                result.device_vendor_id,
+                result.device_id,
+                result.graph_extension_version,
+                (result.compiler_version_major, result.compiler_version_minor),
+            )
+        finally:
+            self.ir.ir2blob_result_release(ctypes.byref(result))
+
+    def query_ir_provenance(
+        self,
+        *,
+        timeout_ms: int = 20_000,
+        worker: str | None = None,
+    ) -> IrCompileResult:
+        """Query NPU graph-compiler provenance without compiling a graph."""
+
+        worker_view, worker_owner = _owned_view(worker.encode("utf-8") if worker else b"")
+        _ = worker_owner
+        options = _IrOptions(
+            ctypes.sizeof(_IrOptions),
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+            timeout_ms,
+            worker_view,
+            _View(None, 0),
+        )
+        result = _IrResult()
+        result.struct_size = ctypes.sizeof(_IrResult)
+        status = self.ir.ir2blob_query(ctypes.byref(options), ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise(
+                    "ir2blob query",
+                    status,
+                    result.diagnostic,
+                    result.stdout_log,
+                    result.stderr_log,
+                )
+            _report_worker_streams(
+                _buffer_bytes(result.stdout_log),
+                _buffer_bytes(result.stderr_log),
+                failed=False,
+            )
+            return IrCompileResult(
+                b"",
                 result.selected_driver_index,
                 result.selected_device_index,
                 result.driver_version,

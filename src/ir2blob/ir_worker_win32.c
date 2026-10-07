@@ -14,16 +14,20 @@ static bool view_has_nul(npunlock_view view) {
   return view.size != 0 && memchr(view.data, 0, view.size) != NULL;
 }
 
-static npunlock_status build_request(uint32_t driver_index, uint32_t device_index,
+static npunlock_status build_request(uint32_t mode, uint32_t driver_index, uint32_t device_index,
                                      npunlock_view ir_xml, npunlock_view weights,
                                      npunlock_view build_flags, uint8_t **request,
                                      size_t *request_size) {
   size_t total = NPUNLOCK_IR_REQUEST_HEADER_SIZE;
   size_t offset;
   uint8_t *data;
-  if (!npunlock_view_is_valid(ir_xml) || ir_xml.size == 0 || !npunlock_view_is_valid(weights) ||
-      !npunlock_view_is_valid(build_flags) || build_flags.size > UINT32_MAX ||
-      view_has_nul(build_flags) || !npunlock_checked_add_size(total, ir_xml.size, &total) ||
+  if (mode > NPUNLOCK_IR_WORKER_QUERY || !npunlock_view_is_valid(ir_xml) ||
+      (mode == NPUNLOCK_IR_WORKER_COMPILE && ir_xml.size == 0) ||
+      (mode == NPUNLOCK_IR_WORKER_QUERY &&
+       (ir_xml.size != 0 || weights.size != 0 || build_flags.size != 0)) ||
+      !npunlock_view_is_valid(weights) || !npunlock_view_is_valid(build_flags) ||
+      build_flags.size > UINT32_MAX || view_has_nul(build_flags) ||
+      !npunlock_checked_add_size(total, ir_xml.size, &total) ||
       !npunlock_checked_add_size(total, weights.size, &total) ||
       !npunlock_checked_add_size(total, build_flags.size, &total) ||
       total > NPUNLOCK_IR_MAX_MESSAGE_SIZE) {
@@ -40,9 +44,12 @@ static npunlock_status build_request(uint32_t driver_index, uint32_t device_inde
   npunlock_worker_store_u64(data + 16, ir_xml.size);
   npunlock_worker_store_u64(data + 24, weights.size);
   npunlock_worker_store_u32(data + 32, (uint32_t)build_flags.size);
+  npunlock_worker_store_u32(data + 36, mode);
   offset = NPUNLOCK_IR_REQUEST_HEADER_SIZE;
-  memcpy(data + offset, ir_xml.data, ir_xml.size);
-  offset += ir_xml.size;
+  if (ir_xml.size != 0) {
+    memcpy(data + offset, ir_xml.data, ir_xml.size);
+    offset += ir_xml.size;
+  }
   if (weights.size != 0) {
     memcpy(data + offset, weights.data, weights.size);
     offset += weights.size;
@@ -134,10 +141,11 @@ void npunlock_ir_worker_result_release(npunlock_ir_worker_result *result) {
   memset(result, 0, sizeof(*result));
 }
 
-npunlock_status npunlock_run_ir_worker(npunlock_view worker_executable_utf8, uint32_t driver_index,
-                                       uint32_t device_index, npunlock_view ir_xml,
-                                       npunlock_view weights, npunlock_view build_flags,
-                                       uint32_t timeout_ms, npunlock_ir_worker_result *result) {
+npunlock_status npunlock_run_ir_worker(npunlock_view worker_executable_utf8, uint32_t mode,
+                                       uint32_t driver_index, uint32_t device_index,
+                                       npunlock_view ir_xml, npunlock_view weights,
+                                       npunlock_view build_flags, uint32_t timeout_ms,
+                                       npunlock_ir_worker_result *result) {
   npunlock_worker_process_result process = {0};
   uint8_t *request = NULL;
   size_t request_size = 0;
@@ -149,7 +157,7 @@ npunlock_status npunlock_run_ir_worker(npunlock_view worker_executable_utf8, uin
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
   }
   memset(result, 0, sizeof(*result));
-  status = build_request(driver_index, device_index, ir_xml, weights, build_flags, &request,
+  status = build_request(mode, driver_index, device_index, ir_xml, weights, build_flags, &request,
                          &request_size);
   if (status == NPUNLOCK_STATUS_OK) {
     status = npunlock_worker_process_run(worker_executable_utf8, "ir",

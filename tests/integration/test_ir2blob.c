@@ -68,6 +68,18 @@ int main(void) {
   options.driver_index = IR2BLOB_AUTO_INDEX;
   options.device_index = IR2BLOB_AUTO_INDEX;
   options.timeout_ms = 15000;
+  status = ir2blob_query(&options, &result);
+  if (status != NPUNLOCK_STATUS_OK || result.device_vendor_id != 0x8086 ||
+      result.compiler_version_major == 0 || result.graph_blob.data != NULL ||
+      result.graph_blob.size != 0) {
+    fprintf(stderr, "ir2blob_query failed or returned an invalid contract: %s\n",
+            npunlock_status_name(status));
+    goto done;
+  }
+  printf("queried driver=0x%08x device=%u:%u pci=%04x:%04x compiler=%u.%u\n", result.driver_version,
+         result.selected_driver_index, result.selected_device_index, result.device_vendor_id,
+         result.device_id, result.compiler_version_major, result.compiler_version_minor);
+  ir2blob_result_release(&result);
   status = ir2blob_compile(&options, (npunlock_view){xml.data, xml.size},
                            (npunlock_view){weights.data, weights.size}, &result);
   if (status != NPUNLOCK_STATUS_OK) {

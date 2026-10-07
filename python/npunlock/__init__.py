@@ -28,6 +28,7 @@ from ._native import (
     PatchTarget,
     PatchTargetV2,
     PatchTensorContract,
+    _native_directory,
 )
 from .graph import Graph, Node, constant, custom, input, op
 from .ir import SerializedIR, serialize_ir
@@ -74,6 +75,8 @@ __all__ = [
 ]
 
 _configured_movi_dll_dir: str | None = None
+_native_library_cache: dict[str, NativeLibraries] = {}
+_native_library_cache_lock = threading.Lock()
 
 
 def configure(*, movi_dll_dir: str | Path | None) -> None:
@@ -99,6 +102,16 @@ def _resolve_movi_dll_dir(explicit: str | Path | None) -> str | Path | None:
     if _configured_movi_dll_dir is not None:
         return _configured_movi_dll_dir
     return os.environ.get("NPUNLOCK_MOVITOOLS_DIR") or None
+
+
+def _default_native_libraries(directory: str | Path | None) -> NativeLibraries:
+    resolved = str(_native_directory(directory).resolve())
+    with _native_library_cache_lock:
+        native = _native_library_cache.get(resolved)
+        if native is None:
+            native = NativeLibraries(resolved)
+            _native_library_cache[resolved] = native
+        return native
 
 
 class OpFactory:
@@ -579,7 +592,7 @@ def load_native(
 
     if not isinstance(graph, Graph):
         raise TypeError("load_native() requires a Graph")
-    native = libraries or NativeLibraries(native_dir)
+    native = libraries or _default_native_libraries(native_dir)
     return Program(
         _native_blob_bytes(blob),
         graph,
@@ -736,7 +749,7 @@ def load(
     except zipfile.BadZipFile as exc:
         raise ValueError("program bundle is not a valid ZIP archive") from exc
 
-    native = libraries or NativeLibraries(native_dir)
+    native = libraries or _default_native_libraries(native_dir)
     return Program(
         graph_blob,
         None,
@@ -1500,7 +1513,7 @@ def prepare(
     embedded_targets = _embedded_target_groups(serialized.custom_nodes)
     if embedded_targets is None and any(len(node.outputs) != 1 for node in serialized.custom_nodes):
         raise ValueError("automatic and prepared patch selection currently require one output per custom node")
-    native = libraries or NativeLibraries(native_dir)
+    native = libraries or _default_native_libraries(native_dir)
     ir_result = native.compile_ir(
         serialized.xml,
         serialized.weights,
@@ -1614,6 +1627,7 @@ def load_prepared(
     graph: Graph,
     native_dir: str | Path | None = None,
     timeout_ms: int = 20_000,
+    ir_worker: str | None = None,
     libraries: NativeLibraries | None = None,
 ) -> PreparedGraph:
     """Load an unpatched carrier after exact graph and ACT-contract validation."""
@@ -1679,7 +1693,31 @@ def load_prepared(
     provenance = _prepared_provenance(manifest["provenance"], carrier)
     saved_indices = _prepared_bindings(manifest["bindings"], serialized.custom_nodes)
 
-    native = libraries or NativeLibraries(native_dir)
+    native = libraries or _default_native_libraries(native_dir)
+    current = native.query_ir_provenance(timeout_ms=timeout_ms, worker=ir_worker)
+    saved_contract = (
+        provenance.driver_index,
+        provenance.device_index,
+        provenance.driver_version,
+        provenance.vendor_id,
+        provenance.device_id,
+        provenance.graph_extension_version,
+        provenance.compiler_version,
+    )
+    current_contract = (
+        current.driver_index,
+        current.device_index,
+        current.driver_version,
+        current.vendor_id,
+        current.device_id,
+        current.graph_extension_version,
+        current.compiler_version,
+    )
+    if current_contract != saved_contract:
+        raise ValueError(
+            "prepared bundle driver/compiler provenance is stale: "
+            f"saved={saved_contract!r}, current={current_contract!r}"
+        )
     groups, automatic_indices, mappings = _discover_prepared_contract(
         graph,
         serialized,

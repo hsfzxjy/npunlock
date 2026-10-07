@@ -12,7 +12,7 @@ Four public C17 component APIs are exported from one `npunlock.dll`:
 | Component | Responsibility |
 | --- | --- |
 | `shavecc` | C source plus `MVC_DEPEND` root -> validated SHAVE ELF |
-| `ir2blob` | OpenVINO-format IR buffers -> native graph blob |
+| `ir2blob` | OpenVINO-format IR buffers -> native graph blob; read-only driver/compiler query |
 | `patchblob` | graph plus SHAVE ELF -> validated patched graph |
 | `graphinfer` | native graph plus tensor buffers -> output buffers |
 
@@ -45,6 +45,11 @@ stdout/stderr capture, deadlines, and Job Object cleanup. Each mode retains
 only its protocol-specific request builder and response parser. The worker
 executable similarly shares byte encoding, bounded input, complete output, and
 response-handle helpers among its two modes.
+
+`ir2blob_query()` uses the IR worker's query request to select the NPU and read
+driver, device, graph-extension, compiler, opset, ELF, and runtime versions.
+It exits before context creation or graph compilation and is used to reject a
+prepared-carrier bundle produced by a stale driver/compiler environment.
 
 `graphinfer` always executes in-process. Its ordinary call copies tensors
 through temporary Level Zero host allocations; its opt-in session directly binds

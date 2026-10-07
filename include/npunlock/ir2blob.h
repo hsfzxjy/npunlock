@@ -49,6 +49,14 @@ typedef struct ir2blob_result {
 NPUNLOCK_IR2BLOB_API npunlock_status ir2blob_compile(const ir2blob_options *options,
                                                      npunlock_view ir_xml, npunlock_view weights,
                                                      ir2blob_result *result);
+/*
+ * Query the selected NPU and graph extension without creating or compiling a
+ * graph. On success graph_blob is empty and the version/provenance fields are
+ * populated through the same bounded worker used by ir2blob_compile().
+ * build_flags must be empty.
+ */
+NPUNLOCK_IR2BLOB_API npunlock_status ir2blob_query(const ir2blob_options *options,
+                                                   ir2blob_result *result);
 NPUNLOCK_IR2BLOB_API void ir2blob_result_release(ir2blob_result *result);
 
 #ifdef __cplusplus

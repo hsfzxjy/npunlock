@@ -7,13 +7,14 @@
 
 #include "internal.h"
 #include "ir_worker.h"
+#include "workers/ir_protocol.h"
 
 static int view_has_nul(npunlock_view view) {
   return view.size != 0 && memchr(view.data, 0, view.size) != NULL;
 }
 
 static npunlock_status worker_failure(ir2blob_result *result, npunlock_status status,
-                                      const npunlock_ir_worker_result *worker) {
+                                      const npunlock_ir_worker_result *worker, const char *stage) {
   char fallback[192];
   char *message = NULL;
   size_t index;
@@ -35,31 +36,18 @@ static npunlock_status worker_failure(ir2blob_result *result, npunlock_status st
              "process_exit=0x%08x)",
              worker->worker_status, worker->driver_result, worker->process_exit_code);
   }
-  status = npunlock_set_diagnostic(&result->diagnostic, status, "ir2blob.compile",
+  status = npunlock_set_diagnostic(&result->diagnostic, status, stage,
                                    message != NULL ? message : fallback);
   free(message);
   return status;
 }
 
-npunlock_status ir2blob_compile(const ir2blob_options *options, npunlock_view ir_xml,
-                                npunlock_view weights, ir2blob_result *result) {
+static npunlock_status run_worker(const ir2blob_options *options, uint32_t mode,
+                                  npunlock_view ir_xml, npunlock_view weights, const char *stage,
+                                  ir2blob_result *result) {
   npunlock_ir_worker_result worker = {0};
   npunlock_status status;
-  if (result == NULL) {
-    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
-  }
-  memset(result, 0, sizeof(*result));
-  result->struct_size = (uint32_t)sizeof(*result);
-  if (options == NULL || options->struct_size < sizeof(*options) ||
-      !npunlock_view_is_valid(ir_xml) || ir_xml.size == 0 || !npunlock_view_is_valid(weights) ||
-      !npunlock_view_is_valid(options->worker_executable_utf8) ||
-      view_has_nul(options->worker_executable_utf8) ||
-      !npunlock_view_is_valid(options->build_flags) || view_has_nul(options->build_flags) ||
-      options->timeout_ms == 0) {
-    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
-                                   "ir2blob.validate", "invalid options, XML, or weights view");
-  }
-  status = npunlock_run_ir_worker(options->worker_executable_utf8, options->driver_index,
+  status = npunlock_run_ir_worker(options->worker_executable_utf8, mode, options->driver_index,
                                   options->device_index, ir_xml, weights, options->build_flags,
                                   options->timeout_ms, &worker);
   result->stdout_log = worker.stdout_log;
@@ -67,7 +55,7 @@ npunlock_status ir2blob_compile(const ir2blob_options *options, npunlock_view ir
   result->stderr_log = worker.stderr_log;
   memset(&worker.stderr_log, 0, sizeof(worker.stderr_log));
   if (status != NPUNLOCK_STATUS_OK) {
-    status = worker_failure(result, status, &worker);
+    status = worker_failure(result, status, &worker, stage);
     goto done;
   }
   result->selected_driver_index = worker.selected_driver_index;
@@ -91,6 +79,44 @@ npunlock_status ir2blob_compile(const ir2blob_options *options, npunlock_view ir
 done:
   npunlock_ir_worker_result_release(&worker);
   return status;
+}
+
+npunlock_status ir2blob_compile(const ir2blob_options *options, npunlock_view ir_xml,
+                                npunlock_view weights, ir2blob_result *result) {
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (options == NULL || options->struct_size < sizeof(*options) ||
+      !npunlock_view_is_valid(ir_xml) || ir_xml.size == 0 || !npunlock_view_is_valid(weights) ||
+      !npunlock_view_is_valid(options->worker_executable_utf8) ||
+      view_has_nul(options->worker_executable_utf8) ||
+      !npunlock_view_is_valid(options->build_flags) || view_has_nul(options->build_flags) ||
+      options->timeout_ms == 0) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "ir2blob.validate", "invalid options, XML, or weights view");
+  }
+  return run_worker(options, NPUNLOCK_IR_WORKER_COMPILE, ir_xml, weights, "ir2blob.compile",
+                    result);
+}
+
+npunlock_status ir2blob_query(const ir2blob_options *options, ir2blob_result *result) {
+  const npunlock_view empty = {NULL, 0};
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (options == NULL || options->struct_size < sizeof(*options) ||
+      !npunlock_view_is_valid(options->worker_executable_utf8) ||
+      view_has_nul(options->worker_executable_utf8) ||
+      !npunlock_view_is_valid(options->build_flags) || options->build_flags.size != 0 ||
+      options->timeout_ms == 0) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "ir2blob.query.validate", "invalid query options");
+  }
+  return run_worker(options, NPUNLOCK_IR_WORKER_QUERY, empty, empty, "ir2blob.query", result);
 }
 
 void ir2blob_result_release(ir2blob_result *result) {

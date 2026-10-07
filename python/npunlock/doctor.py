@@ -8,8 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from ._native import NativeLibraries, _native_directory
-from .graph import Graph, input, op
-from .ir import serialize_ir
+from .graph import Graph, input
 
 _MOVITOOLS_FILES = (
     "bin/moviCompile64.dll",
@@ -43,15 +42,7 @@ def _file_report(path: Path) -> dict[str, object]:
 
 
 def _driver_report(native: NativeLibraries, timeout_ms: int) -> dict[str, object]:
-    x = input("doctor_input", shape=(1, 1), dtype="f16")
-    y = op("Abs", x, _name="doctor_output")
-    assert not isinstance(y, tuple)
-    serialized = serialize_ir(Graph([x], [y], name="npunlock_doctor"))
-    result = native.compile_ir(
-        serialized.xml,
-        serialized.weights,
-        timeout_ms=timeout_ms,
-    )
+    result = native.query_ir_provenance(timeout_ms=timeout_ms)
     return {
         "status": "ok",
         "driver_index": result.driver_index,

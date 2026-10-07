@@ -184,6 +184,20 @@ class NativeLayoutTests(unittest.TestCase):
                 Path("explicit-native").resolve(),
             )
 
+    def test_default_native_runtime_is_shared_per_resolved_directory(self) -> None:
+        first_path = ROOT / "build" / "runtime-a"
+        second_path = ROOT / "build" / "runtime-b"
+        npu._native_library_cache.clear()
+        with (
+            patch.object(npu, "_native_directory", side_effect=(first_path, first_path, second_path)),
+            patch.object(npu, "NativeLibraries", side_effect=(object(), object())) as constructor,
+        ):
+            first = npu._default_native_libraries(None)
+            self.assertIs(npu._default_native_libraries(None), first)
+            self.assertIsNot(npu._default_native_libraries(None), first)
+        self.assertEqual(constructor.call_count, 2)
+        npu._native_library_cache.clear()
+
     @unittest.skipUnless(ctypes.sizeof(ctypes.c_void_p) == 8, "MVP ABI is Windows x64")
     def test_ctypes_layouts_match_c_abi(self) -> None:
         self.assertEqual(ctypes.sizeof(_native._View), 16)
@@ -322,6 +336,10 @@ class FakeNative:
         self.weights = weights
         self.compile_ir_kwargs = kwargs
         return npu.IrCompileResult(b"native", 0, 0, 1, 0x8086, 0x7D1D, 0x10012, (8, 3))
+
+    def query_ir_provenance(self, **kwargs: object) -> npu.IrCompileResult:
+        self.query_ir_kwargs = kwargs
+        return npu.IrCompileResult(b"", 0, 0, 1, 0x8086, 0x7D1D, 0x10012, (8, 3))
 
     def compile_shave(self, source: bytes, **kwargs: object) -> bytes:
         self.shave_calls.append((source, dict(kwargs)))
@@ -651,6 +669,13 @@ class CompilationFlowTests(unittest.TestCase):
                     graph=npu.Graph([other_x], [other_y], name="prepared_validation"),
                     libraries=fake,  # type: ignore[arg-type]
                 )
+
+            class StaleNative(FakeNative):
+                def query_ir_provenance(self, **kwargs: object) -> npu.IrCompileResult:
+                    return npu.IrCompileResult(b"", 0, 0, 2, 0x8086, 0x7D1D, 0x10012, (8, 4))
+
+            with self.assertRaisesRegex(ValueError, "provenance is stale"):
+                npu.load_prepared(valid_path, graph=graph, libraries=StaleNative())  # type: ignore[arg-type]
 
             with zipfile.ZipFile(valid_path, "r") as source, zipfile.ZipFile(corrupt_path, "w") as destination:
                 for name in source.namelist():

@@ -158,6 +158,12 @@ class SerializedIR:
 class NativeLibraries:
     def __init__(self, directory: str | PathLike[str] | None = ...) -> None: ...
     def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[PatchTargetV2, ...], ...]: ...
+    def query_ir_provenance(
+        self,
+        *,
+        timeout_ms: int = ...,
+        worker: str | None = ...,
+    ) -> IrCompileResult: ...
 
 class SharedArray(np.ndarray): ...
 
@@ -284,6 +290,7 @@ def load_prepared(
     graph: Graph,
     native_dir: str | PathLike[str] | None = ...,
     timeout_ms: int = ...,
+    ir_worker: str | None = ...,
     libraries: Any = ...,
 ) -> PreparedGraph: ...
 def compile(

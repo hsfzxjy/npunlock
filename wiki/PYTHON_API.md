@@ -380,17 +380,15 @@ Intel driver binaries. Per-kernel definitions and linker overrides are also
 caller inputs; pass their `KernelSpec` values to the loaded graph's new plan.
 
 `load_prepared()` reserializes the caller graph and requires exact XML and
-weights hashes. It rediscovers the ACT groups from the bundled carrier,
-compares every target contract with the manifest, and revalidates saved
-bindings for arity, dtype, exact cover, uniqueness, and range. It never invokes
-the Intel graph compiler. A changed graph, corrupt carrier, altered contract,
-or incompatible saved binding is rejected before MoviTools runs.
-
-The initial `npunlock.prepared.v1` loader preserves and validates the recorded
-NPU3720 provenance but does not yet query the installed driver's graph-compiler
-version. Successful loading therefore proves artifact consistency, not current
-driver compatibility; executing the eventual program remains the hardware
-compatibility check.
+weights hashes. It uses a bounded read-only driver query—without creating or
+compiling a graph—and requires the current driver, device, graph-extension,
+and compiler versions to match the producer provenance exactly. It then
+rediscovers the ACT groups from the bundled carrier, compares every target
+contract with the manifest, and revalidates saved bindings for arity, dtype,
+exact cover, uniqueness, and range. A stale driver, changed graph, corrupt
+carrier, altered contract, or incompatible saved binding is rejected before
+MoviTools runs. There is deliberately no stale-provenance override in the v1
+format; executing the eventual program remains the separate semantic check.
 
 ## Export and load a program bundle
 

@@ -101,6 +101,10 @@ int main(void) {
                         (npunlock_view){NULL, 0}, &ir_result) == NPUNLOCK_STATUS_NOT_FOUND);
   CHECK(check_diagnostic(&ir_result.diagnostic, "not_found"));
   ir2blob_result_release(&ir_result);
+  CHECK(ir2blob_query(&ir_options, &ir_result) == NPUNLOCK_STATUS_NOT_FOUND);
+  CHECK(check_diagnostic(&ir_result.diagnostic, "not_found"));
+  CHECK(ir_result.graph_blob.data == NULL && ir_result.graph_blob.size == 0);
+  ir2blob_result_release(&ir_result);
 
   patch_options.struct_size = sizeof(patch_options);
   patch_options.image_alignment = 0x400;
