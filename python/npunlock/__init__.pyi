@@ -224,6 +224,7 @@ class PreparedGraph:
     ir_provenance: IrCompileResult
     groups: tuple[ActGroup, ...]
     mappings: tuple[CustomMapping, ...]
+    def export(self, destination: str | PathLike[str], *, plan: BuildPlan | None = ...) -> None: ...
     def find_groups(
         self,
         *,
@@ -275,6 +276,14 @@ def prepare(
     build_flags: str = ...,
     timeout_ms: int = ...,
     ir_worker: str | None = ...,
+    libraries: Any = ...,
+) -> PreparedGraph: ...
+def load_prepared(
+    source: str | PathLike[str],
+    *,
+    graph: Graph,
+    native_dir: str | PathLike[str] | None = ...,
+    timeout_ms: int = ...,
     libraries: Any = ...,
 ) -> PreparedGraph: ...
 def compile(

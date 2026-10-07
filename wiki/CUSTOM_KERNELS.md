@@ -276,6 +276,12 @@ program = plan.build()
 hashes printed by `explain()` describe the bytes that will actually be sent to
 MoviTools. Identical specifications in one plan reuse their compiled ELF.
 
+When iterating on kernel C, save the driver-compiled carrier and reviewed
+binding separately with `prepared.export("network.prepared.npunlock",
+plan=plan)`. A later process can call `npu.load_prepared(..., graph=graph)`,
+which requires the same serialized graph but deliberately accepts changed
+kernel source. See [Python API](PYTHON_API.md#reuse-a-prepared-carrier).
+
 ## Runnable examples
 
 - [FP16 GELU](../examples/example_gelu.py)

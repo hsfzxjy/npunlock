@@ -357,6 +357,41 @@ See
 for a complete graph whose independent FP32 and FP16 branches require explicit
 binding because the compiler's ACT order differs from symbolic output order.
 
+## Reuse a prepared carrier
+
+Export the expensive driver-compiled carrier separately when kernel C will be
+edited and rebuilt repeatedly:
+
+```python
+prepared.export("network.prepared.npunlock", plan=plan)
+
+# A later process reconstructs the same symbolic graph. Kernel source may have
+# changed because source bytes are deliberately not part of carrier identity.
+prepared = npu.load_prepared("network.prepared.npunlock", graph=graph)
+print(prepared.explain())
+program = prepared.plan().build()
+```
+
+The versioned bundle contains the unpatched native carrier, exact serialized
+IR XML and weights identities, effective build flags, original driver/compiler
+provenance, discovered ACT contracts, and optionally the reviewed symbolic
+bindings from a `BuildPlan`. It does not contain kernel source, MoviTools, or
+Intel driver binaries. Per-kernel definitions and linker overrides are also
+caller inputs; pass their `KernelSpec` values to the loaded graph's new plan.
+
+`load_prepared()` reserializes the caller graph and requires exact XML and
+weights hashes. It rediscovers the ACT groups from the bundled carrier,
+compares every target contract with the manifest, and revalidates saved
+bindings for arity, dtype, exact cover, uniqueness, and range. It never invokes
+the Intel graph compiler. A changed graph, corrupt carrier, altered contract,
+or incompatible saved binding is rejected before MoviTools runs.
+
+The initial `npunlock.prepared.v1` loader preserves and validates the recorded
+NPU3720 provenance but does not yet query the installed driver's graph-compiler
+version. Successful loading therefore proves artifact consistency, not current
+driver compatibility; executing the eventual program remains the hardware
+compatibility check.
+
 ## Export and load a program bundle
 
 Use a self-describing `.npunlock` bundle when another process or machine needs

@@ -66,6 +66,7 @@ __all__ = [
     "input",
     "load_native",
     "load_native_file",
+    "load_prepared",
     "load",
     "op",
     "prepare",
@@ -308,6 +309,22 @@ def _write_zip_member(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
     info.compress_type = zipfile.ZIP_DEFLATED
     info.external_attr = 0o100644 << 16
     archive.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+
+
+def _bytes_identity(data: bytes) -> dict[str, object]:
+    return {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def _provenance_json(value: IrCompileResult) -> dict[str, object]:
+    return {
+        "driver_index": value.driver_index,
+        "device_index": value.device_index,
+        "driver_version": value.driver_version,
+        "vendor_id": value.vendor_id,
+        "device_id": value.device_id,
+        "graph_extension_version": value.graph_extension_version,
+        "compiler_version": list(value.compiler_version),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -598,18 +615,19 @@ def _bundle_member(
     name: str,
     *,
     maximum_size: int,
+    bundle_label: str = "program bundle",
 ) -> bytes:
     try:
         info = archive.getinfo(name)
     except KeyError as exc:
-        raise ValueError(f"program bundle is missing {name!r}") from exc
+        raise ValueError(f"{bundle_label} is missing {name!r}") from exc
     if info.flag_bits & 1:
-        raise ValueError(f"program bundle member {name!r} must not be encrypted")
+        raise ValueError(f"{bundle_label} member {name!r} must not be encrypted")
     if info.file_size > maximum_size:
-        raise ValueError(f"program bundle member {name!r} exceeds the supported size")
+        raise ValueError(f"{bundle_label} member {name!r} exceeds the supported size")
     data = archive.read(info)
     if len(data) != info.file_size:
-        raise ValueError(f"program bundle member {name!r} is truncated")
+        raise ValueError(f"{bundle_label} member {name!r} is truncated")
     return data
 
 
@@ -634,22 +652,27 @@ def _manifest_contracts(value: object, label: str) -> tuple[TensorContract, ...]
     return tuple(contracts)
 
 
-def _manifest_blob_entry(value: object, label: str) -> tuple[str, int, str]:
+def _manifest_blob_entry(
+    value: object,
+    label: str,
+    *,
+    bundle_label: str = "program bundle",
+) -> tuple[str, int, str]:
     if not isinstance(value, dict) or set(value) != {"path", "size", "sha256"}:
-        raise ValueError(f"program bundle {label} entry is invalid")
+        raise ValueError(f"{bundle_label} {label} entry is invalid")
     path = value["path"]
     size = value["size"]
     digest = value["sha256"]
     if not isinstance(path, str) or not path or path.startswith(("/", "\\")) or ".." in Path(path).parts:
-        raise ValueError(f"program bundle {label} path is invalid")
+        raise ValueError(f"{bundle_label} {label} path is invalid")
     if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-        raise ValueError(f"program bundle {label} size is invalid")
+        raise ValueError(f"{bundle_label} {label} size is invalid")
     if (
         not isinstance(digest, str)
         or len(digest) != 64
         or any(character not in "0123456789abcdef" for character in digest)
     ):
-        raise ValueError(f"program bundle {label} hash is invalid")
+        raise ValueError(f"{bundle_label} {label} hash is invalid")
     return path, size, digest
 
 
@@ -913,6 +936,40 @@ def _automatic_group_indices(
 PatchTargetContract = PatchTarget | PatchTargetV2
 
 
+def _target_json(target: PatchTargetContract) -> dict[str, object]:
+    if isinstance(target, PatchTargetV2):
+        return {
+            "version": 2,
+            "invocation_index": target.invocation_index,
+            "range_index": target.range_index,
+            "target_flags": target.target_flags,
+            "tensors": [
+                {
+                    "role": tensor.role,
+                    "index": tensor.index,
+                    "dtype": tensor.dtype,
+                    "element_count": tensor.element_count,
+                    "span_bytes": tensor.span_bytes,
+                    "observed_flags": tensor.observed_flags,
+                }
+                for tensor in target.tensors
+            ],
+        }
+    return {
+        "version": 1,
+        "invocation_index": target.invocation_index,
+        "range_index": target.range_index,
+        "input_count": target.input_count,
+        "element_count": target.element_count,
+        "span_bytes": target.span_bytes,
+        "contract_flags": target.contract_flags,
+    }
+
+
+def _groups_json(groups: tuple[ActGroup, ...]) -> list[list[dict[str, object]]]:
+    return [[_target_json(target) for target in group.targets] for group in groups]
+
+
 def _embedded_target_groups(
     custom_nodes: tuple[Node, ...],
 ) -> tuple[tuple[PatchTargetContract, ...], ...] | None:
@@ -1077,6 +1134,50 @@ class PreparedGraph:
     _timeout_ms: int = field(repr=False, compare=False)
     _automatic_indices: tuple[tuple[int, ...], ...] | None = field(repr=False, compare=False)
     _embedded_targets: tuple[tuple[PatchTargetContract, ...], ...] | None = field(repr=False, compare=False)
+    _build_flags: str = field(repr=False, compare=False)
+    _saved_indices: tuple[tuple[int, ...], ...] | None = field(default=None, repr=False, compare=False)
+
+    def export(self, destination: str | Path, *, plan: BuildPlan | None = None) -> None:
+        """Write this unpatched carrier and an optional reviewed binding plan."""
+
+        if plan is not None and (not isinstance(plan, BuildPlan) or plan._prepared is not self):
+            raise ValueError("plan must have been created by this PreparedGraph")
+        saved_indices = None
+        if plan is not None and self._embedded_targets is None:
+            saved_indices = plan.group_indices
+        bindings = (
+            None
+            if saved_indices is None
+            else [
+                {
+                    "custom_index": index,
+                    "name": node.name or "<unnamed>",
+                    "group_indices": list(indices),
+                }
+                for index, (node, indices) in enumerate(zip(self.serialized_ir.custom_nodes, saved_indices))
+            ]
+        )
+        manifest = {
+            "schema": "npunlock.prepared.v1",
+            "carrier": {
+                "path": "carrier.blob",
+                **_bytes_identity(self.ir_provenance.graph_blob),
+            },
+            "ir": {
+                "xml": _bytes_identity(self.serialized_ir.xml),
+                "weights": _bytes_identity(self.serialized_ir.weights),
+            },
+            "build_flags": self._build_flags,
+            "provenance": _provenance_json(self.ir_provenance),
+            "act_groups": _groups_json(self.groups),
+            "bindings": bindings,
+        }
+        manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            _write_zip_member(archive, "manifest.json", manifest_bytes)
+            _write_zip_member(archive, "carrier.blob", self.ir_provenance.graph_blob)
+        Path(destination).write_bytes(archive_bytes.getvalue())
 
     def find_groups(
         self,
@@ -1207,7 +1308,8 @@ class PreparedGraph:
                     raise ValueError("prepared group bindings currently require one output per custom node")
                 bound_indices[node] = self._normalize_binding(value)
 
-            automatic = dict(zip(custom_nodes, self._automatic_indices)) if self._automatic_indices is not None else {}
+            default_indices = self._saved_indices if self._saved_indices is not None else self._automatic_indices
+            automatic = dict(zip(custom_nodes, default_indices)) if default_indices is not None else {}
             missing = [node for node in custom_nodes if node not in bound_indices and node not in automatic]
             if missing:
                 names = ", ".join(repr(node.name or "<unnamed>") for node in missing)
@@ -1330,6 +1432,56 @@ class PreparedGraph:
         )
 
 
+def _discover_prepared_contract(
+    graph: Graph,
+    serialized: SerializedIR,
+    graph_blob: bytes,
+    native: NativeLibraries,
+    embedded_targets: tuple[tuple[PatchTargetContract, ...], ...] | None,
+) -> tuple[tuple[ActGroup, ...], tuple[tuple[int, ...], ...] | None, tuple[CustomMapping, ...]]:
+    groups: tuple[ActGroup, ...] = ()
+    automatic_indices: tuple[tuple[int, ...], ...] | None = None
+    mappings: tuple[CustomMapping, ...] = ()
+    if serialized.custom_nodes:
+        if embedded_targets is not None:
+            mappings = tuple(
+                CustomMapping(
+                    node.outputs[0],
+                    node.name or "<unnamed>",
+                    "raw-explicit",
+                    (),
+                    "using caller-supplied _patch_targets; positional discovery was skipped",
+                )
+                for node in serialized.custom_nodes
+            )
+        else:
+            try:
+                discovered = native.discover_patch_targets(graph_blob)
+            except NativeError as error:
+                if error.status != 5:
+                    raise
+                discovered_v2 = native.discover_patch_targets_v2(graph_blob)
+                groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered_v2))
+                reason = (
+                    "per-tensor version 2 discovery found a mixed-precision ACT contract; "
+                    "explicit group binding is required"
+                )
+            else:
+                groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered))
+                automatic_indices, reason = _automatic_group_indices(graph, serialized.custom_nodes, discovered)
+            mappings = tuple(
+                CustomMapping(
+                    node.outputs[0],
+                    node.name or "<unnamed>",
+                    "automatic" if automatic_indices is not None else "explicit-required",
+                    automatic_indices[index] if automatic_indices is not None else (),
+                    reason,
+                )
+                for index, node in enumerate(serialized.custom_nodes)
+            )
+    return groups, automatic_indices, mappings
+
+
 def prepare(
     graph: Graph,
     *,
@@ -1356,47 +1508,13 @@ def prepare(
         timeout_ms=timeout_ms,
         worker=ir_worker,
     )
-
-    groups: tuple[ActGroup, ...] = ()
-    automatic_indices: tuple[tuple[int, ...], ...] | None = None
-    mappings: tuple[CustomMapping, ...] = ()
-    if serialized.custom_nodes:
-        if embedded_targets is not None:
-            mappings = tuple(
-                CustomMapping(
-                    node.outputs[0],
-                    node.name or "<unnamed>",
-                    "raw-explicit",
-                    (),
-                    "using caller-supplied _patch_targets; positional discovery was skipped",
-                )
-                for node in serialized.custom_nodes
-            )
-        else:
-            try:
-                discovered = native.discover_patch_targets(ir_result.graph_blob)
-            except NativeError as error:
-                if error.status != 5:
-                    raise
-                discovered_v2 = native.discover_patch_targets_v2(ir_result.graph_blob)
-                groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered_v2))
-                reason = (
-                    "per-tensor version 2 discovery found a mixed-precision ACT contract; "
-                    "explicit group binding is required"
-                )
-            else:
-                groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered))
-                automatic_indices, reason = _automatic_group_indices(graph, serialized.custom_nodes, discovered)
-            mappings = tuple(
-                CustomMapping(
-                    node.outputs[0],
-                    node.name or "<unnamed>",
-                    "automatic" if automatic_indices is not None else "explicit-required",
-                    automatic_indices[index] if automatic_indices is not None else (),
-                    reason,
-                )
-                for index, node in enumerate(serialized.custom_nodes)
-            )
+    groups, automatic_indices, mappings = _discover_prepared_contract(
+        graph,
+        serialized,
+        ir_result.graph_blob,
+        native,
+        embedded_targets,
+    )
     return PreparedGraph(
         graph,
         serialized,
@@ -1407,7 +1525,197 @@ def prepare(
         timeout_ms,
         automatic_indices,
         embedded_targets,
+        build_flags,
     )
+
+
+def _prepared_identity(value: object, data: bytes, label: str) -> None:
+    if not isinstance(value, dict) or set(value) != {"size", "sha256"}:
+        raise ValueError(f"prepared bundle {label} identity is invalid")
+    size = value["size"]
+    digest = value["sha256"]
+    if (
+        isinstance(size, bool)
+        or not isinstance(size, int)
+        or size < 0
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError(f"prepared bundle {label} identity is invalid")
+    if size != len(data) or digest != hashlib.sha256(data).hexdigest():
+        raise ValueError(f"caller graph {label} does not match the prepared carrier identity")
+
+
+def _prepared_provenance(value: object, graph_blob: bytes) -> IrCompileResult:
+    integer_fields = (
+        "driver_index",
+        "device_index",
+        "driver_version",
+        "vendor_id",
+        "device_id",
+        "graph_extension_version",
+    )
+    fields = {*integer_fields, "compiler_version"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("prepared bundle provenance is invalid")
+    integers = tuple(value[name] for name in integer_fields)
+    compiler = value["compiler_version"]
+    if (
+        any(isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 0xFFFFFFFF for item in integers)
+        or not isinstance(compiler, list)
+        or len(compiler) != 2
+        or any(isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 0xFFFF for item in compiler)
+    ):
+        raise ValueError("prepared bundle provenance is invalid")
+    if value["vendor_id"] != 0x8086 or value["device_id"] != 0x7D1D:
+        raise ValueError("prepared bundle provenance is outside the supported NPU3720 contract")
+    return IrCompileResult(
+        graph_blob,
+        value["driver_index"],
+        value["device_index"],
+        value["driver_version"],
+        value["vendor_id"],
+        value["device_id"],
+        value["graph_extension_version"],
+        (compiler[0], compiler[1]),
+    )
+
+
+def _prepared_bindings(
+    value: object,
+    custom_nodes: tuple[Node, ...],
+) -> tuple[tuple[int, ...], ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) != len(custom_nodes):
+        raise ValueError("prepared bundle bindings do not match the caller graph")
+    bindings: list[tuple[int, ...]] = []
+    for index, (entry, node) in enumerate(zip(value, custom_nodes)):
+        if not isinstance(entry, dict) or set(entry) != {"custom_index", "name", "group_indices"}:
+            raise ValueError("prepared bundle binding entry is invalid")
+        indices = entry["group_indices"]
+        if (
+            entry["custom_index"] != index
+            or entry["name"] != (node.name or "<unnamed>")
+            or not isinstance(indices, list)
+            or not indices
+            or any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in indices)
+            or len(indices) != len(set(indices))
+        ):
+            raise ValueError("prepared bundle bindings do not match the caller graph")
+        bindings.append(tuple(indices))
+    return tuple(bindings)
+
+
+def load_prepared(
+    source: str | Path,
+    *,
+    graph: Graph,
+    native_dir: str | Path | None = None,
+    timeout_ms: int = 20_000,
+    libraries: NativeLibraries | None = None,
+) -> PreparedGraph:
+    """Load an unpatched carrier after exact graph and ACT-contract validation."""
+
+    if not isinstance(graph, Graph):
+        raise TypeError("load_prepared() requires a Graph")
+    serialized = serialize_ir(graph)
+    embedded_targets = _embedded_target_groups(serialized.custom_nodes)
+    if embedded_targets is None and any(len(node.outputs) != 1 for node in serialized.custom_nodes):
+        raise ValueError("automatic and prepared patch selection currently require one output per custom node")
+    try:
+        with zipfile.ZipFile(Path(source), "r") as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError("prepared bundle contains duplicate member names")
+            manifest_bytes = _bundle_member(
+                archive,
+                "manifest.json",
+                maximum_size=1024 * 1024,
+                bundle_label="prepared bundle",
+            )
+            try:
+                manifest = json.loads(manifest_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("prepared bundle manifest is not valid UTF-8 JSON") from exc
+            required = {"schema", "carrier", "ir", "build_flags", "provenance", "act_groups", "bindings"}
+            if (
+                not isinstance(manifest, dict)
+                or manifest.get("schema") != "npunlock.prepared.v1"
+                or set(manifest) != required
+            ):
+                raise ValueError("prepared bundle manifest fields or schema are unsupported")
+            carrier_path, carrier_size, carrier_hash = _manifest_blob_entry(
+                manifest["carrier"],
+                "carrier",
+                bundle_label="prepared bundle",
+            )
+            if carrier_path != "carrier.blob" or carrier_size == 0:
+                raise ValueError("prepared bundle carrier entry is invalid")
+            carrier = _bundle_member(
+                archive,
+                carrier_path,
+                maximum_size=2 * 1024 * 1024 * 1024,
+                bundle_label="prepared bundle",
+            )
+            if len(carrier) != carrier_size or hashlib.sha256(carrier).hexdigest() != carrier_hash:
+                raise ValueError("prepared bundle carrier does not match its manifest")
+            if set(names) != {"manifest.json", carrier_path}:
+                raise ValueError("prepared bundle contains undeclared members")
+    except zipfile.BadZipFile as exc:
+        raise ValueError("prepared bundle is not a valid ZIP archive") from exc
+
+    ir = manifest["ir"]
+    if not isinstance(ir, dict) or set(ir) != {"xml", "weights"}:
+        raise ValueError("prepared bundle IR identity is invalid")
+    _prepared_identity(ir["xml"], serialized.xml, "IR XML")
+    _prepared_identity(ir["weights"], serialized.weights, "IR weights")
+    build_flags = manifest["build_flags"]
+    if not isinstance(build_flags, str) or "\x00" in build_flags:
+        raise ValueError("prepared bundle build_flags is invalid")
+    if _effective_build_flags(serialized, build_flags) != build_flags:
+        raise ValueError("prepared bundle build_flags do not preserve the caller graph contract")
+    provenance = _prepared_provenance(manifest["provenance"], carrier)
+    saved_indices = _prepared_bindings(manifest["bindings"], serialized.custom_nodes)
+
+    native = libraries or NativeLibraries(native_dir)
+    groups, automatic_indices, mappings = _discover_prepared_contract(
+        graph,
+        serialized,
+        carrier,
+        native,
+        embedded_targets,
+    )
+    if manifest["act_groups"] != _groups_json(groups):
+        raise ValueError("prepared bundle ACT contract does not match rediscovery from its carrier")
+    if saved_indices is not None:
+        mappings = tuple(
+            CustomMapping(
+                node.outputs[0],
+                node.name or "<unnamed>",
+                "saved",
+                indices,
+                "reviewed binding restored from the prepared bundle",
+            )
+            for node, indices in zip(serialized.custom_nodes, saved_indices)
+        )
+    prepared = PreparedGraph(
+        graph,
+        serialized,
+        provenance,
+        groups,
+        mappings,
+        native,
+        timeout_ms,
+        automatic_indices,
+        embedded_targets,
+        build_flags,
+        saved_indices,
+    )
+    if saved_indices is not None:
+        prepared._resolve_bindings()
+    return prepared
 
 
 def compile(

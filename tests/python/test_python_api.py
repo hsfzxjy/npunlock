@@ -593,6 +593,79 @@ class CompilationFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NAME=DECIMAL"):
             npu.KernelSpec(b"source", definitions=("lower=1",))
 
+    def test_prepared_bundle_restores_reviewed_bindings_without_graph_compile(self) -> None:
+        def make_graph(source: bytes) -> tuple[npu.Graph, npu.Tensor, npu.Tensor]:
+            x = npu.input("x", shape=(1, 32), dtype="f32")
+            a = npu.input("a", shape=(1, 32), dtype="f16")
+            b = npu.input("b", shape=(1, 32), dtype="f16")
+            scaled = npu.custom(x, source=source, carrier="Abs", _name="scaled")
+            mixed = npu.custom(a, b, source=b"mix", carrier="Maximum", _name="mixed")
+            return npu.Graph([x, a, b], [mixed, scaled], name="prepared_bundle"), scaled, mixed
+
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 128, 0x3B),),
+            (npu.PatchTarget(1, 1, 2, 32, 64, 0x1F),),
+        )
+        graph, scaled, mixed = make_graph(b"old source")
+        prepared = npu.prepare(graph, native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        plan = prepared.plan(bindings={scaled: prepared.groups[0], mixed: prepared.groups[1]})
+        path = ROOT / "build" / "python-api-prepared-test.npunlock"
+        try:
+            prepared.export(path, plan=plan)
+            with zipfile.ZipFile(path, "r") as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["schema"], "npunlock.prepared.v1")
+                self.assertNotIn(b"old source", archive.read("manifest.json"))
+                self.assertEqual(manifest["bindings"][0]["group_indices"], [1])
+                self.assertEqual(manifest["bindings"][1]["group_indices"], [0])
+
+            reloaded_graph, _, _ = make_graph(b"new source")
+            loaded = npu.load_prepared(path, graph=reloaded_graph, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            path.unlink(missing_ok=True)
+
+        self.assertEqual(fake.compile_ir_count, 1)
+        self.assertEqual(tuple(mapping.status for mapping in loaded.mappings), ("saved", "saved"))
+        loaded_plan = loaded.plan()
+        self.assertEqual(loaded_plan.group_indices, ((1,), (0,)))
+        self.assertEqual(tuple(kernel.source for kernel in loaded_plan.kernels), (b"mix", b"new source"))
+        loaded_plan.build(movi_dll_dir="movi")
+        self.assertEqual(fake.compile_ir_count, 1)
+
+    def test_prepared_bundle_rejects_graph_and_act_contract_mismatch(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
+        graph = npu.Graph([x], [y], name="prepared_validation")
+        fake = FakeNative()
+        prepared = npu.prepare(graph, native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        valid_path = ROOT / "build" / "python-api-prepared-valid.npunlock"
+        corrupt_path = ROOT / "build" / "python-api-prepared-corrupt.npunlock"
+        try:
+            prepared.export(valid_path)
+            other_x = npu.input("x", shape=(1, 16), dtype="f16")
+            other_y = npu.custom(other_x, source=b"kernel", carrier="Abs", _name="y")
+            with self.assertRaisesRegex(ValueError, "IR XML"):
+                npu.load_prepared(
+                    valid_path,
+                    graph=npu.Graph([other_x], [other_y], name="prepared_validation"),
+                    libraries=fake,  # type: ignore[arg-type]
+                )
+
+            with zipfile.ZipFile(valid_path, "r") as source, zipfile.ZipFile(corrupt_path, "w") as destination:
+                for name in source.namelist():
+                    data = source.read(name)
+                    if name == "manifest.json":
+                        manifest = json.loads(data)
+                        manifest["act_groups"][0][0]["span_bytes"] = 999
+                        data = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+                    destination.writestr(name, data)
+            with self.assertRaisesRegex(ValueError, "ACT contract"):
+                npu.load_prepared(corrupt_path, graph=graph, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            valid_path.unlink(missing_ok=True)
+            corrupt_path.unlink(missing_ok=True)
+
     def test_prepared_graph_rejects_incomplete_duplicate_and_incompatible_bindings(self) -> None:
         shape = (1, 32)
         x = npu.input("x", shape=shape, dtype="f32")
