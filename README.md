@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-04:** Versioned per-tensor contracts now run connected custom FP32→FP16 and FP16→FP32 kernels in one graph, with exact host-oracle agreement. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#15-per-tensor-contracts-enable-connected-conversion-kernels).
+> **Latest breakthrough — 2026-10-07:** One connected graph now composes custom FP32→FP16, two-input FP16, and FP16→FP32 kernels around an ordinary DPU `MatMul`, with exact host-oracle agreement after carrier and program reloads. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#16-connected-mixed-precision-custom-and-dpu-composition).
 
 ## Quick example
 
@@ -79,6 +79,9 @@ and a
 [branched network combining DPU work with three custom kernels](examples/example_branched_network.py).
 The [connected conversion example](examples/example_conversion_kernels.py)
 uses custom kernels on both sides of an ordinary FP16 graph operation.
+The [connected mixed-precision example](examples/example_connected_mixed_precision.py)
+adds a two-input custom kernel, DPU matrix multiplication, reviewed build plan,
+prepared-carrier reload, and saved-program reload in one path.
 
 ## Why npunlock?
 

@@ -547,6 +547,55 @@ This result supports only the stated unary conversion contract. It does not
 establish arbitrary mixed-dtype arity, integer records, element-count changes,
 broadcasting, or automatic conversion placement.
 
+## 16. Connected mixed-precision custom and DPU composition
+
+On 2026-10-07, one `[1,32]` graph composed three custom kernels and ordinary
+DPU work in a single path:
+
+```text
+FP32 host input
+  -> custom FP32-to-FP16 conversion
+  -> custom two-input FP16 blend, with a second host input
+  -> ordinary FP16 MatMul
+  -> custom FP16-to-FP32 conversion
+  -> FP32 host output
+```
+
+Graph compiler 8.3 emitted exactly three positional ACT groups, each with two
+invocations. The conversion groups retained version 2 per-tensor contracts.
+The middle group had equal FP16 counts and spans for both inputs and its output,
+so the frontend could losslessly express it through the established version 1
+two-input contract. The native v1 validator still checked the graph records
+before patching. Nonempty `.text.DPUInvariants` (`0x260` bytes) and
+`.text.DPUVariants` (`0x80` bytes) remained in the carrier for the matrix work.
+
+One prepared carrier and its reviewed symbolic bindings were exported and
+loaded again without graph compilation. Three kernels were patched
+sequentially through v2, v1, then v2. The original and restored plans each ran
+two distinct input sets, and the exported final program ran a third after
+reload. All five executions matched an independently rounded NumPy oracle
+exactly.
+
+Evidence from the retained run:
+
+```text
+device                 0x7d1d
+driver                 0x000f57e4
+graph compiler         8.3
+carrier blob SHA-256   0c491b1afa4b16bd307cb9065b1687779c590ef457cab74ba8469e6986e16de3
+FP32->FP16 ELF SHA-256 a149409eb5efa60c1ca42bf7cf51ec21b1098679acb18f4439aa671eae85fce0
+FP16 binary ELF SHA-256 e53c09c5938ac22a5bc24ef6f597281b75abf25234d20d09caa973109adc71da
+FP16->FP32 ELF SHA-256 2cecb079381eca8d91f086a549547c0638ee874157727cf1a2dded352cc67836
+patched blob SHA-256   c45a5d8f095fa57ef99886d8e8bd529b96fa4e6d80263e8cfd5dd44c5d4b47b9
+```
+
+The runnable proof is
+[`example_connected_mixed_precision.py`](../examples/example_connected_mixed_precision.py).
+This establishes composition only for these already validated contracts on the
+tested NPU3720/compiler pair. It does not establish arbitrary mixed-precision
+graphs, mixed-dtype binary kernels, automatic placement, or general matrix
+support.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

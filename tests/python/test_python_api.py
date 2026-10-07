@@ -769,6 +769,61 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.patch_args[2], targets)
         self.assertEqual(program.graph_blob, b"patched")
 
+    def test_mixed_precision_plan_uses_v1_for_losslessly_representable_group(self) -> None:
+        class MixedNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"mixed precision")
+
+        def tensors(input_dtypes: tuple[str, ...], output_dtype: str) -> tuple[npu.PatchTensorContract, ...]:
+            element_count = 16
+            values = tuple(
+                npu.PatchTensorContract(
+                    "input",
+                    index,
+                    dtype,
+                    element_count,
+                    element_count * (2 if dtype == "f16" else 4),
+                    0x07,
+                )
+                for index, dtype in enumerate(input_dtypes)
+            )
+            return values + (
+                npu.PatchTensorContract(
+                    "output",
+                    0,
+                    output_dtype,
+                    element_count,
+                    element_count * (2 if output_dtype == "f16" else 4),
+                    0x0F,
+                ),
+            )
+
+        fake = MixedNative()
+        fake.discovery_groups_v2 = (
+            (npu.PatchTargetV2(0, 0, tensors(("f32",), "f16"), 1),),
+            (npu.PatchTargetV2(1, 1, tensors(("f16", "f16"), "f16"), 0),),
+            (npu.PatchTargetV2(2, 2, tensors(("f16",), "f32"), 1),),
+        )
+        data = npu.input("data", shape=(1, 16), dtype="f32")
+        peer = npu.input("peer", shape=(1, 16), dtype="f16")
+        half = npu.custom(data, source=b"to-f16", carrier="Convert", _dtype="f16", _name="half")
+        mixed = npu.custom(half, peer, source=b"blend", carrier="Maximum", _name="mixed")
+        output = npu.custom(mixed, source=b"to-f32", carrier="Convert", _dtype="f32", _name="output")
+        prepared = npu.prepare(
+            npu.Graph([data, peer], [output]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        plan = prepared.plan(bindings={half: prepared.groups[0], mixed: prepared.groups[1], output: prepared.groups[2]})
+
+        self.assertIsInstance(plan._target_groups[0][0], npu.PatchTargetV2)
+        self.assertIsInstance(plan._target_groups[1][0], npu.PatchTarget)
+        self.assertEqual(plan._target_groups[1], (npu.PatchTarget(1, 1, 2, 16, 32, 0x1F),))
+        self.assertIsInstance(plan._target_groups[2][0], npu.PatchTargetV2)
+        program = plan.build(movi_dll_dir="movi")
+        self.assertEqual(len(fake.patch_calls), 3)
+        self.assertEqual(program.graph_blob, b"patched3")
+
     def test_partition_groups_must_exactly_cover_custom_output(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f32")
         y = npu.custom(x, source=b"kernel", carrier="Abs")

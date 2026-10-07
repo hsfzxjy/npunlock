@@ -949,6 +949,59 @@ def _automatic_group_indices(
 PatchTargetContract = PatchTarget | PatchTargetV2
 
 
+def _legacy_targets_from_v2(
+    targets: tuple[PatchTargetV2, ...],
+) -> tuple[PatchTarget, ...] | None:
+    """Project exactly representable same-precision records to the v1 ABI."""
+
+    projected: list[PatchTarget] = []
+    for target in targets:
+        if target.target_flags != 0 or target.input_count not in {1, 2}:
+            return None
+        inputs = tuple(tensor for tensor in target.tensors if tensor.role == "input")
+        outputs = tuple(tensor for tensor in target.tensors if tensor.role == "output")
+        if (
+            tuple(tensor.index for tensor in inputs) != tuple(range(target.input_count))
+            or len(outputs) != 1
+            or outputs[0].index != 0
+            or any(tensor.observed_flags != 0x07 for tensor in inputs)
+            or outputs[0].observed_flags != 0x0F
+        ):
+            return None
+        output = outputs[0]
+        if output.dtype not in {"f16", "f32"} or any(tensor.dtype != output.dtype for tensor in inputs):
+            return None
+        element_size = 2 if output.dtype == "f16" else 4
+        if (
+            output.span_bytes != output.element_count * element_size
+            or inputs[0].element_count != output.element_count
+            or inputs[0].span_bytes != output.span_bytes
+        ):
+            return None
+        scalar_input = False
+        if target.input_count == 2:
+            scalar_input = inputs[1].element_count == 1 and output.element_count > 1
+            if scalar_input:
+                if inputs[1].span_bytes != element_size:
+                    return None
+            elif inputs[1].element_count != output.element_count or inputs[1].span_bytes != output.span_bytes:
+                return None
+        flags = 0x1B | (0x04 if output.dtype == "f16" else 0x20)
+        if scalar_input:
+            flags |= 0x40
+        projected.append(
+            PatchTarget(
+                target.invocation_index,
+                target.range_index,
+                target.input_count,
+                output.element_count,
+                output.span_bytes,
+                flags,
+            )
+        )
+    return tuple(projected)
+
+
 def _target_json(target: PatchTargetContract) -> dict[str, object]:
     if isinstance(target, PatchTargetV2):
         return {
@@ -1366,6 +1419,9 @@ class PreparedGraph:
                                 f"ACT group {indices[0]} tensor precisions do not match custom node "
                                 f"{node.name or '<unnamed>'!r}"
                             )
+                        legacy_targets = _legacy_targets_from_v2(targets)
+                        if legacy_targets is not None:
+                            targets = legacy_targets
                 else:
                     if any(isinstance(target, PatchTargetV2) for group in groups for target in group):
                         raise ValueError("version 2 per-tensor ACT contracts require one explicit group")

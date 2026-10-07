@@ -341,6 +341,14 @@ group without summing its element counts. See
 [`example_conversion_kernels.py`](../examples/example_conversion_kernels.py)
 for both directions in one connected graph.
 
+When version 2 discovery also reports an ordinary same-precision group, plan
+creation uses the original version 1 patch contract if every per-tensor record
+is exactly representable by it: static dense CMX FP16/FP32, equal input/output
+counts and spans, and optionally the established scalar second input. This is
+a lossless contract projection, not a new ABI assumption; `patchblob` performs
+the normal version 1 validation again. Mixed-precision conversion groups remain
+version 2. The plan explanation shows which version will actually be patched.
+
 For a single set of kernel-build settings, pass them to `prepared.build()` in
 the same way as `npu.compile()`:
 
@@ -356,6 +364,9 @@ See
 [`example_mixed_precision_multi_custom.py`](../examples/example_mixed_precision_multi_custom.py)
 for a complete graph whose independent FP32 and FP16 branches require explicit
 binding because the compiler's ACT order differs from symbolic output order.
+For a connected v2 conversion → v1 binary → DPU `MatMul` → v2 conversion path,
+including prepared-carrier and final-program reload, see
+[`example_connected_mixed_precision.py`](../examples/example_connected_mixed_precision.py).
 
 ## Reuse a prepared carrier
 

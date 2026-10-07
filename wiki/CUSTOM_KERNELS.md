@@ -289,6 +289,7 @@ kernel source. See [Python API](PYTHON_API.md#reuse-a-prepared-carrier).
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
+- [Connected mixed-precision custom/DPU composition](../examples/example_connected_mixed_precision.py)
 
 Each example includes a NumPy reference. Successful graph submission is not a
 correctness oracle; use equivalent host validation for every new kernel.
@@ -305,6 +306,12 @@ seven computational nodes alongside nonempty DPU invariant and variant
 sections. Its connected FP16 result and independent FP32 result both matched
 the NumPy oracle exactly. This is one composition proof, not a claim that
 arbitrary branched graphs or matrix operations are supported.
+
+The connected mixed-precision example goes further along one data path: a
+custom FP32-to-FP16 conversion feeds a two-input FP16 kernel, an ordinary DPU
+`MatMul`, and a custom FP16-to-FP32 conversion. It reviews and saves a build
+plan, reloads the unpatched carrier, rebuilds all kernels, exports the final
+program, reloads it, and checks every execution against an exact NumPy oracle.
 
 For the complete byte-level entry and ELF contract, see
 [ACT kernel ELF ABI](../ABI/KERNEL_ELF.md).
