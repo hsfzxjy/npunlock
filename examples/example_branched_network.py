@@ -7,13 +7,17 @@ import npunlock as npu
 affine_f32_c: bytes = b"""
 #include <npunlock/npu3720_kernel.h>
 
+#ifndef SCALE_QUARTERS
+#define SCALE_QUARTERS 5
+#endif
+
 void controlled_act(unsigned layerParams) {
     act_abi_invocation invocation;
     ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
     const float *in = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
     float *out = ACT_ABI_OUTPUT_PTR32(float, invocation, 1u);
     for (unsigned i = 0; i < invocation.element_count; ++i) {
-        out[i] = in[i] * 1.25f + 0.5f;
+        out[i] = in[i] * ((float)SCALE_QUARTERS * 0.25f) + 0.5f;
     }
 }
 """
@@ -153,13 +157,21 @@ def main() -> None:
         f"driver=0x{prepared.ir_provenance.driver_version:08x} "
         f"graph compiler={compiler_major}.{compiler_minor}"
     )
-    program = prepared.build(
+    plan = prepared.plan(
         bindings={
             biased: scalar_group,
             blended: binary_group,
             control_output: unary_f32_group,
-        }
+        },
+        kernels={
+            control_output: npu.KernelSpec(
+                affine_f32_c,
+                definitions=("SCALE_QUARTERS=5",),
+            ),
+        },
     )
+    print(plan.explain())
+    program = plan.build()
 
     shape = (1, 32)
     data = np.linspace(-2.0, 3.0, 32, dtype=np.float16).reshape(shape)

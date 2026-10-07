@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import io
 import json
 import sys
@@ -309,6 +310,7 @@ class FakeNative:
         self.xml = b""
         self.weights = b""
         self.compile_ir_count = 0
+        self.shave_calls: list[tuple[bytes, dict[str, object]]] = []
         self.patch_calls: list[tuple[bytes, bytes, tuple[npu.PatchTarget, ...]]] = []
         self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 8, 16),),)
         self.infer_dtype = "f16"
@@ -322,6 +324,7 @@ class FakeNative:
         return npu.IrCompileResult(b"native", 0, 0, 1, 0x8086, 0x7D1D, 0x10012, (8, 3))
 
     def compile_shave(self, source: bytes, **kwargs: object) -> bytes:
+        self.shave_calls.append((source, dict(kwargs)))
         self.assertions = (source, kwargs)
         return b"elf"
 
@@ -494,15 +497,101 @@ class CompilationFlowTests(unittest.TestCase):
         (unary_group,) = prepared.find_groups(input_count=1, dtype="f32")
         (binary_group,) = prepared.find_groups(input_count=2, dtype="f16")
 
-        program = prepared.build(
+        plan = prepared.plan(
             bindings={scaled: unary_group, mixed: binary_group},
-            movi_dll_dir="movi",
+            kernels={
+                scaled: npu.KernelSpec(b"scale override", definitions=("GAIN=2",)),
+                mixed: npu.KernelSpec(b"mix override", linker_script=b"script"),
+            },
         )
+        explanation = plan.explain()
+
+        self.assertEqual(fake.shave_calls, [])
+        self.assertIn("build plan for graph 'ambiguous_branches'", explanation)
+        self.assertIn("scaled: groups=0", explanation)
+        self.assertIn("mixed: groups=1", explanation)
+        self.assertIn("GAIN=2", explanation)
+        self.assertIn(hashlib.sha256(b"mix override").hexdigest(), explanation)
+
+        program = plan.build(movi_dll_dir="movi")
 
         self.assertEqual(fake.compile_ir_count, 1)
+        self.assertEqual(
+            fake.shave_calls,
+            [
+                (
+                    b"mix override",
+                    {
+                        "movi_dll_dir": "movi",
+                        "linker_script": b"script",
+                        "definitions": (),
+                        "timeout_ms": 20_000,
+                        "worker": None,
+                    },
+                ),
+                (
+                    b"scale override",
+                    {
+                        "movi_dll_dir": "movi",
+                        "linker_script": None,
+                        "definitions": ("GAIN=2",),
+                        "timeout_ms": 20_000,
+                        "worker": None,
+                    },
+                ),
+            ],
+        )
         self.assertEqual(fake.patch_calls[0][2], binary)
         self.assertEqual(fake.patch_calls[1][2], unary)
         self.assertEqual(program.graph_blob, b"patched2")
+
+    def test_build_plan_reuses_identical_kernel_compilation(self) -> None:
+        shape = (1, 32)
+        x = npu.input("x", shape=shape, dtype="f16")
+        first = npu.custom(x, source=b"same", carrier="Abs", _name="first")
+        second = npu.custom(first, source=b"same", carrier="Sqrt", _name="second")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 64, 0x1F),),
+            (npu.PatchTarget(1, 1, 1, 32, 64, 0x1F),),
+        )
+
+        prepared = npu.prepare(
+            npu.Graph([x], [second], name="shared_kernel_plan"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        plan = prepared.plan(definitions=("MODE=1",))
+        program = plan.build(movi_dll_dir="movi")
+
+        self.assertEqual(plan.group_indices, ((0,), (1,)))
+        self.assertEqual(len(fake.shave_calls), 1)
+        self.assertEqual(fake.shave_calls[0][1]["definitions"], ("MODE=1",))
+        self.assertEqual(len(fake.patch_calls), 2)
+        self.assertEqual(program.graph_blob, b"patched2")
+
+    def test_kernel_spec_snapshots_files_and_rejects_invalid_definitions(self) -> None:
+        source_path = ROOT / "build" / "kernel-spec-test.c"
+        linker_path = ROOT / "build" / "kernel-spec-test.ld"
+        source_path.write_bytes(b"source v1")
+        linker_path.write_bytes(b"linker v1")
+        try:
+            kernel = npu.KernelSpec(
+                source_path,
+                definitions=("COUNT=32",),
+                linker_script=linker_path,
+            )
+            source_path.write_bytes(b"source v2")
+            linker_path.write_bytes(b"linker v2")
+        finally:
+            source_path.unlink(missing_ok=True)
+            linker_path.unlink(missing_ok=True)
+
+        self.assertEqual(kernel.source, b"source v1")
+        self.assertEqual(kernel.linker_script, b"linker v1")
+        self.assertEqual(kernel.source_sha256, hashlib.sha256(b"source v1").hexdigest())
+        with self.assertRaisesRegex(ValueError, "NAME=DECIMAL"):
+            npu.KernelSpec(b"source", definitions=("lower=1",))
 
     def test_prepared_graph_rejects_incomplete_duplicate_and_incompatible_bindings(self) -> None:
         shape = (1, 32)

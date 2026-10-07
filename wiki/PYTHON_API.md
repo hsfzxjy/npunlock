@@ -273,17 +273,55 @@ program = prepared.build(
 ```
 
 A binding may use one `ActGroup`, its integer index, or an ordered sequence of
-groups for a compiler-partitioned custom operation. `build()` checks input
+groups for a compiler-partitioned custom operation. Plan creation checks input
 arity, exact-cover requirements for multi-group operations, duplicate group
-assignment, and completeness before compiling the C kernels. It patches the
-carrier already held by `PreparedGraph`; it does not run graph compilation a
-second time.
+assignment, and completeness before compiling the C kernels.
 
 The binding key is a symbolic `Tensor` from the caller's graph, not an IR node
 name recovered from the native blob. Native blobs do not expose a proven
 source-name mapping. Group filtering is a convenience over validated metadata,
 not proof that a group implements the caller's intended operation; ambiguous
 graphs still require an informed explicit choice.
+
+### Review a multi-kernel build plan
+
+For a graph with several custom kernels, separate validation from compiler
+execution with `PreparedGraph.plan()`. `KernelSpec` snapshots source and linker
+bytes immediately and gives one kernel its own definitions or linker override:
+
+```python
+plan = prepared.plan(
+    bindings={
+        scaled_output: unary_f32,
+        mixed_output: binary_f16,
+    },
+    kernels={
+        scaled_output: npu.KernelSpec(
+            "kernels/scale.c",
+            definitions=("SCALE=3",),
+        ),
+    },
+)
+
+print(plan.explain())
+program = plan.build()
+```
+
+`plan()` performs complete binding validation without requiring MoviTools. Its
+deterministic explanation includes each symbolic custom node, selected groups
+and invocation/range indices, tensor dtypes and spans, source SHA-256,
+definitions, and linker-script SHA-256. This makes the intended mutation
+reviewable before any proprietary compiler runs.
+
+A kernel omitted from `kernels` uses the source embedded by `npu.custom()` and
+the plan's default `definitions` and `linker_script`. A supplied `KernelSpec`
+is a complete per-kernel override. During `BuildPlan.build()`, identical source,
+definitions, and linker bytes share one compiled ELF; patching still occurs
+separately for every selected custom node and retains one report per patch.
+
+`PreparedGraph.build()` remains the compact API and delegates through the same
+plan validation. Both paths patch the carrier already held by `PreparedGraph`;
+neither repeats graph compilation.
 
 Mixed-precision unary conversion groups use version 2 per-tensor targets.
 Their `ActGroup.input_dtypes` and `ActGroup.output_dtype` properties expose the
@@ -303,8 +341,8 @@ group without summing its element counts. See
 [`example_conversion_kernels.py`](../examples/example_conversion_kernels.py)
 for both directions in one connected graph.
 
-Pass MoviTools and kernel-build settings to `prepared.build()` in the same way
-as `npu.compile()`:
+For a single set of kernel-build settings, pass them to `prepared.build()` in
+the same way as `npu.compile()`:
 
 ```python
 program = prepared.build(

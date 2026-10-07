@@ -35,6 +35,7 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 
 __all__ = [
     "ActGroup",
+    "BuildPlan",
     "CustomMapping",
     "DType",
     "Graph",
@@ -42,6 +43,7 @@ __all__ = [
     "InferenceOutput",
     "InferenceResult",
     "IrCompileResult",
+    "KernelSpec",
     "NativeError",
     "NativeLibraries",
     "Node",
@@ -728,10 +730,77 @@ def load(
 
 def _kernel_source(value: object) -> bytes:
     if isinstance(value, bytes):
-        return value
-    if isinstance(value, (str, Path)):
-        return Path(value).read_bytes()
-    raise TypeError("custom _kernel must be source bytes or a filesystem path")
+        source = value
+    elif isinstance(value, (str, os.PathLike)):
+        source = Path(value).read_bytes()
+    else:
+        raise TypeError("custom _kernel must be source bytes or a filesystem path")
+    if not source:
+        raise ValueError("custom kernel source must not be empty")
+    return source
+
+
+def _linker_script(value: object) -> bytes | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value or None
+    if isinstance(value, (str, os.PathLike)):
+        script = Path(value).read_bytes()
+        return script or None
+    raise TypeError("linker_script must be bytes, a filesystem path, or None")
+
+
+def _compiler_definitions(values: Sequence[str]) -> tuple[str, ...]:
+    definitions = tuple(values)
+    if len(definitions) > 64:
+        raise ValueError("at most 64 compiler definitions are supported")
+    for definition in definitions:
+        if not isinstance(definition, str):
+            raise TypeError("compiler definitions must be strings")
+        name, separator, value = definition.partition("=")
+        if (
+            separator != "="
+            or not name
+            or not ("A" <= name[0] <= "Z")
+            or any(not ("A" <= character <= "Z" or "0" <= character <= "9" or character == "_") for character in name)
+            or not value
+            or any(not "0" <= character <= "9" for character in value)
+            or len(definition.encode("utf-8")) > 255
+        ):
+            raise ValueError("compiler definitions must use the uppercase NAME=DECIMAL form")
+    return definitions
+
+
+@dataclass(frozen=True, slots=True)
+class KernelSpec:
+    """A snapshotted C source and its per-kernel compiler settings."""
+
+    source: bytes
+    definitions: tuple[str, ...]
+    linker_script: bytes | None
+    source_name: str = field(compare=False)
+
+    def __init__(
+        self,
+        source: bytes | str | os.PathLike[str],
+        *,
+        definitions: Sequence[str] = (),
+        linker_script: bytes | str | os.PathLike[str] | None = None,
+    ) -> None:
+        source_name = os.fspath(source) if isinstance(source, (str, os.PathLike)) else "<bytes>"
+        object.__setattr__(self, "source", _kernel_source(source))
+        object.__setattr__(self, "definitions", _compiler_definitions(definitions))
+        object.__setattr__(self, "linker_script", _linker_script(linker_script))
+        object.__setattr__(self, "source_name", source_name)
+
+    @property
+    def source_sha256(self) -> str:
+        return hashlib.sha256(self.source).hexdigest()
+
+    @property
+    def linker_script_sha256(self) -> str | None:
+        return None if self.linker_script is None else hashlib.sha256(self.linker_script).hexdigest()
 
 
 def _combined_custom_targets(
@@ -887,6 +956,115 @@ def _effective_build_flags(serialized: SerializedIR, build_flags: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class BuildPlan:
+    """A fully validated custom-kernel selection ready for MoviTools."""
+
+    _prepared: PreparedGraph = field(repr=False, compare=False)
+    group_indices: tuple[tuple[int, ...], ...]
+    kernels: tuple[KernelSpec, ...]
+    _target_groups: tuple[tuple[PatchTargetContract, ...], ...] = field(repr=False)
+
+    def explain(self) -> str:
+        """Render symbolic bindings, contracts, and snapshotted build inputs."""
+
+        custom_nodes = self._prepared.serialized_ir.custom_nodes
+        lines = [f"build plan for graph {self._prepared.graph.name!r}: {len(custom_nodes)} custom kernels"]
+        if not custom_nodes:
+            lines.append("  (no custom kernels)")
+            return "\n".join(lines)
+        for node, indices, kernel, targets in zip(
+            custom_nodes,
+            self.group_indices,
+            self.kernels,
+            self._target_groups,
+        ):
+            groups = ",".join(str(index) for index in indices) if indices else "raw-explicit"
+            definitions = ",".join(kernel.definitions) if kernel.definitions else "none"
+            linker = kernel.linker_script_sha256 or "builtin"
+            lines.append(
+                f"  {node.name or '<unnamed>'}: groups={groups} targets={len(targets)} "
+                f"source={kernel.source_name!r} source_sha256={kernel.source_sha256}"
+            )
+            lines.append(f"    definitions={definitions} linker_script_sha256={linker}")
+            for target in targets:
+                if isinstance(target, PatchTargetV2):
+                    tensors = ", ".join(
+                        f"{tensor.role}[{tensor.index}]={tensor.dtype}:"
+                        f"{tensor.element_count}el/{tensor.span_bytes}B"
+                        for tensor in target.tensors
+                    )
+                    lines.append(
+                        f"    target invocation={target.invocation_index} range={target.range_index} "
+                        f"flags=0x{target.target_flags:08x} tensors=({tensors})"
+                    )
+                else:
+                    dtype = (
+                        "f16" if target.contract_flags & 0x04 else "f32" if target.contract_flags & 0x20 else "unknown"
+                    )
+                    lines.append(
+                        f"    target invocation={target.invocation_index} range={target.range_index} "
+                        f"inputs={target.input_count} dtype={dtype} "
+                        f"elements={target.element_count} span={target.span_bytes} "
+                        f"flags=0x{target.contract_flags:08x}"
+                    )
+            for index in indices:
+                group = self._prepared.groups[index]
+                input_dtypes = group.input_dtypes
+                input_text = ",".join(input_dtypes) if input_dtypes is not None else "unknown"
+                lines.append(
+                    f"    group[{index}]: inputs={group.input_count} input_dtypes={input_text} "
+                    f"output_dtype={group.output_dtype or 'unknown'} elements={group.element_count} "
+                    f"span={group.span_bytes} invocations={group.invocation_indices} "
+                    f"ranges={group.range_indices}"
+                )
+        return "\n".join(lines)
+
+    def build(
+        self,
+        *,
+        movi_dll_dir: str | Path | None = None,
+        movi_worker: str | None = None,
+    ) -> Program:
+        """Compile the planned kernels and patch the retained carrier."""
+
+        custom_nodes = self._prepared.serialized_ir.custom_nodes
+        resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
+        if custom_nodes and resolved_movi_dll_dir is None:
+            raise ValueError(
+                "custom kernels require an MVC_DEPEND root from movi_dll_dir, " "configure(), or NPUNLOCK_MOVITOOLS_DIR"
+            )
+        blob = self._prepared.ir_provenance.graph_blob
+        reports: list[bytes] = []
+        elf_cache: dict[KernelSpec, bytes] = {}
+        if custom_nodes:
+            assert resolved_movi_dll_dir is not None
+            for kernel, target_values in zip(self.kernels, self._target_groups):
+                elf = elf_cache.get(kernel)
+                if elf is None:
+                    elf = self._prepared._libraries.compile_shave(
+                        kernel.source,
+                        movi_dll_dir=resolved_movi_dll_dir,
+                        linker_script=kernel.linker_script,
+                        definitions=kernel.definitions,
+                        timeout_ms=self._prepared._timeout_ms,
+                        worker=movi_worker,
+                    )
+                    elf_cache[kernel] = elf
+                patched = self._prepared._libraries.patch_graph(blob, elf, target_values)
+                blob = patched.graph_blob
+                reports.append(patched.report_json)
+        return Program(
+            blob,
+            self._prepared.graph,
+            self._prepared.serialized_ir,
+            self._prepared.ir_provenance,
+            tuple(reports),
+            self._prepared._libraries,
+            self._prepared._timeout_ms,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedGraph:
     """A carrier compiled once and ready for custom-kernel target binding."""
 
@@ -1002,23 +1180,11 @@ class PreparedGraph:
             indices.append(index)
         return tuple(indices)
 
-    def build(
+    def _resolve_bindings(
         self,
-        *,
         bindings: Mapping[Tensor, object] | None = None,
-        movi_dll_dir: str | Path | None = None,
-        linker_script: str | Path | bytes | None = None,
-        definitions: tuple[str, ...] = (),
-        movi_worker: str | None = None,
-    ) -> Program:
-        """Compile and patch custom kernels into this prepared carrier."""
-
+    ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[PatchTargetContract, ...], ...]]:
         custom_nodes = self.serialized_ir.custom_nodes
-        resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
-        if custom_nodes and resolved_movi_dll_dir is None:
-            raise ValueError(
-                "custom kernels require an MVC_DEPEND root from movi_dll_dir, " "configure(), or NPUNLOCK_MOVITOOLS_DIR"
-            )
         if bindings is not None and not isinstance(bindings, Mapping):
             raise TypeError("bindings must be a mapping from custom output tensors to ACT groups")
         supplied_bindings = {} if bindings is None else dict(bindings)
@@ -1028,6 +1194,7 @@ class PreparedGraph:
         target_groups: tuple[tuple[PatchTargetContract, ...], ...]
         if self._embedded_targets is not None:
             target_groups = self._embedded_targets
+            selected_indices = tuple(() for _ in custom_nodes)
         else:
             bound_indices: dict[Node, tuple[int, ...]] = {}
             for output, value in supplied_bindings.items():
@@ -1051,6 +1218,7 @@ class PreparedGraph:
                 )
 
             used: dict[int, Node] = {}
+            resolved_indices: list[tuple[int, ...]] = []
             selected_targets: list[tuple[PatchTargetContract, ...]] = []
             for node in custom_nodes:
                 indices = bound_indices[node] if node in bound_indices else automatic[node]
@@ -1093,38 +1261,72 @@ class PreparedGraph:
                             f"custom node {node.name or '<unnamed>'!r}"
                         )
                     targets = combined
+                resolved_indices.append(indices)
                 selected_targets.append(targets)
+            selected_indices = tuple(resolved_indices)
             target_groups = tuple(selected_targets)
+        return selected_indices, target_groups
 
-        blob = self.ir_provenance.graph_blob
-        reports: list[bytes] = []
-        if custom_nodes:
-            assert resolved_movi_dll_dir is not None
-            script = (
-                linker_script
-                if isinstance(linker_script, bytes) or linker_script is None
-                else Path(linker_script).read_bytes()
-            )
-            for node, target_values in zip(custom_nodes, target_groups):
-                elf = self._libraries.compile_shave(
-                    _kernel_source(node.metadata.get("_kernel")),
-                    movi_dll_dir=resolved_movi_dll_dir,
-                    linker_script=script,
-                    definitions=definitions,
-                    timeout_ms=self._timeout_ms,
-                    worker=movi_worker,
+    def plan(
+        self,
+        *,
+        bindings: Mapping[Tensor, object] | None = None,
+        kernels: Mapping[Tensor, KernelSpec] | None = None,
+        linker_script: str | Path | bytes | None = None,
+        definitions: Sequence[str] = (),
+    ) -> BuildPlan:
+        """Validate target bindings and snapshot every custom-kernel build input."""
+
+        custom_nodes = self.serialized_ir.custom_nodes
+        selected_indices, target_groups = self._resolve_bindings(bindings)
+        if kernels is not None and not isinstance(kernels, Mapping):
+            raise TypeError("kernels must be a mapping from custom output tensors to KernelSpec values")
+        supplied_kernels = {} if kernels is None else dict(kernels)
+        overrides: dict[Node, KernelSpec] = {}
+        for output, kernel in supplied_kernels.items():
+            if not isinstance(output, Tensor) or output.producer not in custom_nodes:
+                raise ValueError("kernel override keys must be outputs of custom nodes in this graph")
+            node = output.producer
+            if len(node.outputs) != 1 or output is not node.outputs[0]:
+                raise ValueError("kernel overrides currently require the sole output of a custom node")
+            if node in overrides:
+                raise ValueError(f"custom node {node.name or '<unnamed>'!r} has more than one kernel override")
+            if not isinstance(kernel, KernelSpec):
+                raise TypeError("kernel override values must be KernelSpec instances")
+            overrides[node] = kernel
+
+        default_definitions = _compiler_definitions(definitions)
+        default_linker_script = _linker_script(linker_script)
+        planned_kernels: list[KernelSpec] = []
+        for node in custom_nodes:
+            kernel = overrides.get(node)
+            if kernel is None:
+                kernel = KernelSpec(
+                    node.metadata.get("_kernel"),  # type: ignore[arg-type]
+                    definitions=default_definitions,
+                    linker_script=default_linker_script,
                 )
-                patched = self._libraries.patch_graph(blob, elf, target_values)
-                blob = patched.graph_blob
-                reports.append(patched.report_json)
-        return Program(
-            blob,
-            self.graph,
-            self.serialized_ir,
-            self.ir_provenance,
-            tuple(reports),
-            self._libraries,
-            self._timeout_ms,
+            planned_kernels.append(kernel)
+        return BuildPlan(self, selected_indices, tuple(planned_kernels), target_groups)
+
+    def build(
+        self,
+        *,
+        bindings: Mapping[Tensor, object] | None = None,
+        movi_dll_dir: str | Path | None = None,
+        linker_script: str | Path | bytes | None = None,
+        definitions: tuple[str, ...] = (),
+        movi_worker: str | None = None,
+    ) -> Program:
+        """Plan, compile, and patch custom kernels into this carrier."""
+
+        return self.plan(
+            bindings=bindings,
+            linker_script=linker_script,
+            definitions=definitions,
+        ).build(
+            movi_dll_dir=movi_dll_dir,
+            movi_worker=movi_worker,
         )
 
 

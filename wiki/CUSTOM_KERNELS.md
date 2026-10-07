@@ -255,6 +255,27 @@ uppercase decimal definitions. The default NPU3720 linker script is embedded
 in the native library. Supplying another script is an advanced override and
 does not relax ELF validation.
 
+For a graph with different settings per kernel, create a prepared build plan
+and override only the relevant symbolic outputs:
+
+```python
+plan = prepared.plan(
+    bindings={custom_output: selected_group},
+    kernels={
+        custom_output: npu.KernelSpec(
+            "kernels/custom.c",
+            definitions=("MODE=2",),
+        )
+    },
+)
+print(plan.explain())
+program = plan.build()
+```
+
+`KernelSpec` reads source and linker paths when the plan is created, so the
+hashes printed by `explain()` describe the bytes that will actually be sent to
+MoviTools. Identical specifications in one plan reuse their compiled ELF.
+
 ## Runnable examples
 
 - [FP16 GELU](../examples/example_gelu.py)

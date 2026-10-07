@@ -161,6 +161,23 @@ class NativeLibraries:
 
 class SharedArray(np.ndarray): ...
 
+class KernelSpec:
+    source: bytes
+    definitions: tuple[str, ...]
+    linker_script: bytes | None
+    source_name: str
+    def __init__(
+        self,
+        source: bytes | str | PathLike[str],
+        *,
+        definitions: Sequence[str] = ...,
+        linker_script: bytes | str | PathLike[str] | None = ...,
+    ) -> None: ...
+    @property
+    def source_sha256(self) -> str: ...
+    @property
+    def linker_script_sha256(self) -> str | None: ...
+
 class Program:
     graph_blob: bytes
     graph: Graph | None
@@ -190,6 +207,17 @@ class Program:
         outputs: Mapping[str, object] | None = ...,
     ) -> Mapping[str, object]: ...
 
+class BuildPlan:
+    group_indices: tuple[tuple[int, ...], ...]
+    kernels: tuple[KernelSpec, ...]
+    def explain(self) -> str: ...
+    def build(
+        self,
+        *,
+        movi_dll_dir: str | PathLike[str] | None = ...,
+        movi_worker: str | None = ...,
+    ) -> Program: ...
+
 class PreparedGraph:
     graph: Graph
     serialized_ir: SerializedIR
@@ -207,6 +235,14 @@ class PreparedGraph:
         input_1_scalar: bool | None = ...,
     ) -> tuple[ActGroup, ...]: ...
     def explain(self) -> str: ...
+    def plan(
+        self,
+        *,
+        bindings: Mapping[Tensor, object] | None = ...,
+        kernels: Mapping[Tensor, KernelSpec] | None = ...,
+        linker_script: str | PathLike[str] | bytes | None = ...,
+        definitions: Sequence[str] = ...,
+    ) -> BuildPlan: ...
     def build(
         self,
         *,
