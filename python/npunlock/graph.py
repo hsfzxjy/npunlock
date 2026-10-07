@@ -63,6 +63,7 @@ def _output_specs(
     operator: str,
     inputs: tuple[Tensor, ...],
     metadata: Mapping[str, object],
+    attributes: Mapping[str, object],
 ) -> tuple[TensorSpec, ...]:
     outputs = metadata.get("_outputs")
     if outputs is not None:
@@ -88,6 +89,19 @@ def _output_specs(
         return (inputs[0].spec,)
     if operator in _SAME_SPEC_BINARY and len(inputs) == 2 and inputs[0].spec == inputs[1].spec:
         return (inputs[0].spec,)
+    if operator == "MatMul" and len(inputs) == 2:
+        left, right = inputs
+        if len(left.shape) != 2 or len(right.shape) != 2:
+            raise ValueError("automatic MatMul inference is limited to two rank-2 tensors")
+        if left.dtype != right.dtype:
+            raise ValueError("automatic MatMul inference requires matching input dtypes")
+        transpose_a = attributes["transpose_a"]
+        transpose_b = attributes["transpose_b"]
+        left_rows, left_inner = (left.shape[1], left.shape[0]) if transpose_a else left.shape
+        right_inner, right_columns = (right.shape[1], right.shape[0]) if transpose_b else right.shape
+        if left_inner != right_inner:
+            raise ValueError(f"MatMul inner dimensions do not match after transpose: {left_inner} != {right_inner}")
+        return (TensorSpec((left_rows, right_columns), left.dtype),)
     raise ValueError(
         f"operator {operator!r} requires _shape and _dtype, or _outputs; "
         "automatic inference is limited to documented same-spec operators"
@@ -102,7 +116,12 @@ def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tenso
     unknown_metadata = set(metadata) - _RESERVED
     if unknown_metadata:
         raise TypeError(f"unknown npunlock metadata: {sorted(unknown_metadata)!r}")
-    specs = _output_specs(operator, tuple(inputs), metadata)
+    if operator == "MatMul":
+        for attribute in ("transpose_a", "transpose_b"):
+            value = attributes.setdefault(attribute, False)
+            if not isinstance(value, bool):
+                raise TypeError(f"MatMul {attribute} must be bool")
+    specs = _output_specs(operator, tuple(inputs), metadata, attributes)
     node_name = metadata.get("_name")
     if node_name is not None and not isinstance(node_name, str):
         raise TypeError("_name must be a string or None")

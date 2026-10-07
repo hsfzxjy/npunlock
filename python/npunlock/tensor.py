@@ -87,4 +87,8 @@ class Tensor:
         return self._binary("Multiply", other)
 
     def __matmul__(self, other: Tensor) -> Tensor:
-        return self._binary("MatMul", other)
+        from .graph import op
+
+        if not isinstance(other, Tensor):
+            return NotImplemented  # type: ignore[return-value]
+        return op("MatMul", self, other, transpose_a=False, transpose_b=False)  # type: ignore[return-value]

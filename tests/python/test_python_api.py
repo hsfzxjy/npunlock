@@ -55,6 +55,38 @@ class SymbolicTests(unittest.TestCase):
         graph = npu.Graph([x], [y])
         self.assertEqual([node.op for node in graph.nodes], ["Parameter", "Split", "Add"])
 
+    def test_rank2_matmul_inference_transpose_and_rejections(self) -> None:
+        left = npu.input("left", shape=(2, 3), dtype="f16")
+        right = npu.input("right", shape=(3, 4), dtype="f16")
+        product = left @ right
+        self.assertEqual(product.shape, (2, 4))
+        self.assertEqual(product.dtype, "f16")
+        self.assertEqual(product.producer.attrs, {"transpose_a": False, "transpose_b": False})
+
+        transposed_left = npu.input("transposed_left", shape=(3, 2), dtype="f16")
+        transposed_right = npu.input("transposed_right", shape=(4, 3), dtype="f16")
+        transposed = npu.MatMul(transposed_left, transposed_right, transpose_a=True, transpose_b=True)
+        self.assertEqual(transposed.shape, (2, 4))
+
+        with self.assertRaisesRegex(ValueError, "inner dimensions"):
+            npu.MatMul(left, npu.input("bad_inner", shape=(2, 4), dtype="f16"))
+        with self.assertRaisesRegex(ValueError, "matching input dtypes"):
+            npu.MatMul(left, npu.input("bad_dtype", shape=(3, 4), dtype="f32"))
+        with self.assertRaisesRegex(ValueError, "two rank-2 tensors"):
+            npu.MatMul(npu.input("batched", shape=(1, 2, 3), dtype="f16"), right)
+        with self.assertRaisesRegex(TypeError, "transpose_a must be bool"):
+            npu.MatMul(left, right, transpose_a=1)
+
+        explicitly_shaped = npu.MatMul(
+            npu.input("batched_left", shape=(1, 2, 3), dtype="f16"),
+            npu.input("batched_right", shape=(1, 3, 4), dtype="f16"),
+            transpose_a=False,
+            transpose_b=False,
+            _shape=(1, 2, 4),
+            _dtype="f16",
+        )
+        self.assertEqual(explicitly_shaped.shape, (1, 2, 4))
+
     def test_missing_output_contract_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")
         with self.assertRaisesRegex(ValueError, "limited to documented same-spec operators"):

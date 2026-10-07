@@ -355,8 +355,8 @@ def MatMul(
     *,
     transpose_a: bool = ...,
     transpose_b: bool = ...,
-    _shape: object,
-    _dtype: object,
+    _shape: object = ...,
+    _dtype: object = ...,
     _name: str | None = ...,
 ) -> Tensor: ...
 def Multiply(

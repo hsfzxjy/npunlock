@@ -55,11 +55,16 @@ underscore keyword arguments   npunlock metadata
   `Tanh` inherit their one input's shape and dtype;
 - elementwise `Add`, `Divide`, `Maximum`, `Minimum`, `Multiply`, and `Subtract`
   inherit a result only when their two symbolic input specs match exactly.
+- `MatMul` infers `(M, N)` for two static rank-2 tensors with the same dtype,
+  boolean transpose flags, and matching effective inner dimensions. Omitted
+  transpose flags are serialized explicitly as `false`, so `a @ b` works for
+  ordinary `(M, K) @ (K, N)` tensors.
 
 This is frontend convenience, not general graph or broadcasting inference.
-Unknown operations, mismatched elementwise inputs, and shape-changing
-operations still require both `_shape` and `_dtype`. Explicit metadata remains
-available as an override. Multiple outputs use `_outputs`:
+Unknown operations, mismatched elementwise inputs, batched/broadcast MatMul,
+and other shape-changing operations still require both `_shape` and `_dtype`.
+Explicit metadata remains available as an override. Multiple outputs use
+`_outputs`:
 
 ```python
 a, b = npu.SomeOp(

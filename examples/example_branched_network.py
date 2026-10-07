@@ -84,8 +84,6 @@ def build_graph() -> tuple[npu.Graph, npu.Tensor, npu.Tensor, npu.Tensor]:
         weights,
         transpose_a=False,
         transpose_b=False,
-        _shape=shape,
-        _dtype="f16",
         _name="projected",
     )
     positive_peer = npu.Abs(peer, _name="positive_peer")
