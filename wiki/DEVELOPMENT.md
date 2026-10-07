@@ -197,6 +197,20 @@ distinct upgrades rather than repeated `0.1.0` files. Ordinary source builds
 retain the base `0.1.0` version. `NPUNLOCK_PACKAGE_VERSION` is reserved for the
 release workflow's isolated wheel build.
 
+Offline CI tests the source-level Python API on every supported minor from
+Python 3.10 through 3.14. The Windows wheel job then installs the built wheel,
+runs `python -m npunlock doctor --skip-driver --json`, and exports and reloads
+a self-describing program bundle around the retained NPU3720 add-one fixture.
+That smoke path loads the bundled DLL and worker but does not query a driver,
+invoke MoviTools, or execute hardware. The release workflow repeats the same
+checks before publishing its wheel.
+
+Multi-kernel `BuildPlan` failures retain the native status, diagnostic bytes,
+stdout, and stderr on `NativeError`. The error stage is prefixed with the
+symbolic kernel name and selected ACT group indices so a failed compile or
+patch can be associated with the reviewed plan. Worker stdout and stderr keep
+their existing verbatim reporting behavior.
+
 ## Source layout
 
 ```text

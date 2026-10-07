@@ -588,6 +588,37 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(len(fake.patch_calls), 2)
         self.assertEqual(program.graph_blob, b"patched2")
 
+    def test_build_plan_failure_identifies_symbolic_kernel_and_preserves_streams(self) -> None:
+        class FailingNative(FakeNative):
+            def compile_shave(self, source: bytes, **kwargs: object) -> bytes:
+                raise npu.NativeError(
+                    "shavecc",
+                    5,
+                    "unsupported",
+                    b'{"message":"bad source"}',
+                    b"compiler stdout\n",
+                    b"compiler stderr\n",
+                )
+
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"broken", carrier="Abs", _name="broken_kernel")
+        fake = FailingNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y], name="failing_plan"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        with self.assertRaises(npu.NativeError) as raised:
+            prepared.plan().build(movi_dll_dir="movi")
+
+        error = raised.exception
+        self.assertEqual(error.stage, "kernel 'broken_kernel' groups=0: shavecc")
+        self.assertIn("kernel 'broken_kernel' groups=0: shavecc failed", str(error))
+        self.assertEqual(error.diagnostic, b'{"message":"bad source"}')
+        self.assertEqual(error.stdout_log, b"compiler stdout\n")
+        self.assertEqual(error.stderr_log, b"compiler stderr\n")
+
     def test_kernel_spec_snapshots_files_and_rejects_invalid_definitions(self) -> None:
         source_path = ROOT / "build" / "kernel-spec-test.c"
         linker_path = ROOT / "build" / "kernel-spec-test.ld"

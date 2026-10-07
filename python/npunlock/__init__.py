@@ -1161,19 +1161,46 @@ class BuildPlan:
         elf_cache: dict[KernelSpec, bytes] = {}
         if custom_nodes:
             assert resolved_movi_dll_dir is not None
-            for kernel, target_values in zip(self.kernels, self._target_groups):
+            for node, indices, kernel, target_values in zip(
+                custom_nodes,
+                self.group_indices,
+                self.kernels,
+                self._target_groups,
+            ):
+                group_text = ",".join(str(index) for index in indices) if indices else "raw-explicit"
+                context = f"kernel {node.name or '<unnamed>'!r} groups={group_text}"
                 elf = elf_cache.get(kernel)
                 if elf is None:
-                    elf = self._prepared._libraries.compile_shave(
-                        kernel.source,
-                        movi_dll_dir=resolved_movi_dll_dir,
-                        linker_script=kernel.linker_script,
-                        definitions=kernel.definitions,
-                        timeout_ms=self._prepared._timeout_ms,
-                        worker=movi_worker,
-                    )
+                    try:
+                        elf = self._prepared._libraries.compile_shave(
+                            kernel.source,
+                            movi_dll_dir=resolved_movi_dll_dir,
+                            linker_script=kernel.linker_script,
+                            definitions=kernel.definitions,
+                            timeout_ms=self._prepared._timeout_ms,
+                            worker=movi_worker,
+                        )
+                    except NativeError as error:
+                        raise NativeError(
+                            f"{context}: {error.stage}",
+                            error.status,
+                            error.status_name,
+                            error.diagnostic,
+                            error.stdout_log,
+                            error.stderr_log,
+                        ) from error
                     elf_cache[kernel] = elf
-                patched = self._prepared._libraries.patch_graph(blob, elf, target_values)
+                try:
+                    patched = self._prepared._libraries.patch_graph(blob, elf, target_values)
+                except NativeError as error:
+                    raise NativeError(
+                        f"{context}: {error.stage}",
+                        error.status,
+                        error.status_name,
+                        error.diagnostic,
+                        error.stdout_log,
+                        error.stderr_log,
+                    ) from error
                 blob = patched.graph_blob
                 reports.append(patched.report_json)
         return Program(

@@ -140,7 +140,9 @@ jobs:
           }
           Copy-Item -LiteralPath $wheel.FullName -Destination build\release-assets
           python -m pip install --force-reinstall --no-deps $wheel.FullName
-          python -c "import importlib.metadata; from npunlock._native import NativeLibraries; assert importlib.metadata.version('npunlock') == '$env:EXPECTED_PACKAGE_VERSION'; NativeLibraries(); print('versioned bundled runtime loaded')"
+          python -c "import importlib.metadata; assert importlib.metadata.version('npunlock') == '$env:EXPECTED_PACKAGE_VERSION'"
+          python -m npunlock doctor --skip-driver --json
+          python tests\python\installed_wheel_smoke.py
 
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v7
