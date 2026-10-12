@@ -399,7 +399,10 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   add_test(NAME cli_version COMMAND npurun --version)
   set_tests_properties(cli_version PROPERTIES PASS_REGULAR_EXPRESSION "npunlock 0.1.0")
   add_test(NAME cli_help COMMAND npurun --help)
-  set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "npurun.*build")
+  set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "--shave-elf")
+  add_test(NAME cli_rejects_kernel_input_conflict
+           COMMAND ${CMAKE_COMMAND} -DNPURUN=$<TARGET_FILE:npurun> -P
+                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_cli_kernel_conflict.cmake)
 
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)

@@ -26,6 +26,7 @@ typedef struct build_arguments {
   const char *ir_path;
   const char *weights_path;
   const char *source_path;
+  const char *elf_path;
   const char *movi_directory;
   const char *linker_script_path;
   const char *output_path;
@@ -57,6 +58,7 @@ typedef struct build_provenance {
   char ir_hash[65];
   char weights_hash[65];
   char source_hash[65];
+  char elf_hash[65];
   char linker_script_hash[65];
   char movi_compile_hash[65];
   char movi_asm_hash[65];
@@ -66,7 +68,8 @@ typedef struct build_provenance {
 static void print_usage(const char *program) {
   printf("usage: %s --version\n", program);
   printf("       %s build --ir MODEL.xml [--weights MODEL.bin] \\\n", program);
-  printf("         --shave-source KERNEL.c [--movi-dll-dir MVC_DEPEND] \\\n");
+  printf("         (--shave-source KERNEL.c | --shave-elf KERNEL.elf) \\\n");
+  printf("         [--movi-dll-dir MVC_DEPEND] \\\n");
   printf("         [--linker-script FILE] \\\n");
   printf("         --patch-position N \\\n");
   printf("         --output GRAPH.blob --manifest BUILD.json [options]\n");
@@ -162,6 +165,7 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     STRING_OPTION("--ir", ir_path)
     STRING_OPTION("--weights", weights_path)
     STRING_OPTION("--shave-source", source_path)
+    STRING_OPTION("--shave-elf", elf_path)
     STRING_OPTION("--movi-dll-dir", movi_directory)
     STRING_OPTION("--linker-script", linker_script_path)
     STRING_OPTION("--output", output_path)
@@ -245,17 +249,27 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
       return 0;
     }
   }
-  if (build->movi_directory == NULL) {
+  if ((build->source_path == NULL) == (build->elf_path == NULL)) {
+    fprintf(stderr, "exactly one of --shave-source or --shave-elf is required\n");
+    return 0;
+  }
+  if (build->elf_path != NULL &&
+      (build->movi_directory != NULL || build->movi_worker_path != NULL ||
+       build->linker_script_path != NULL || build->definition_count != 0)) {
+    fprintf(stderr, "--shave-elf cannot be combined with MoviTools compiler options\n");
+    return 0;
+  }
+  if (build->source_path != NULL && build->movi_directory == NULL) {
     build->owned_movi_directory = copy_environment_value(MOVITOOLS_DIRECTORY_ENV);
     build->movi_directory = build->owned_movi_directory;
   }
-  if (build->movi_directory == NULL) {
+  if (build->source_path != NULL && build->movi_directory == NULL) {
     fprintf(stderr, "--movi-dll-dir or %s must supply the MVC_DEPEND root\n",
             MOVITOOLS_DIRECTORY_ENV);
     return 0;
   }
-  if (build->ir_path == NULL || build->source_path == NULL || build->output_path == NULL ||
-      build->manifest_path == NULL || build->timeout_ms == 0) {
+  if (build->ir_path == NULL || build->output_path == NULL || build->manifest_path == NULL ||
+      build->timeout_ms == 0) {
     fprintf(stderr, "missing or inconsistent required build options\n");
     return 0;
   }
@@ -276,12 +290,14 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
   }
   if (strcmp(build->output_path, build->manifest_path) == 0 ||
       strcmp(build->output_path, build->ir_path) == 0 ||
-      strcmp(build->output_path, build->source_path) == 0 ||
+      strcmp(build->output_path,
+             build->source_path == NULL ? build->elf_path : build->source_path) == 0 ||
       (build->linker_script_path != NULL &&
        strcmp(build->output_path, build->linker_script_path) == 0) ||
       (build->weights_path != NULL && strcmp(build->output_path, build->weights_path) == 0) ||
       strcmp(build->manifest_path, build->ir_path) == 0 ||
-      strcmp(build->manifest_path, build->source_path) == 0 ||
+      strcmp(build->manifest_path,
+             build->source_path == NULL ? build->elf_path : build->source_path) == 0 ||
       (build->linker_script_path != NULL &&
        strcmp(build->manifest_path, build->linker_script_path) == 0) ||
       (build->weights_path != NULL && strcmp(build->manifest_path, build->weights_path) == 0) ||
@@ -289,7 +305,8 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
        (strcmp(build->run_output_path, build->output_path) == 0 ||
         strcmp(build->run_output_path, build->manifest_path) == 0 ||
         strcmp(build->run_output_path, build->ir_path) == 0 ||
-        strcmp(build->run_output_path, build->source_path) == 0 ||
+        strcmp(build->run_output_path,
+               build->source_path == NULL ? build->elf_path : build->source_path) == 0 ||
         (build->linker_script_path != NULL &&
          strcmp(build->run_output_path, build->linker_script_path) == 0) ||
         (build->weights_path != NULL &&
@@ -451,7 +468,7 @@ static int write_json_string(FILE *stream, const char *value) {
 }
 
 static int write_manifest(const char *path, const build_arguments *build,
-                          const ir2blob_result *ir_result, const shavecc_result *shave_result,
+                          const ir2blob_result *ir_result, npunlock_view kernel_elf,
                           const patchblob_result *patch_result, const build_provenance *provenance,
                           const graphinfer_result *run_result) {
   FILE *stream = NULL;
@@ -473,21 +490,40 @@ static int write_manifest(const char *path, const build_arguments *build,
       !write_json_string(stream, build->weights_path == NULL ? "" : build->weights_path) ||
       fprintf(stream, ", \"weights_sha256\": \"%s\",\n    \"shave_source\": ",
               provenance->weights_hash) < 0 ||
-      !write_json_string(stream, build->source_path) || fprintf(stream, "\n  },\n") < 0 ||
-      fprintf(stream,
-              "  \"shavecc\": {\"target\": \"3720xx\", \"entry\": "
-              "\"controlled_act\", \"elf_size\": %zu, \"source_sha256\": \"%s\", "
-              "\"linker_script_source\": \"%s\", \"linker_script_sha256\": \"%s\", "
-              "\"movi_dll_directory\": ",
-              shave_result->elf.size, provenance->source_hash,
-              build->linker_script_path == NULL ? "builtin" : "caller",
-              provenance->linker_script_hash) < 0 ||
-      !write_json_string(stream, build->movi_directory) ||
-      fprintf(stream,
-              ", \"moviCompile64_sha256\": \"%s\", \"moviAsm64_sha256\": \"%s\", "
-              "\"moviLLD64_sha256\": \"%s\"},\n",
-              provenance->movi_compile_hash, provenance->movi_asm_hash,
-              provenance->movi_lld_hash) < 0 ||
+      !write_json_string(stream, build->source_path == NULL ? "" : build->source_path) ||
+      fprintf(stream, ",\n    \"shave_elf\": ") < 0 ||
+      !write_json_string(stream, build->elf_path == NULL ? "" : build->elf_path) ||
+      fprintf(stream, "\n  },\n") < 0) {
+    fclose(stream);
+    return 0;
+  }
+  if (build->source_path == NULL) {
+    if (fprintf(stream, "  \"shavecc\": null,\n") < 0) {
+      fclose(stream);
+      return 0;
+    }
+  } else if (fprintf(stream,
+                     "  \"shavecc\": {\"target\": \"3720xx\", \"entry\": "
+                     "\"controlled_act\", \"elf_size\": %zu, \"source_sha256\": \"%s\", "
+                     "\"linker_script_source\": \"%s\", "
+                     "\"linker_script_sha256\": \"%s\", \"movi_dll_directory\": ",
+                     kernel_elf.size, provenance->source_hash,
+                     build->linker_script_path == NULL ? "builtin" : "caller",
+                     provenance->linker_script_hash) < 0 ||
+             !write_json_string(stream, build->movi_directory) ||
+             fprintf(stream,
+                     ", \"moviCompile64_sha256\": \"%s\", \"moviAsm64_sha256\": \"%s\", "
+                     "\"moviLLD64_sha256\": \"%s\"},\n",
+                     provenance->movi_compile_hash, provenance->movi_asm_hash,
+                     provenance->movi_lld_hash) < 0) {
+    fclose(stream);
+    return 0;
+  }
+  if (fprintf(stream,
+              "  \"kernel_elf\": {\"source\": \"%s\", \"size\": %zu, "
+              "\"sha256\": \"%s\"},\n",
+              build->source_path == NULL ? "caller" : "shavecc", kernel_elf.size,
+              provenance->elf_hash) < 0 ||
       fprintf(stream,
               "  \"ir2blob\": {\"driver_index\": %u, \"device_index\": %u, "
               "\"driver_version\": %u, \"device_vendor_id\": %u, \"device_id\": %u, "
@@ -664,6 +700,7 @@ static int run_build(const build_arguments *build) {
   file_buffer ir = {0};
   file_buffer weights = {0};
   file_buffer source = {0};
+  file_buffer elf = {0};
   file_buffer linker_script = {0};
   file_buffer run_input = {0};
   npunlock_view definition_views[MAX_DEFINITIONS];
@@ -679,6 +716,7 @@ static int run_build(const build_arguments *build) {
   patchblob_discovery_result_v2 discovery_result_v2 = {0};
   graphinfer_result run_result = {0};
   build_provenance provenance = {0};
+  npunlock_view kernel_elf = {0};
   npunlock_status status;
   size_t index;
   size_t selected_target_count = 0;
@@ -695,11 +733,15 @@ static int run_build(const build_arguments *build) {
       goto cleanup;
     }
   }
-  source = read_file(build->source_path, 0);
-  if (build->linker_script_path != NULL) {
-    linker_script = read_file(build->linker_script_path, 0);
+  if (build->source_path != NULL) {
+    source = read_file(build->source_path, 0);
+    if (build->linker_script_path != NULL) {
+      linker_script = read_file(build->linker_script_path, 0);
+    }
+  } else {
+    elf = read_file(build->elf_path, 0);
   }
-  if (source.size == SIZE_MAX || linker_script.size == SIZE_MAX) {
+  if (source.size == SIZE_MAX || elf.size == SIZE_MAX || linker_script.size == SIZE_MAX) {
     goto cleanup;
   }
   if (build->run_add1) {
@@ -710,15 +752,17 @@ static int run_build(const build_arguments *build) {
   }
   hash_view((npunlock_view){ir.data, ir.size}, provenance.ir_hash);
   hash_view((npunlock_view){weights.data, weights.size}, provenance.weights_hash);
-  hash_view((npunlock_view){source.data, source.size}, provenance.source_hash);
-  hash_view(build->linker_script_path == NULL
-                ? shavecc_default_linker_script()
-                : (npunlock_view){linker_script.data, linker_script.size},
-            provenance.linker_script_hash);
-  if (!hash_movi_dll(build->movi_directory, "moviCompile64.dll", provenance.movi_compile_hash) ||
-      !hash_movi_dll(build->movi_directory, "moviAsm64.dll", provenance.movi_asm_hash) ||
-      !hash_movi_dll(build->movi_directory, "moviLLD64.dll", provenance.movi_lld_hash)) {
-    goto cleanup;
+  if (build->source_path != NULL) {
+    hash_view((npunlock_view){source.data, source.size}, provenance.source_hash);
+    hash_view(build->linker_script_path == NULL
+                  ? shavecc_default_linker_script()
+                  : (npunlock_view){linker_script.data, linker_script.size},
+              provenance.linker_script_hash);
+    if (!hash_movi_dll(build->movi_directory, "moviCompile64.dll", provenance.movi_compile_hash) ||
+        !hash_movi_dll(build->movi_directory, "moviAsm64.dll", provenance.movi_asm_hash) ||
+        !hash_movi_dll(build->movi_directory, "moviLLD64.dll", provenance.movi_lld_hash)) {
+      goto cleanup;
+    }
   }
   ir_options.struct_size = sizeof(ir_options);
   ir_options.driver_index = IR2BLOB_AUTO_INDEX;
@@ -736,29 +780,35 @@ static int run_build(const build_arguments *build) {
     print_diagnostic(&ir_result.diagnostic);
     goto cleanup;
   }
-  for (index = 0; index < build->definition_count; ++index) {
-    definition_views[index] = (npunlock_view){(const uint8_t *)build->definitions[index],
-                                              strlen(build->definitions[index])};
+  if (build->source_path != NULL) {
+    for (index = 0; index < build->definition_count; ++index) {
+      definition_views[index] = (npunlock_view){(const uint8_t *)build->definitions[index],
+                                                strlen(build->definitions[index])};
+    }
+    shave_options.struct_size = sizeof(shave_options);
+    shave_options.movi_dll_directory_utf8 =
+        (npunlock_view){(const uint8_t *)build->movi_directory, strlen(build->movi_directory)};
+    shave_options.worker_executable_utf8 =
+        (npunlock_view){(const uint8_t *)build->movi_worker_path,
+                        build->movi_worker_path == NULL ? 0 : strlen(build->movi_worker_path)};
+    shave_options.target_cpu = (npunlock_view){cpu, sizeof(cpu) - 1u};
+    shave_options.entry_symbol = (npunlock_view){entry, sizeof(entry) - 1u};
+    shave_options.compiler_definitions = definition_views;
+    shave_options.compiler_definition_count = build->definition_count;
+    shave_options.linker_script = (npunlock_view){linker_script.data, linker_script.size};
+    shave_options.timeout_ms = build->timeout_ms;
+    status =
+        shavecc_compile(&shave_options, (npunlock_view){source.data, source.size}, &shave_result);
+    report_worker_streams(&shave_result.stdout_log, &shave_result.stderr_log, status);
+    if (status != NPUNLOCK_STATUS_OK) {
+      print_diagnostic(&shave_result.diagnostic);
+      goto cleanup;
+    }
+    kernel_elf = (npunlock_view){shave_result.elf.data, shave_result.elf.size};
+  } else {
+    kernel_elf = (npunlock_view){elf.data, elf.size};
   }
-  shave_options.struct_size = sizeof(shave_options);
-  shave_options.movi_dll_directory_utf8 =
-      (npunlock_view){(const uint8_t *)build->movi_directory, strlen(build->movi_directory)};
-  shave_options.worker_executable_utf8 =
-      (npunlock_view){(const uint8_t *)build->movi_worker_path,
-                      build->movi_worker_path == NULL ? 0 : strlen(build->movi_worker_path)};
-  shave_options.target_cpu = (npunlock_view){cpu, sizeof(cpu) - 1u};
-  shave_options.entry_symbol = (npunlock_view){entry, sizeof(entry) - 1u};
-  shave_options.compiler_definitions = definition_views;
-  shave_options.compiler_definition_count = build->definition_count;
-  shave_options.linker_script = (npunlock_view){linker_script.data, linker_script.size};
-  shave_options.timeout_ms = build->timeout_ms;
-  status =
-      shavecc_compile(&shave_options, (npunlock_view){source.data, source.size}, &shave_result);
-  report_worker_streams(&shave_result.stdout_log, &shave_result.stderr_log, status);
-  if (status != NPUNLOCK_STATUS_OK) {
-    print_diagnostic(&shave_result.diagnostic);
-    goto cleanup;
-  }
+  hash_view(kernel_elf, provenance.elf_hash);
   if (build->patch_position != PATCHBLOB_UNUSED_INDEX) {
     status = patchblob_discover_targets(
         (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size}, &discovery_result);
@@ -826,13 +876,11 @@ static int run_build(const build_arguments *build) {
   if (use_v2_targets) {
     status = patchblob_patch_v2(
         &patch_options, (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
-        (npunlock_view){shave_result.elf.data, shave_result.elf.size}, targets_v2,
-        selected_target_count, &patch_result);
+        kernel_elf, targets_v2, selected_target_count, &patch_result);
   } else {
     status = patchblob_patch(&patch_options,
                              (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
-                             (npunlock_view){shave_result.elf.data, shave_result.elf.size}, targets,
-                             selected_target_count, &patch_result);
+                             kernel_elf, targets, selected_target_count, &patch_result);
   }
   if (status != NPUNLOCK_STATUS_OK) {
     print_diagnostic(&patch_result.diagnostic);
@@ -863,7 +911,7 @@ static int run_build(const build_arguments *build) {
     }
   }
   if (!write_file(build->output_path, patch_result.graph_blob.data, patch_result.graph_blob.size) ||
-      !write_manifest(build->manifest_path, build, &ir_result, &shave_result, &patch_result,
+      !write_manifest(build->manifest_path, build, &ir_result, kernel_elf, &patch_result,
                       &provenance, build->run_add1 ? &run_result : NULL) ||
       (build->run_add1 && !write_file(build->run_output_path, run_result.outputs[0].data.data,
                                       run_result.outputs[0].data.size))) {
@@ -886,6 +934,7 @@ cleanup:
   patchblob_result_release(&patch_result);
   shavecc_result_release(&shave_result);
   ir2blob_result_release(&ir_result);
+  free(elf.data);
   free(linker_script.data);
   free(run_input.data);
   free(source.data);

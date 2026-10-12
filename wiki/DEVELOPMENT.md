@@ -148,8 +148,9 @@ release functions, and consumer linking.
 ## File-oriented CLI
 
 `npurun build` is the file boundary over the four C libraries. It compiles an
-IR graph, compiles a C kernel, selects a validated positional ACT group, and
-writes the patched graph plus a provenance manifest:
+IR graph, obtains a linked kernel from C source or a caller ELF, selects a
+validated positional ACT group, and writes the patched graph plus a provenance
+manifest:
 
 ```powershell
 npurun build `
@@ -161,6 +162,25 @@ npurun build `
   --output patched.blob `
   --manifest patched.json
 ```
+
+For a kernel compiled earlier, replace the source and MoviTools arguments:
+
+```powershell
+npurun build `
+  --ir model.xml `
+  --weights model.bin `
+  --shave-elf kernel.elf `
+  --patch-position 0 `
+  --output patched.blob `
+  --manifest patched.json
+```
+
+`--shave-source` and `--shave-elf` are mutually exclusive. ELF mode rejects
+compiler definitions, linker overrides, MoviTools directories, and MoviTools
+worker overrides because none apply. The ELF still passes through the normal
+native validation before the graph is changed. The manifest records which
+input mode supplied the ELF, its size and SHA-256, and emits `shavecc: null`
+when compilation was skipped.
 
 `--patch-position` is a zero-based discovered ACT group, not a source node
 name. Positional selection first uses the original same-precision contract and
