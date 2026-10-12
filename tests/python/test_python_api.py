@@ -540,6 +540,7 @@ class FakeNative:
                 "i8": "int8",
                 "u16": "uint16",
                 "i16": "int16",
+                "u32": "uint32",
                 "i32": "int32",
             }[self.infer_dtype]
         )
@@ -596,6 +597,7 @@ class FakeInferenceSession:
                 "i8": "int8",
                 "u16": "uint16",
                 "i16": "int16",
+                "u32": "uint32",
                 "i32": "int32",
             }[self._libraries.infer_dtype]
         )
@@ -1679,6 +1681,35 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "u16"),))
         self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "u16"),))
         np.testing.assert_array_equal(loaded.run_one(values), values + np.uint16(1))
+
+    def test_program_u32_copied_and_shared_inference(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="u32")
+        y = npu.Abs(x, _name="y")
+        fake = FakeNative()
+        fake.infer_dtype = "u32"
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        values = np.arange(32, dtype=np.uint32).reshape(1, 32)
+
+        copied = program.run_one(values)
+        shared_input = program.shared_input()
+        shared_output = program.shared_output()
+        np.copyto(shared_input, values)
+        shared = program.run_one(shared_input, output=shared_output)
+
+        np.testing.assert_array_equal(copied, values + np.uint32(1))
+        self.assertIs(shared, shared_output)
+        self.assertEqual(shared_input.dtype, np.dtype("uint32"))
+        np.testing.assert_array_equal(shared_output, values + np.uint32(1))
+
+        bundle = ROOT / "build" / "python-api-u32-program.npunlock"
+        try:
+            program.export(bundle)
+            loaded = npu.load(bundle, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            bundle.unlink(missing_ok=True)
+        self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "u32"),))
+        self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "u32"),))
+        np.testing.assert_array_equal(loaded.run_one(values), values + np.uint32(1))
 
     def test_program_single_shared_tensor_helpers_reject_ambiguous_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

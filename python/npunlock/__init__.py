@@ -87,6 +87,7 @@ _EXECUTION_NUMPY_DTYPES = {
     "i8": np.dtype("int8"),
     "u16": np.dtype("uint16"),
     "i16": np.dtype("int16"),
+    "u32": np.dtype("uint32"),
     "i32": np.dtype("int32"),
 }
 
@@ -721,7 +722,7 @@ def _manifest_contracts(value: object, label: str) -> tuple[TensorContract, ...]
         if not isinstance(name, str) or name in names:
             raise ValueError(f"program bundle {label} contains an empty or duplicate tensor name")
         contract = TensorContract(name, shape, dtype)
-        if contract.dtype not in {"f16", "f32", "u8", "i8", "u16", "i16", "i32"} or len(contract.shape) > 5:
+        if contract.dtype not in {"f16", "f32", "u8", "i8", "u16", "i16", "u32", "i32"} or len(contract.shape) > 5:
             raise ValueError(f"program bundle tensor {name!r} is outside the graphinfer contract")
         names.add(name)
         contracts.append(contract)

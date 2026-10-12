@@ -22,6 +22,7 @@ _Static_assert(GRAPHINFER_PRECISION_U8 == 4, "U8 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_I32 == 5, "I32 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_I16 == 6, "I16 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_I8 == 7, "I8 precision ABI changed");
+_Static_assert(GRAPHINFER_PRECISION_U32 == 10, "U32 precision ABI changed");
 _Static_assert(sizeof(graphinfer_options) == 16, "graphinfer options ABI changed");
 _Static_assert(sizeof(graphinfer_result) == 80, "graphinfer result ABI changed");
 _Static_assert(sizeof(graphinfer_session_result) == 72, "session result ABI changed");

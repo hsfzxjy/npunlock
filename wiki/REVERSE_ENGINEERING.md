@@ -736,6 +736,24 @@ claimed. The positive runnable proofs are
 establish U16 ACT descriptors, arbitrary U16 operators, batched Gather,
 dynamic axes, out-of-range-index behavior, or general mixed-dtype graphs.
 
+## 22. U32 graph I/O
+
+On 2026-10-12, graph compiler 8.3 accepted a static U32 `[2,6]` input and three
+U32 `[2,2]` outputs for an equal Split on the tested NPU3720. Level Zero
+reported precision `0x0a` (`UINT32`), and graphinfer now uses checked four-byte
+element sizing for that value.
+
+Copied and explicitly shared execution both matched three NumPy slices exactly
+for values including `0`, `2**31 - 1`, `2**31`, `2**32 - 2`, and `2**32 - 1`.
+The 43,168-byte carrier had SHA-256
+`5d8b11f799a89d470207e3969cbf4ffed412665813da8705aa1f8de55c80997f`.
+The runnable proof is
+[`example_u32_split.py`](../examples/example_u32_split.py).
+
+This establishes ordinary U32 graph transport for the tested structural graph.
+It does not establish U32 arithmetic operators, conversion paths, custom ACT
+descriptors, uneven splits, dynamic axes, or support outside NPU3720.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
