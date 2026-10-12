@@ -120,21 +120,22 @@ compiled separately and installed after the native graph is returned. See
 [Custom kernels](CUSTOM_KERNELS.md) for the bundled NPU3720 include, entry
 function, tensor helpers, and math-link compatibility macro.
 
-When deployment already has a linked kernel, source may be omitted from the
-symbolic node:
+When deployment already has a linked kernel, attach it to the symbolic node:
 
 ```python
-y = npu.custom(x, carrier="Abs", _name="y")
-program = npu.compile(
-    npu.Graph([x], [y]),
-    kernels={y: npu.CompiledKernel("kernels/custom.elf")},
+y = npu.custom(
+    x,
+    kernel=npu.CompiledKernel("kernels/custom.elf"),
+    carrier="Abs",
+    _name="y",
 )
+program = npu.compile(npu.Graph([x], [y]))
 ```
 
-This is deliberately a plan-time contract. Every source-free custom node must
-have an explicit `KernelSpec` or `CompiledKernel` entry in `kernels`; otherwise
-`plan()` reports the missing symbolic node before invoking MoviTools or
-patching the carrier. Normal source-based `npu.compile()` usage is unchanged.
+For delayed selection, leave the node source-free and pass an explicit
+`KernelSpec` or `CompiledKernel` entry in `kernels`; otherwise `plan()` reports
+the missing symbolic node before invoking MoviTools or patching the carrier.
+Normal source-based `npu.compile()` usage is unchanged.
 The one-call form is limited to graphs with unambiguous automatic ACT mapping.
 Use `prepare()` and explicit bindings for any graph whose mapping needs review.
 
@@ -378,10 +379,11 @@ spec = npu.KernelSpec(
 compiled = npu.compile_kernel(spec)
 compiled.save("kernels/custom.elf")
 
-# The symbolic node does not need placeholder source when this override exists.
-custom_output = npu.custom(x, carrier="Abs", _name="custom_output")
-prepared = npu.prepare(npu.Graph([x], [custom_output]))
-program = prepared.build(kernels={custom_output: compiled})
+# Attach the immutable ELF directly for the common unambiguous case.
+custom_output = npu.custom(
+    x, kernel=compiled, carrier="Abs", _name="custom_output"
+)
+program = npu.compile(npu.Graph([x], [custom_output]))
 ```
 
 `compile_kernel()` uses the same native `shavecc` implementation, bounded
@@ -389,6 +391,10 @@ worker, embedded default linker script, and MoviTools directory precedence as
 graph compilation. It does not compile an IR graph or require NPU execution.
 The returned `CompiledKernel` may be reused across compatible prepared
 carriers, but each plan still validates the ELF and its selected ACT targets.
+`kernel=` also accepts a `KernelSpec` when per-node definitions or a linker
+override should travel with the symbolic node. `source=` and `kernel=` are
+mutually exclusive. Keep the source-free node plus `kernels={output: ...}`
+form when selecting or replacing the kernel only at plan time.
 
 `PreparedGraph.build(kernels=...)` is the compact form for an automatically
 mapped graph. Use `plan(kernels=...)` when the selection should be printed and

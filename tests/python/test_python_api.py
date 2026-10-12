@@ -136,6 +136,14 @@ class SymbolicTests(unittest.TestCase):
         self.assertIsNone(source_free.producer.metadata["_kernel"])
         self.assertEqual(source_free.spec, x.spec)
 
+        compiled = npu.CompiledKernel(b"linked elf")
+        attached = npu.custom(x, kernel=compiled, carrier="Abs")
+        self.assertIs(attached.producer.metadata["_kernel"], compiled)
+        with self.assertRaisesRegex(ValueError, "source or kernel"):
+            npu.custom(x, source=b"source", kernel=compiled, carrier="Abs")
+        with self.assertRaisesRegex(TypeError, "KernelSpec or CompiledKernel"):
+            npu.custom(x, kernel=object(), carrier="Abs")  # type: ignore[arg-type]
+
     def test_undeclared_graph_input_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")
         hidden = npu.input("hidden", shape=(1,), dtype="f16")
@@ -509,6 +517,55 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.compile_ir_count, 1)
         self.assertEqual(fake.shave_calls, [])
         self.assertEqual(fake.patch_calls[0][1], b"linked elf")
+        self.assertEqual(program.graph_blob, b"patched")
+
+    def test_compile_accepts_compiled_kernel_attached_to_custom_node(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        compiled = npu.CompiledKernel(b"attached linked elf")
+        y = npu.custom(x, kernel=compiled, carrier="Abs", _name="attached")
+        fake = FakeNative()
+
+        with patch.dict("os.environ", {}, clear=True):
+            program = npu.compile(
+                npu.Graph([x], [y], name="attached_compiled"),
+                native_dir="unused",
+                libraries=fake,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(fake.compile_ir_count, 1)
+        self.assertEqual(fake.shave_calls, [])
+        self.assertEqual(fake.patch_calls[0][1], b"attached linked elf")
+        self.assertEqual(program.graph_blob, b"patched")
+
+    def test_kernel_spec_attached_to_custom_node_keeps_its_settings(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        spec = npu.KernelSpec(
+            b"attached source",
+            definitions=("MODE=7",),
+            linker_script=b"attached linker",
+        )
+        y = npu.custom(x, kernel=spec, carrier="Abs", _name="attached_spec")
+        fake = FakeNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y], name="attached_spec_graph"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        plan = prepared.plan(definitions=("IGNORED=1",), linker_script=b"ignored")
+        program = plan.build(movi_dll_dir="movi")
+
+        self.assertIn("MODE=7", plan.explain())
+        self.assertEqual(
+            fake.shave_calls[0][1],
+            {
+                "movi_dll_dir": "movi",
+                "linker_script": b"attached linker",
+                "definitions": ("MODE=7",),
+                "timeout_ms": 20_000,
+                "worker": None,
+            },
+        )
         self.assertEqual(program.graph_blob, b"patched")
 
     def test_custom_only_graph_infers_targets_by_position(self) -> None:

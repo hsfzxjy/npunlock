@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .kernel import CompiledKernel, KernelSpec
 from .tensor import Tensor, TensorSpec
 
 _RESERVED = {
@@ -173,6 +174,7 @@ def normalize_numpy_dtype(dtype: object) -> str:
 def custom(
     *inputs: Tensor,
     source: str | bytes | Path | None = None,
+    kernel: KernelSpec | CompiledKernel | None = None,
     carrier: str,
     _shape: object | None = None,
     _dtype: object | None = None,
@@ -183,12 +185,17 @@ def custom(
 ) -> Tensor | tuple[Tensor, ...]:
     """Create a custom node, inheriting a single output from its first input.
 
-    Source may be omitted when a kernel override will be supplied to the
-    prepared graph's build plan.
+    Source may be omitted when ``kernel`` is attached directly or an override
+    will be supplied to the prepared graph's build plan.
     """
 
+    if source is not None and kernel is not None:
+        raise ValueError("custom() accepts source or kernel, not both")
+    if kernel is not None and not isinstance(kernel, (KernelSpec, CompiledKernel)):
+        raise TypeError("custom() kernel must be a KernelSpec or CompiledKernel")
+
     metadata: dict[str, object] = {
-        "_kernel": source,
+        "_kernel": kernel if kernel is not None else source,
         "_carrier": _validate_operator_name(carrier),
         "_name": _name,
     }

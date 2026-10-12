@@ -295,6 +295,7 @@ def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tenso
 def custom(
     *inputs: Tensor,
     source: str | bytes | PathLike[str] | None = ...,
+    kernel: KernelSpec | CompiledKernel | None = ...,
     carrier: str,
     _shape: object | None = ...,
     _dtype: object | None = ...,

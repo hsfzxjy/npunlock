@@ -296,21 +296,22 @@ The returned object can be passed directly to `PreparedGraph.plan()`. A later
 process can reconstruct the same value with
 `npu.CompiledKernel("kernels/custom.elf")`.
 
-A graph intended only for compiled-kernel deployment can omit placeholder C
-source from the symbolic node:
+A graph intended for compiled-kernel deployment can attach the immutable ELF
+directly to its symbolic node:
 
 ```python
-custom_output = npu.custom(x, carrier="Abs", _name="custom_output")
-program = npu.compile(
-    npu.Graph([x], [custom_output]),
-    kernels={custom_output: compiled},
+custom_output = npu.custom(
+    x, kernel=compiled, carrier="Abs", _name="custom_output"
 )
+program = npu.compile(npu.Graph([x], [custom_output]))
 ```
 
-Every such source-free node requires an explicit `KernelSpec` or
-`CompiledKernel` override. Calling `plan()` without one is rejected before
-MoviTools or graph mutation. Supplying `source=` remains the normal workflow
-for `npu.compile()` and for plans that compile C during the build.
+`kernel=` accepts either `KernelSpec` or `CompiledKernel`, and cannot be
+combined with `source=`. A source-free node remains useful when the kernel is
+selected later: it requires an explicit `KernelSpec` or `CompiledKernel`
+override through `kernels={output: ...}`. Calling `plan()` without one is
+rejected before MoviTools or graph mutation. Supplying `source=` remains the
+normal compact workflow for plans that compile C during the build.
 The one-call form requires an unambiguous automatic mapping. Use `prepare()`
 and `prepared.plan(kernels=...)` when you want to inspect `plan.explain()`
 before patching or when the graph needs explicit bindings.
