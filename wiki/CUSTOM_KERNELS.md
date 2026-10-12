@@ -284,6 +284,18 @@ only its `KernelSpec` entries. The ELF must still be a supported linked
 `3720xx` image. The normal native patch path validates it before changing the
 carrier, so this option does not relax the kernel ABI or graph contract.
 
+Compile once and save the linked image through the same high-level API:
+
+```python
+spec = npu.KernelSpec("kernels/custom.c", definitions=("MODE=2",))
+compiled = npu.compile_kernel(spec)
+compiled.save("kernels/custom.elf")
+```
+
+The returned object can be passed directly to `PreparedGraph.plan()`. A later
+process can reconstruct the same value with
+`npu.CompiledKernel("kernels/custom.elf")`.
+
 When iterating on kernel C, save the driver-compiled carrier and reviewed
 binding separately with `prepared.export("network.prepared.npunlock",
 plan=plan)`. A later process can call `npu.load_prepared(..., graph=graph)`,

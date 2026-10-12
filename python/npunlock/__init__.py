@@ -62,6 +62,7 @@ __all__ = [
     "TensorContract",
     "TensorSpec",
     "compile",
+    "compile_kernel",
     "configure",
     "constant",
     "custom",
@@ -873,6 +874,44 @@ class CompiledKernel:
     @property
     def elf_sha256(self) -> str:
         return hashlib.sha256(self.elf).hexdigest()
+
+    def save(self, destination: str | Path) -> None:
+        """Write the snapshotted linked ELF to *destination*."""
+
+        Path(destination).write_bytes(self.elf)
+
+
+def compile_kernel(
+    kernel: KernelSpec,
+    *,
+    native_dir: str | Path | None = None,
+    movi_dll_dir: str | Path | None = None,
+    timeout_ms: int = 20_000,
+    movi_worker: str | None = None,
+    libraries: NativeLibraries | None = None,
+) -> CompiledKernel:
+    """Compile one snapshotted kernel spec into a reusable linked SHAVE ELF."""
+
+    if not isinstance(kernel, KernelSpec):
+        raise TypeError("compile_kernel() requires a KernelSpec")
+    resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
+    if resolved_movi_dll_dir is None:
+        raise ValueError(
+            "kernel compilation requires an MVC_DEPEND root from movi_dll_dir, "
+            "configure(), or NPUNLOCK_MOVITOOLS_DIR"
+        )
+    native = libraries or _default_native_libraries(native_dir)
+    elf = native.compile_shave(
+        kernel.source,
+        movi_dll_dir=resolved_movi_dll_dir,
+        linker_script=kernel.linker_script,
+        definitions=kernel.definitions,
+        timeout_ms=timeout_ms,
+        worker=movi_worker,
+    )
+    result = CompiledKernel(elf)
+    object.__setattr__(result, "elf_name", f"<compiled from {kernel.source_name}>")
+    return result
 
 
 def _combined_custom_targets(

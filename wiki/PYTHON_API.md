@@ -350,6 +350,26 @@ ELF against the established NPU3720 contract; precompilation does not bypass
 ELF, target, relocation, or graph-target checks. `plan.explain()` identifies
 compiled inputs by path and SHA-256.
 
+The high-level API can produce and persist that reusable value directly:
+
+```python
+spec = npu.KernelSpec(
+    "kernels/custom.c",
+    definitions=("MODE=2",),
+)
+compiled = npu.compile_kernel(spec)
+compiled.save("kernels/custom.elf")
+
+# Use `compiled` immediately, or reconstruct it from the saved file later.
+program = prepared.plan(kernels={custom_output: compiled}).build()
+```
+
+`compile_kernel()` uses the same native `shavecc` implementation, bounded
+worker, embedded default linker script, and MoviTools directory precedence as
+graph compilation. It does not compile an IR graph or require NPU execution.
+The returned `CompiledKernel` may be reused across compatible prepared
+carriers, but each plan still validates the ELF and its selected ACT targets.
+
 `PreparedGraph.build()` remains the compact API and delegates through the same
 plan validation. Both paths patch the carrier already held by `PreparedGraph`;
 neither repeats graph compilation.

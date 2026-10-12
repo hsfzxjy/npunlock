@@ -684,20 +684,65 @@ class CompilationFlowTests(unittest.TestCase):
 
     def test_compiled_kernel_snapshots_elf_path(self) -> None:
         elf_path = ROOT / "build" / "compiled-kernel-test.elf"
+        saved_path = ROOT / "build" / "compiled-kernel-saved.elf"
         elf_path.write_bytes(b"elf v1")
         try:
             kernel = npu.CompiledKernel(elf_path)
             elf_path.write_bytes(b"elf v2")
+            kernel.save(saved_path)
+            saved_bytes = saved_path.read_bytes()
         finally:
             elf_path.unlink(missing_ok=True)
+            saved_path.unlink(missing_ok=True)
 
         self.assertEqual(kernel.elf, b"elf v1")
+        self.assertEqual(saved_bytes, b"elf v1")
         self.assertEqual(kernel.elf_name, str(elf_path))
         self.assertEqual(kernel.elf_sha256, hashlib.sha256(b"elf v1").hexdigest())
         with self.assertRaisesRegex(ValueError, "must not be empty"):
             npu.CompiledKernel(b"")
         with self.assertRaisesRegex(TypeError, "ELF bytes or a filesystem path"):
             npu.CompiledKernel(bytearray(b"elf"))  # type: ignore[arg-type]
+
+    def test_compile_kernel_forwards_snapshotted_options(self) -> None:
+        fake = FakeNative()
+        spec = npu.KernelSpec(
+            b"kernel source",
+            definitions=("MODE=3",),
+            linker_script=b"linker script",
+        )
+
+        compiled = npu.compile_kernel(
+            spec,
+            native_dir="unused",
+            movi_dll_dir="movi",
+            timeout_ms=1234,
+            movi_worker="worker.exe",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(compiled.elf, b"elf")
+        self.assertEqual(compiled.elf_name, "<compiled from <bytes>>")
+        self.assertEqual(
+            fake.shave_calls,
+            [
+                (
+                    b"kernel source",
+                    {
+                        "movi_dll_dir": "movi",
+                        "linker_script": b"linker script",
+                        "definitions": ("MODE=3",),
+                        "timeout_ms": 1234,
+                        "worker": "worker.exe",
+                    },
+                )
+            ],
+        )
+        with self.assertRaisesRegex(TypeError, "requires a KernelSpec"):
+            npu.compile_kernel(b"source", movi_dll_dir="movi", libraries=fake)  # type: ignore[arg-type]
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "requires an MVC_DEPEND root"):
+                npu.compile_kernel(spec, libraries=fake)  # type: ignore[arg-type]
 
     def test_compiled_kernel_build_does_not_require_movitools(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
