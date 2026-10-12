@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-12:** Ordinary NPU graphs now accept signed I8 host tensors: copied and shared `Squeeze`/`Unsqueeze`, plus a parallel I8-to-FP32 output, matched exact NumPy oracles. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#19-i8-graph-io-and-static-axis-transforms).
+> **Latest breakthrough — 2026-10-12:** Ordinary NPU graphs now accept signed I16 host tensors and shared multi-output `Split`; three outputs matched exact NumPy slices, including signed boundary values. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#20-i16-graph-io-and-multi-output-split).
 
 ## Quick example
 
@@ -89,6 +89,8 @@ The [U8 reshape example](examples/example_u8_reshape.py) likewise needs no
 MoviTools and returns both reshaped U8 data and its FP32 conversion.
 The [I8 axis-transform example](examples/example_i8_axes.py) covers signed-byte
 `Squeeze`, `Unsqueeze`, and FP32 conversion in one ordinary graph.
+The [I16 Split example](examples/example_i16_split.py) demonstrates one
+multi-output node bound directly to three shared output arrays.
 
 ## Why npunlock?
 
@@ -171,8 +173,8 @@ reference.
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
 - connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
-- ordinary static graph execution with FP16, FP32, U8, I8, or I32 inputs and outputs
-- inferred contracts for `Concat`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
+- ordinary static graph execution with FP16, FP32, U8, I8, I16, or I32 inputs and outputs
+- inferred contracts for `Concat`, `Split`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools

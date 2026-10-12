@@ -85,6 +85,7 @@ _EXECUTION_NUMPY_DTYPES = {
     "f32": np.dtype("float32"),
     "u8": np.dtype("uint8"),
     "i8": np.dtype("int8"),
+    "i16": np.dtype("int16"),
     "i32": np.dtype("int32"),
 }
 
@@ -393,10 +394,16 @@ class Program:
             return self._saved_outputs
         if self.graph is None:
             raise RuntimeError("program has no output contract")
-        return tuple(
-            TensorContract(tensor.name or f"Result_{index}", tensor.shape, tensor.dtype)
-            for index, tensor in enumerate(self.graph.outputs)
-        )
+        node_indices = {node: index for index, node in enumerate(self.graph.nodes)}
+        contracts: list[TensorContract] = []
+        for result_index, tensor in enumerate(self.graph.outputs):
+            name = tensor.name
+            if name is None and len(tensor.producer.outputs) > 1:
+                producer = tensor.producer
+                producer_name = producer.name or f"{producer.op}_{node_indices[producer]}"
+                name = f"{producer_name}.{tensor.output_index}"
+            contracts.append(TensorContract(name or f"Result_{result_index}", tensor.shape, tensor.dtype))
+        return tuple(contracts)
 
     def to_bytes(self) -> bytes:
         """Return the complete native graph blob."""
@@ -713,7 +720,7 @@ def _manifest_contracts(value: object, label: str) -> tuple[TensorContract, ...]
         if not isinstance(name, str) or name in names:
             raise ValueError(f"program bundle {label} contains an empty or duplicate tensor name")
         contract = TensorContract(name, shape, dtype)
-        if contract.dtype not in {"f16", "f32", "u8", "i8", "i32"} or len(contract.shape) > 5:
+        if contract.dtype not in {"f16", "f32", "u8", "i8", "i16", "i32"} or len(contract.shape) > 5:
             raise ValueError(f"program bundle tensor {name!r} is outside the graphinfer contract")
         names.add(name)
         contracts.append(contract)

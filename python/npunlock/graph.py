@@ -75,6 +75,20 @@ def _constant_integer_vector(tensor: Tensor, operator: str, role: str) -> tuple[
     return tuple(int(value) for value in array.reshape(-1))  # type: ignore[union-attr]
 
 
+def _constant_integer_scalar(tensor: Tensor, operator: str, role: str) -> int:
+    if tensor.producer.op != "Const":
+        raise ValueError(f"automatic {operator} inference requires a constant {role} tensor")
+    array = tensor.producer.metadata.get("value")
+    if array is None:
+        raise ValueError(f"{operator} {role} constant has no value")
+    if getattr(array, "ndim", None) != 0 or getattr(getattr(array, "dtype", None), "kind", None) not in {
+        "i",
+        "u",
+    }:
+        raise ValueError(f"{operator} {role} must be a scalar integer constant")
+    return int(array.item())  # type: ignore[union-attr]
+
+
 def _output_specs(
     operator: str,
     inputs: tuple[Tensor, ...],
@@ -216,6 +230,23 @@ def _output_specs(
         source_dimensions = iter(data.shape)
         output_shape = tuple(1 if axis in inserted else next(source_dimensions) for axis in range(output_rank))
         return (TensorSpec(output_shape, data.dtype),)
+    if operator == "Split":
+        if len(inputs) != 2:
+            raise ValueError("automatic Split inference requires data and axis tensors")
+        data, axis_tensor = inputs
+        axis = _constant_integer_scalar(axis_tensor, "Split", "axis")
+        rank = len(data.shape)
+        axis = axis + rank if axis < 0 else axis
+        if axis < 0 or axis >= rank:
+            raise ValueError("Split axis is out of range")
+        num_splits = attributes.get("num_splits")
+        if isinstance(num_splits, bool) or not isinstance(num_splits, int) or num_splits <= 0:
+            raise ValueError("automatic Split inference requires a positive integer num_splits")
+        if data.shape[axis] % num_splits != 0:
+            raise ValueError("Split axis dimension must be divisible by num_splits")
+        output_shape = list(data.shape)
+        output_shape[axis] //= num_splits
+        return tuple(TensorSpec(output_shape, data.dtype) for _ in range(num_splits))
     raise ValueError(
         f"operator {operator!r} requires _shape and _dtype, or _outputs; "
         "automatic inference is limited to documented same-spec operators"

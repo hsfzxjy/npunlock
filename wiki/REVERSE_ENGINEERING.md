@@ -680,6 +680,34 @@ The runnable proof is
 establish I8 ACT descriptors, I8 custom kernels, quantization semantics,
 arbitrary signed-byte operators, or negative-axis compiler support.
 
+## 20. I16 graph I/O and multi-output Split
+
+On 2026-10-12, graph compiler 8.3 accepted a static signed-I16 input and three
+signed-I16 outputs for an equal `Split` on the tested NPU3720. Level Zero
+reported precision `0x06` (`INT16`), and the bounded graphinfer allocation path
+sizes it as two bytes per element. This remains ordinary graph execution, not a
+custom ACT-kernel contract.
+
+The tested graph split a `[2,6]` input into three `[2,2]` outputs along a scalar
+constant axis. Copied and explicitly shared execution matched three NumPy
+slices exactly for data including `-32768` and `32767`. The carrier was 43,168
+bytes with SHA-256
+`5abd0045fb857bd93d5a0df97765762b205d3a3e9501a965e31f26a6e389f99b`.
+
+This experiment also exposed and fixed a general frontend issue. The compiler
+names multi-output ports from their source, for example `split.0`, while the
+frontend previously invented `Result_0`. Copied execution happened to pair
+outputs by order, but shared execution correctly rejected the non-matching
+exact-name selectors. Program contracts now derive the same source-and-port
+names as the serialized graph, allowing every shared output to bind exactly.
+
+An adjacent I16-to-FP32 Convert probe was rejected by graph compiler 8.3 as an
+unsupported `si16 -> f32` configuration. No such conversion path is claimed.
+The runnable positive proof is
+[`example_i16_split.py`](../examples/example_i16_split.py). It does not
+establish I16 ACT descriptors, arbitrary I16 operators, uneven splits, dynamic
+axes, or general multi-output operator support.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

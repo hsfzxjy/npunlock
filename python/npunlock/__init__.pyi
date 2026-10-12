@@ -1,5 +1,5 @@
 from os import PathLike
-from typing import Any, Iterable, Mapping, Sequence, TypeAlias
+from typing import Any, Iterable, Mapping, Sequence, TypeAlias, overload
 
 import numpy as np
 
@@ -441,3 +441,21 @@ def Unsqueeze(
     _dtype: object = ...,
     _name: str | None = ...,
 ) -> Tensor: ...
+@overload
+def Split(
+    data: Tensor,
+    axis: Tensor,
+    *,
+    num_splits: int,
+    _outputs: Sequence[TensorSpec] | None = ...,
+    _name: str | None = ...,
+) -> tuple[Tensor, ...]: ...
+@overload
+def Split(
+    data: Tensor,
+    *,
+    axis: int,
+    _outputs: Sequence[TensorSpec],
+    _name: str | None = ...,
+    **attributes: object,
+) -> tuple[Tensor, ...]: ...

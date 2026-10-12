@@ -155,6 +155,22 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "axis is out of range"):
             npu.Unsqueeze(squeezed, npu.constant(np.asarray([4], dtype=np.int64)))
 
+    def test_static_split_inference_and_rejections(self) -> None:
+        data = npu.input("data", shape=(2, 6), dtype="i16")
+        outputs = npu.Split(data, npu.constant(np.asarray(-1, dtype=np.int64)), num_splits=3)
+
+        self.assertEqual(len(outputs), 3)
+        self.assertTrue(all(output.spec == npu.TensorSpec((2, 2), "i16") for output in outputs))
+
+        with self.assertRaisesRegex(ValueError, "constant axis"):
+            npu.Split(data, npu.input("axis", shape=(1,), dtype="i64"), num_splits=3)
+        with self.assertRaisesRegex(ValueError, "scalar integer"):
+            npu.Split(data, npu.constant(np.asarray([1], dtype=np.int64)), num_splits=3)
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            npu.Split(data, npu.constant(np.asarray(1, dtype=np.int64)), num_splits=0)
+        with self.assertRaisesRegex(ValueError, "divisible"):
+            npu.Split(data, npu.constant(np.asarray(1, dtype=np.int64)), num_splits=4)
+
     def test_structural_operator_attributes_are_serialized(self) -> None:
         left = npu.input("left", shape=(1, 2), dtype="i32")
         right = npu.input("right", shape=(1, 2), dtype="i32")
@@ -488,7 +504,14 @@ class FakeNative:
         values = tuple(inputs)  # type: ignore[arg-type]
         self.infer_args = (graph_blob, values, kwargs)
         dtype = np.dtype(
-            {"f16": "float16", "f32": "float32", "u8": "uint8", "i8": "int8", "i32": "int32"}[self.infer_dtype]
+            {
+                "f16": "float16",
+                "f32": "float32",
+                "u8": "uint8",
+                "i8": "int8",
+                "i16": "int16",
+                "i32": "int32",
+            }[self.infer_dtype]
         )
         source = np.frombuffer(values[0].data, dtype=dtype)
         output = (source + dtype.type(1)).astype(dtype).tobytes()
@@ -536,9 +559,14 @@ class FakeInferenceSession:
         source_buffer = input_values[0][1]
         output_buffer = output_values[0][1]
         dtype = np.dtype(
-            {"f16": "float16", "f32": "float32", "u8": "uint8", "i8": "int8", "i32": "int32"}[
-                self._libraries.infer_dtype
-            ]
+            {
+                "f16": "float16",
+                "f32": "float32",
+                "u8": "uint8",
+                "i8": "int8",
+                "i16": "int16",
+                "i32": "int32",
+            }[self._libraries.infer_dtype]
         )
         source_bytes = (ctypes.c_uint8 * source_buffer.size).from_address(source_buffer.address)
         output_bytes = (ctypes.c_uint8 * output_buffer.size).from_address(output_buffer.address)
@@ -1563,6 +1591,35 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "i8"),))
         np.testing.assert_array_equal(loaded.run_one(values), values + np.int8(1))
 
+    def test_program_i16_copied_and_shared_inference(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="i16")
+        y = npu.Abs(x, _name="y")
+        fake = FakeNative()
+        fake.infer_dtype = "i16"
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        values = np.arange(-16, 16, dtype=np.int16).reshape(1, 32)
+
+        copied = program.run_one(values)
+        shared_input = program.shared_input()
+        shared_output = program.shared_output()
+        np.copyto(shared_input, values)
+        shared = program.run_one(shared_input, output=shared_output)
+
+        np.testing.assert_array_equal(copied, values + np.int16(1))
+        self.assertIs(shared, shared_output)
+        self.assertEqual(shared_input.dtype, np.dtype("int16"))
+        np.testing.assert_array_equal(shared_output, values + np.int16(1))
+
+        bundle = ROOT / "build" / "python-api-i16-program.npunlock"
+        try:
+            program.export(bundle)
+            loaded = npu.load(bundle, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            bundle.unlink(missing_ok=True)
+        self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "i16"),))
+        self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "i16"),))
+        np.testing.assert_array_equal(loaded.run_one(values), values + np.int16(1))
+
     def test_program_single_shared_tensor_helpers_reject_ambiguous_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         peer = npu.input("peer", shape=(1, 32), dtype="f16")
@@ -1586,6 +1643,34 @@ class CompilationFlowTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "requires exactly one output; program has 2 outputs"):
             two_outputs.shared_output()
+
+    def test_multi_output_contracts_follow_native_source_names(self) -> None:
+        x = npu.input("x", shape=(1, 6), dtype="i16")
+        axis = npu.constant(np.asarray(1, dtype=np.int64))
+        unnamed = npu.compile(
+            npu.Graph([x], list(npu.Split(x, axis, num_splits=3))),
+            native_dir="unused",
+            libraries=FakeNative(),  # type: ignore[arg-type]
+        )
+        named_outputs = npu.Split(x, axis, num_splits=3, _name="parts")
+        named = npu.compile(
+            npu.Graph([x], list(named_outputs)),
+            native_dir="unused",
+            libraries=FakeNative(),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(
+            tuple(value.name for value in unnamed.output_contracts), ("Split_2.0", "Split_2.1", "Split_2.2")
+        )
+        self.assertEqual(tuple(value.name for value in named.output_contracts), ("parts.0", "parts.1", "parts.2"))
+
+        bundle = ROOT / "build" / "python-api-multi-output-program.npunlock"
+        try:
+            named.export(bundle)
+            loaded = npu.load(bundle, libraries=FakeNative())  # type: ignore[arg-type]
+        finally:
+            bundle.unlink(missing_ok=True)
+        self.assertEqual(tuple(value.name for value in loaded.output_contracts), ("parts.0", "parts.1", "parts.2"))
 
     def test_program_run_one_rejects_multi_tensor_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
