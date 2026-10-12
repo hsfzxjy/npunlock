@@ -469,3 +469,11 @@ def Gather(
     _dtype: object = ...,
     _name: str | None = ...,
 ) -> Tensor: ...
+def VariadicSplit(
+    data: Tensor,
+    axis: Tensor,
+    split_lengths: Tensor,
+    *,
+    _outputs: Sequence[TensorSpec] | None = ...,
+    _name: str | None = ...,
+) -> tuple[Tensor, ...]: ...

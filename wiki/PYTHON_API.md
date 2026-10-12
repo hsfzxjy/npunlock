@@ -69,6 +69,9 @@ underscore keyword arguments   npunlock metadata
   constant axes, including normalized negative axes;
 - `Split` accepts a scalar integer constant axis and positive `num_splits`,
   requires exact axis divisibility, and returns one contract per equal part;
+- `VariadicSplit` accepts a scalar integer constant axis and one-dimensional
+  constant lengths, including at most one `-1` remainder, and returns one
+  contract per positive unequal part;
 - `Gather` accepts integer indices and a scalar integer constant axis, infers
   the static output shape, and currently requires `batch_dims=0`; and
 - `Convert` preserves shape and uses its normalized `destination_type` as the
@@ -723,6 +726,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [mixed-input U8/I32 Gather graph](../examples/example_u8_gather.py)
 - [U32 multi-output Split graph](../examples/example_u32_split.py)
 - [U8 Gather with I64 indices](../examples/example_u8_gather_i64.py)
+- [U8 unequal VariadicSplit graph](../examples/example_u8_variadic_split.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision custom branches with prepared binding](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)

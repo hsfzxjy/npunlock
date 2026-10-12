@@ -102,7 +102,8 @@ custom ACT-kernel precision.
 
 U8 has been validated only for ordinary graph inputs and outputs, including a
 constant-pattern Reshape, U8-to-FP32 Convert, and Gather with I32 indices. It
-is not a supported custom ACT-kernel precision.
+also covers one static unequal VariadicSplit with three outputs. U8 is not a
+supported custom ACT-kernel precision.
 
 I8 has been validated only for ordinary graph inputs and outputs, including
 positive-axis Squeeze/Unsqueeze and I8-to-FP32 Convert. Graph compiler 8.3

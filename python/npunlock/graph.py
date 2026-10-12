@@ -247,6 +247,35 @@ def _output_specs(
         output_shape = list(data.shape)
         output_shape[axis] //= num_splits
         return tuple(TensorSpec(output_shape, data.dtype) for _ in range(num_splits))
+    if operator == "VariadicSplit":
+        if len(inputs) != 3:
+            raise ValueError("automatic VariadicSplit inference requires data, axis, and split-length tensors")
+        data, axis_tensor, lengths_tensor = inputs
+        axis = _constant_integer_scalar(axis_tensor, "VariadicSplit", "axis")
+        rank = len(data.shape)
+        axis = axis + rank if axis < 0 else axis
+        if axis < 0 or axis >= rank:
+            raise ValueError("VariadicSplit axis is out of range")
+        lengths = list(_constant_integer_vector(lengths_tensor, "VariadicSplit", "split lengths"))
+        if not lengths:
+            raise ValueError("VariadicSplit requires at least one split length")
+        inferred = [index for index, length in enumerate(lengths) if length == -1]
+        if len(inferred) > 1:
+            raise ValueError("VariadicSplit permits at most one inferred split length")
+        if any(length == 0 or length < -1 for length in lengths):
+            raise ValueError("VariadicSplit lengths must be positive or one -1")
+        known = sum(length for length in lengths if length > 0)
+        axis_size = data.shape[axis]
+        if inferred:
+            remainder = axis_size - known
+            if remainder <= 0:
+                raise ValueError("VariadicSplit inferred length must be positive")
+            lengths[inferred[0]] = remainder
+        elif known != axis_size:
+            raise ValueError("VariadicSplit lengths must sum to the selected dimension")
+        return tuple(
+            TensorSpec(data.shape[:axis] + (length,) + data.shape[axis + 1 :], data.dtype) for length in lengths
+        )
     if operator == "Gather":
         if len(inputs) != 3:
             raise ValueError("automatic Gather inference requires data, indices, and axis tensors")

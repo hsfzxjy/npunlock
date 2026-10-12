@@ -778,6 +778,27 @@ contract accepts I64 only as an index input for the validated Gather shape; it
 does not claim I64 graph outputs, arithmetic, conversion, or custom ACT
 descriptors.
 
+## 24. Unequal multi-output VariadicSplit
+
+On 2026-10-12, graph compiler 8.3 accepted a U8 `[2,7]` input split into
+unequal `[2,2]`, `[2,1]`, and `[2,4]` outputs by a constant-axis
+`VariadicSplit`. Copied and explicitly shared execution both matched NumPy
+slices exactly, including `0` and `255`. Exact compiler-compatible output names
+(`parts.0`, `parts.1`, and `parts.2`) bound each shared allocation without
+falling back to positional guessing.
+
+The carrier was 43,168 bytes with SHA-256
+`a1fa976e110311baa98c325bfdfa3c94178901e4198581c4fad4e6b8c6c22e9a`.
+The frontend now derives static output contracts from a scalar constant axis
+and one-dimensional constant lengths. It accepts positive lengths and at most
+one `-1` remainder only when the resolved lengths exactly cover the selected
+input dimension.
+
+The runnable proof is
+[`example_u8_variadic_split.py`](../examples/example_u8_variadic_split.py).
+This does not establish dynamic split lengths, zero-length outputs, multiple
+inferred lengths, arbitrary output counts, or non-U8 compiler support.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

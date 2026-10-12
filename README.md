@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-12:** Mixed-input `Gather` now accepts caller-provided I64 indices through copied and shared buffers; full-width I64 data remains unsupported. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#23-i64-gather-indices-and-the-i64-data-boundary).
+> **Latest breakthrough — 2026-10-12:** Unequal multi-output `VariadicSplit` now runs through copied and shared buffers with exact static output contracts. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#24-unequal-multi-output-variadicsplit).
 
 ## Quick example
 
@@ -98,6 +98,8 @@ The [U32 Split example](examples/example_u32_split.py) extends ordinary graph
 transport through the full unsigned 32-bit range.
 The [I64-index Gather example](examples/example_u8_gather_i64.py) validates
 64-bit index inputs without claiming general I64 graph data.
+The [unequal U8 split example](examples/example_u8_variadic_split.py) binds
+three differently shaped outputs from one `VariadicSplit` node.
 
 ## Why npunlock?
 
@@ -182,7 +184,7 @@ reference.
 - connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
 - ordinary static graph execution with FP16, FP32, U8, I8, U16, I16, U32, or I32 inputs and outputs
 - caller-provided I64 index inputs for validated `Gather` graphs
-- inferred contracts for `Concat`, `Split`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
+- inferred contracts for `Concat`, `Split`, `VariadicSplit`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools

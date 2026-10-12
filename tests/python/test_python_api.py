@@ -195,6 +195,33 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "batch_dims must be an integer"):
             npu.Gather(data, indices, npu.constant(np.asarray(0)), batch_dims=False)
 
+    def test_static_variadic_split_inference_and_rejections(self) -> None:
+        data = npu.input("data", shape=(2, 7), dtype="u8")
+        axis = npu.constant(np.asarray(-1, dtype=np.int64))
+        outputs = npu.VariadicSplit(data, axis, npu.constant(np.asarray([2, -1, 1], dtype=np.int64)))
+
+        self.assertEqual(
+            tuple(output.spec for output in outputs),
+            (
+                npu.TensorSpec((2, 2), "u8"),
+                npu.TensorSpec((2, 4), "u8"),
+                npu.TensorSpec((2, 1), "u8"),
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "constant axis"):
+            npu.VariadicSplit(data, npu.input("axis", shape=(), dtype="i64"), npu.constant(np.asarray([3, 4])))
+        with self.assertRaisesRegex(ValueError, "constant split lengths"):
+            npu.VariadicSplit(data, axis, npu.input("lengths", shape=(2,), dtype="i64"))
+        with self.assertRaisesRegex(ValueError, "at most one inferred"):
+            npu.VariadicSplit(data, axis, npu.constant(np.asarray([-1, -1, 1])))
+        with self.assertRaisesRegex(ValueError, "positive or one -1"):
+            npu.VariadicSplit(data, axis, npu.constant(np.asarray([2, 0, 5])))
+        with self.assertRaisesRegex(ValueError, "must sum"):
+            npu.VariadicSplit(data, axis, npu.constant(np.asarray([2, 2, 2])))
+        with self.assertRaisesRegex(ValueError, "inferred length must be positive"):
+            npu.VariadicSplit(data, axis, npu.constant(np.asarray([7, -1])))
+
     def test_structural_operator_attributes_are_serialized(self) -> None:
         left = npu.input("left", shape=(1, 2), dtype="i32")
         right = npu.input("right", shape=(1, 2), dtype="i32")
