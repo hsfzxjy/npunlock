@@ -761,7 +761,7 @@ class CompilationFlowTests(unittest.TestCase):
         plan = prepared.plan(kernels={y: kernel})
 
         with patch.dict("os.environ", {}, clear=True):
-            program = plan.build()
+            program = prepared.build(kernels={y: kernel})
 
         self.assertEqual(fake.shave_calls, [])
         self.assertEqual(fake.patch_calls[0][1], b"linked shave elf")

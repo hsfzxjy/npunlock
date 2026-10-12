@@ -272,6 +272,7 @@ class PreparedGraph:
         self,
         *,
         bindings: Mapping[Tensor, object] | None = ...,
+        kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = ...,
         movi_dll_dir: str | PathLike[str] | None = ...,
         linker_script: str | PathLike[str] | bytes | None = ...,
         definitions: tuple[str, ...] = ...,

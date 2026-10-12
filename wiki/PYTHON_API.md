@@ -126,9 +126,7 @@ symbolic node:
 ```python
 y = npu.custom(x, carrier="Abs", _name="y")
 prepared = npu.prepare(npu.Graph([x], [y]))
-program = prepared.plan(
-    kernels={y: npu.CompiledKernel("kernels/custom.elf")},
-).build()
+program = prepared.build(kernels={y: npu.CompiledKernel("kernels/custom.elf")})
 ```
 
 This is deliberately a plan-time contract. Every source-free custom node must
@@ -379,7 +377,7 @@ compiled.save("kernels/custom.elf")
 # The symbolic node does not need placeholder source when this override exists.
 custom_output = npu.custom(x, carrier="Abs", _name="custom_output")
 prepared = npu.prepare(npu.Graph([x], [custom_output]))
-program = prepared.plan(kernels={custom_output: compiled}).build()
+program = prepared.build(kernels={custom_output: compiled})
 ```
 
 `compile_kernel()` uses the same native `shavecc` implementation, bounded
@@ -387,6 +385,11 @@ worker, embedded default linker script, and MoviTools directory precedence as
 graph compilation. It does not compile an IR graph or require NPU execution.
 The returned `CompiledKernel` may be reused across compatible prepared
 carriers, but each plan still validates the ELF and its selected ACT targets.
+
+`PreparedGraph.build(kernels=...)` is the compact form for an automatically
+mapped graph. Use `plan(kernels=...)` when the selection should be printed and
+reviewed before building, and add explicit `bindings=` whenever placement is
+ambiguous. Both forms execute the same plan validation and patch path.
 
 `PreparedGraph.build()` remains the compact API and delegates through the same
 plan validation. Both paths patch the carrier already held by `PreparedGraph`;

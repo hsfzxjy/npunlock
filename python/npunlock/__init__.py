@@ -1645,6 +1645,7 @@ class PreparedGraph:
         self,
         *,
         bindings: Mapping[Tensor, object] | None = None,
+        kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = None,
         movi_dll_dir: str | Path | None = None,
         linker_script: str | Path | bytes | None = None,
         definitions: tuple[str, ...] = (),
@@ -1654,6 +1655,7 @@ class PreparedGraph:
 
         return self.plan(
             bindings=bindings,
+            kernels=kernels,
             linker_script=linker_script,
             definitions=definitions,
         ).build(
