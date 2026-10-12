@@ -276,11 +276,21 @@ program = plan.build()
 hashes printed by `explain()` describe the bytes that will actually be sent to
 MoviTools. Identical specifications in one plan reuse their compiled ELF.
 
+To reuse an already linked ELF, replace that override with
+`npu.CompiledKernel("kernels/custom.elf")`. The object snapshots the file and
+`explain()` reports its SHA-256. A plan in which every custom output has a
+`CompiledKernel` override can build without MoviTools; a mixed plan compiles
+only its `KernelSpec` entries. The ELF must still be a supported linked
+`3720xx` image. The normal native patch path validates it before changing the
+carrier, so this option does not relax the kernel ABI or graph contract.
+
 When iterating on kernel C, save the driver-compiled carrier and reviewed
 binding separately with `prepared.export("network.prepared.npunlock",
 plan=plan)`. A later process can call `npu.load_prepared(..., graph=graph)`,
 which requires the same serialized graph but deliberately accepts changed
-kernel source. See [Python API](PYTHON_API.md#reuse-a-prepared-carrier).
+kernel source. Prepared bundles do not embed source or compiled ELF inputs;
+provide `KernelSpec` or `CompiledKernel` again after loading. See
+[Python API](PYTHON_API.md#reuse-a-prepared-carrier).
 
 ## Runnable examples
 

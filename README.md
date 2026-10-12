@@ -166,6 +166,7 @@ reference.
 - connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
+- reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools
 - self-describing program bundles that load without C source or MoviTools
 - Python, CLI, and native C APIs
 

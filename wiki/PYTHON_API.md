@@ -329,6 +329,27 @@ is a complete per-kernel override. During `BuildPlan.build()`, identical source,
 definitions, and linker bytes share one compiled ELF; patching still occurs
 separately for every selected custom node and retains one report per patch.
 
+Use `CompiledKernel` when a linked SHAVE ELF was produced earlier and should be
+reused without invoking MoviTools:
+
+```python
+plan = prepared.plan(
+    bindings={custom_output: selected_group},
+    kernels={custom_output: npu.CompiledKernel("kernels/custom.elf")},
+)
+print(plan.explain())
+program = plan.build()
+```
+
+`CompiledKernel` snapshots the ELF bytes when it is constructed, just as
+`KernelSpec` snapshots source and linker bytes. If every custom node has a
+compiled-kernel override, `build()` does not require a configured
+`MVC_DEPEND` root. A mixed plan accepts both types and invokes MoviTools only
+for its `KernelSpec` entries. The native patcher still validates the supplied
+ELF against the established NPU3720 contract; precompilation does not bypass
+ELF, target, relocation, or graph-target checks. `plan.explain()` identifies
+compiled inputs by path and SHA-256.
+
 `PreparedGraph.build()` remains the compact API and delegates through the same
 plan validation. Both paths patch the carrier already held by `PreparedGraph`;
 neither repeats graph compilation.
@@ -396,9 +417,10 @@ program = prepared.plan().build()
 The versioned bundle contains the unpatched native carrier, exact serialized
 IR XML and weights identities, effective build flags, original driver/compiler
 provenance, discovered ACT contracts, and optionally the reviewed symbolic
-bindings from a `BuildPlan`. It does not contain kernel source, MoviTools, or
-Intel driver binaries. Per-kernel definitions and linker overrides are also
-caller inputs; pass their `KernelSpec` values to the loaded graph's new plan.
+bindings from a `BuildPlan`. It does not contain kernel source, compiled kernel
+ELFs, MoviTools, or Intel driver binaries. Per-kernel source, compiled ELF,
+definitions, and linker overrides are caller inputs; pass `KernelSpec` or
+`CompiledKernel` values to the loaded graph's new plan.
 
 `load_prepared()` reserializes the caller graph and requires exact XML and
 weights hashes. It uses a bounded read-only driver query—without creating or

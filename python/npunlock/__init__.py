@@ -37,6 +37,7 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 __all__ = [
     "ActGroup",
     "BuildPlan",
+    "CompiledKernel",
     "CustomMapping",
     "DType",
     "Graph",
@@ -849,6 +850,31 @@ class KernelSpec:
         return None if self.linker_script is None else hashlib.sha256(self.linker_script).hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class CompiledKernel:
+    """A snapshotted, already linked SHAVE ELF."""
+
+    elf: bytes
+    elf_name: str = field(compare=False)
+
+    def __init__(self, elf: bytes | str | os.PathLike[str]) -> None:
+        elf_name = os.fspath(elf) if isinstance(elf, (str, os.PathLike)) else "<bytes>"
+        if isinstance(elf, bytes):
+            elf_bytes = elf
+        elif isinstance(elf, (str, os.PathLike)):
+            elf_bytes = Path(elf).read_bytes()
+        else:
+            raise TypeError("compiled kernel must be ELF bytes or a filesystem path")
+        if not elf_bytes:
+            raise ValueError("compiled kernel ELF must not be empty")
+        object.__setattr__(self, "elf", elf_bytes)
+        object.__setattr__(self, "elf_name", elf_name)
+
+    @property
+    def elf_sha256(self) -> str:
+        return hashlib.sha256(self.elf).hexdigest()
+
+
 def _combined_custom_targets(
     node: Node,
     groups: tuple[tuple[PatchTarget, ...], ...],
@@ -1090,11 +1116,11 @@ def _effective_build_flags(serialized: SerializedIR, build_flags: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class BuildPlan:
-    """A fully validated custom-kernel selection ready for MoviTools."""
+    """A fully validated custom-kernel selection ready to build."""
 
     _prepared: PreparedGraph = field(repr=False, compare=False)
     group_indices: tuple[tuple[int, ...], ...]
-    kernels: tuple[KernelSpec, ...]
+    kernels: tuple[KernelSpec | CompiledKernel, ...]
     _target_groups: tuple[tuple[PatchTargetContract, ...], ...] = field(repr=False)
 
     def explain(self) -> str:
@@ -1112,13 +1138,19 @@ class BuildPlan:
             self._target_groups,
         ):
             groups = ",".join(str(index) for index in indices) if indices else "raw-explicit"
-            definitions = ",".join(kernel.definitions) if kernel.definitions else "none"
-            linker = kernel.linker_script_sha256 or "builtin"
-            lines.append(
-                f"  {node.name or '<unnamed>'}: groups={groups} targets={len(targets)} "
-                f"source={kernel.source_name!r} source_sha256={kernel.source_sha256}"
-            )
-            lines.append(f"    definitions={definitions} linker_script_sha256={linker}")
+            if isinstance(kernel, KernelSpec):
+                definitions = ",".join(kernel.definitions) if kernel.definitions else "none"
+                linker = kernel.linker_script_sha256 or "builtin"
+                lines.append(
+                    f"  {node.name or '<unnamed>'}: groups={groups} targets={len(targets)} "
+                    f"source={kernel.source_name!r} source_sha256={kernel.source_sha256}"
+                )
+                lines.append(f"    definitions={definitions} linker_script_sha256={linker}")
+            else:
+                lines.append(
+                    f"  {node.name or '<unnamed>'}: groups={groups} targets={len(targets)} "
+                    f"compiled_elf={kernel.elf_name!r} elf_sha256={kernel.elf_sha256}"
+                )
             for target in targets:
                 if isinstance(target, PatchTargetV2):
                     tensors = ", ".join(
@@ -1161,16 +1193,17 @@ class BuildPlan:
         """Compile the planned kernels and patch the retained carrier."""
 
         custom_nodes = self._prepared.serialized_ir.custom_nodes
-        resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
-        if custom_nodes and resolved_movi_dll_dir is None:
+        needs_compiler = any(isinstance(kernel, KernelSpec) for kernel in self.kernels)
+        resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir) if needs_compiler else None
+        if needs_compiler and resolved_movi_dll_dir is None:
             raise ValueError(
-                "custom kernels require an MVC_DEPEND root from movi_dll_dir, " "configure(), or NPUNLOCK_MOVITOOLS_DIR"
+                "C source kernels require an MVC_DEPEND root from movi_dll_dir, "
+                "configure(), or NPUNLOCK_MOVITOOLS_DIR"
             )
         blob = self._prepared.ir_provenance.graph_blob
         reports: list[bytes] = []
         elf_cache: dict[KernelSpec, bytes] = {}
         if custom_nodes:
-            assert resolved_movi_dll_dir is not None
             for node, indices, kernel, target_values in zip(
                 custom_nodes,
                 self.group_indices,
@@ -1179,8 +1212,12 @@ class BuildPlan:
             ):
                 group_text = ",".join(str(index) for index in indices) if indices else "raw-explicit"
                 context = f"kernel {node.name or '<unnamed>'!r} groups={group_text}"
-                elf = elf_cache.get(kernel)
+                if isinstance(kernel, CompiledKernel):
+                    elf = kernel.elf
+                else:
+                    elf = elf_cache.get(kernel)
                 if elf is None:
+                    assert resolved_movi_dll_dir is not None
                     try:
                         elf = self._prepared._libraries.compile_shave(
                             kernel.source,
@@ -1519,7 +1556,7 @@ class PreparedGraph:
         self,
         *,
         bindings: Mapping[Tensor, object] | None = None,
-        kernels: Mapping[Tensor, KernelSpec] | None = None,
+        kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = None,
         linker_script: str | Path | bytes | None = None,
         definitions: Sequence[str] = (),
     ) -> BuildPlan:
@@ -1528,9 +1565,11 @@ class PreparedGraph:
         custom_nodes = self.serialized_ir.custom_nodes
         selected_indices, target_groups = self._resolve_bindings(bindings)
         if kernels is not None and not isinstance(kernels, Mapping):
-            raise TypeError("kernels must be a mapping from custom output tensors to KernelSpec values")
+            raise TypeError(
+                "kernels must be a mapping from custom output tensors to KernelSpec or CompiledKernel values"
+            )
         supplied_kernels = {} if kernels is None else dict(kernels)
-        overrides: dict[Node, KernelSpec] = {}
+        overrides: dict[Node, KernelSpec | CompiledKernel] = {}
         for output, kernel in supplied_kernels.items():
             if not isinstance(output, Tensor) or output.producer not in custom_nodes:
                 raise ValueError("kernel override keys must be outputs of custom nodes in this graph")
@@ -1539,13 +1578,13 @@ class PreparedGraph:
                 raise ValueError("kernel overrides currently require the sole output of a custom node")
             if node in overrides:
                 raise ValueError(f"custom node {node.name or '<unnamed>'!r} has more than one kernel override")
-            if not isinstance(kernel, KernelSpec):
-                raise TypeError("kernel override values must be KernelSpec instances")
+            if not isinstance(kernel, (KernelSpec, CompiledKernel)):
+                raise TypeError("kernel override values must be KernelSpec or CompiledKernel instances")
             overrides[node] = kernel
 
         default_definitions = _compiler_definitions(definitions)
         default_linker_script = _linker_script(linker_script)
-        planned_kernels: list[KernelSpec] = []
+        planned_kernels: list[KernelSpec | CompiledKernel] = []
         for node in custom_nodes:
             kernel = overrides.get(node)
             if kernel is None:

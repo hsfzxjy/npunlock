@@ -682,6 +682,74 @@ class CompilationFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NAME=DECIMAL"):
             npu.KernelSpec(b"source", definitions=("lower=1",))
 
+    def test_compiled_kernel_snapshots_elf_path(self) -> None:
+        elf_path = ROOT / "build" / "compiled-kernel-test.elf"
+        elf_path.write_bytes(b"elf v1")
+        try:
+            kernel = npu.CompiledKernel(elf_path)
+            elf_path.write_bytes(b"elf v2")
+        finally:
+            elf_path.unlink(missing_ok=True)
+
+        self.assertEqual(kernel.elf, b"elf v1")
+        self.assertEqual(kernel.elf_name, str(elf_path))
+        self.assertEqual(kernel.elf_sha256, hashlib.sha256(b"elf v1").hexdigest())
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            npu.CompiledKernel(b"")
+        with self.assertRaisesRegex(TypeError, "ELF bytes or a filesystem path"):
+            npu.CompiledKernel(bytearray(b"elf"))  # type: ignore[arg-type]
+
+    def test_compiled_kernel_build_does_not_require_movitools(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"unused source", carrier="Abs", _name="precompiled")
+        fake = FakeNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y], name="precompiled_plan"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        kernel = npu.CompiledKernel(b"linked shave elf")
+        plan = prepared.plan(kernels={y: kernel})
+
+        with patch.dict("os.environ", {}, clear=True):
+            program = plan.build()
+
+        self.assertEqual(fake.shave_calls, [])
+        self.assertEqual(fake.patch_calls[0][1], b"linked shave elf")
+        self.assertEqual(program.graph_blob, b"patched")
+        self.assertIn("compiled_elf='<bytes>'", plan.explain())
+        self.assertIn(kernel.elf_sha256, plan.explain())
+        self.assertNotIn("unused source", plan.explain())
+        with self.assertRaisesRegex(TypeError, "KernelSpec or CompiledKernel"):
+            prepared.plan(kernels={y: object()})  # type: ignore[dict-item]
+
+    def test_mixed_kernel_plan_compiles_only_source_entries(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        first = npu.custom(x, source=b"unused", carrier="Abs", _name="first")
+        second = npu.custom(first, source=b"source to compile", carrier="Sqrt", _name="second")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 64, 0x1F),),
+            (npu.PatchTarget(1, 1, 1, 32, 64, 0x1F),),
+        )
+        prepared = npu.prepare(
+            npu.Graph([x], [second], name="mixed_kernel_inputs"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        program = prepared.plan(
+            kernels={
+                first: npu.CompiledKernel(b"precompiled elf"),
+                second: npu.KernelSpec(b"source to compile", definitions=("MODE=2",)),
+            }
+        ).build(movi_dll_dir="movi")
+
+        self.assertEqual(len(fake.shave_calls), 1)
+        self.assertEqual(fake.shave_calls[0][0], b"source to compile")
+        self.assertEqual(fake.shave_calls[0][1]["definitions"], ("MODE=2",))
+        self.assertEqual(tuple(call[1] for call in fake.patch_calls), (b"precompiled elf", b"elf"))
+        self.assertEqual(program.graph_blob, b"patched2")
+
     def test_prepared_bundle_restores_reviewed_bindings_without_graph_compile(self) -> None:
         def make_graph(source: bytes) -> tuple[npu.Graph, npu.Tensor, npu.Tensor]:
             x = npu.input("x", shape=(1, 32), dtype="f32")

@@ -184,6 +184,13 @@ class KernelSpec:
     @property
     def linker_script_sha256(self) -> str | None: ...
 
+class CompiledKernel:
+    elf: bytes
+    elf_name: str
+    def __init__(self, elf: bytes | str | PathLike[str]) -> None: ...
+    @property
+    def elf_sha256(self) -> str: ...
+
 class Program:
     graph_blob: bytes
     graph: Graph | None
@@ -215,7 +222,7 @@ class Program:
 
 class BuildPlan:
     group_indices: tuple[tuple[int, ...], ...]
-    kernels: tuple[KernelSpec, ...]
+    kernels: tuple[KernelSpec | CompiledKernel, ...]
     def explain(self) -> str: ...
     def build(
         self,
@@ -256,7 +263,7 @@ class PreparedGraph:
         self,
         *,
         bindings: Mapping[Tensor, object] | None = ...,
-        kernels: Mapping[Tensor, KernelSpec] | None = ...,
+        kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = ...,
         linker_script: str | PathLike[str] | bytes | None = ...,
         definitions: Sequence[str] = ...,
     ) -> BuildPlan: ...
