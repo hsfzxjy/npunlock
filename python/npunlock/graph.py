@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .kernel import CompiledKernel, KernelSpec
-from .tensor import Tensor, TensorSpec
+from .tensor import Tensor, TensorSpec, normalize_dtype
 
 _RESERVED = {
     "_shape",
@@ -103,6 +103,46 @@ def _output_specs(
         if left_inner != right_inner:
             raise ValueError(f"MatMul inner dimensions do not match after transpose: {left_inner} != {right_inner}")
         return (TensorSpec((left_rows, right_columns), left.dtype),)
+    if operator == "Convert" and len(inputs) == 1:
+        if "destination_type" not in attributes:
+            raise ValueError("automatic Convert inference requires destination_type")
+        return (TensorSpec(inputs[0].shape, normalize_dtype(attributes["destination_type"])),)
+    if operator == "Concat" and inputs:
+        axis = attributes.get("axis")
+        if isinstance(axis, bool) or not isinstance(axis, int):
+            raise TypeError("automatic Concat inference requires an integer axis")
+        rank = len(inputs[0].shape)
+        normalized_axis = axis + rank if axis < 0 else axis
+        if not 0 <= normalized_axis < rank:
+            raise ValueError(f"Concat axis {axis} is out of range for rank {rank}")
+        if any(value.dtype != inputs[0].dtype or len(value.shape) != rank for value in inputs[1:]):
+            raise ValueError("automatic Concat inference requires matching input dtypes and ranks")
+        shape = list(inputs[0].shape)
+        shape[normalized_axis] = 0
+        for value in inputs:
+            for dimension, (actual, expected) in enumerate(zip(value.shape, inputs[0].shape)):
+                if dimension != normalized_axis and actual != expected:
+                    raise ValueError("automatic Concat inference requires equal non-axis dimensions")
+            shape[normalized_axis] += value.shape[normalized_axis]
+        return (TensorSpec(shape, inputs[0].dtype),)
+    if operator == "Transpose" and len(inputs) == 2:
+        data, order_tensor = inputs
+        if order_tensor.producer.op != "Const":
+            raise ValueError("automatic Transpose inference requires a constant order tensor")
+        order_array = order_tensor.producer.metadata.get("value")
+        if order_array is None:
+            raise ValueError("Transpose order constant has no value")
+        if getattr(order_array, "ndim", None) != 1 or getattr(
+            getattr(order_array, "dtype", None), "kind", None
+        ) not in {
+            "i",
+            "u",
+        }:
+            raise ValueError("Transpose order must be a one-dimensional integer constant")
+        order = tuple(int(value) for value in order_array.reshape(-1))  # type: ignore[union-attr]
+        if len(order) != len(data.shape) or set(order) != set(range(len(data.shape))):
+            raise ValueError("Transpose order must be a permutation of every input axis")
+        return (TensorSpec(tuple(data.shape[axis] for axis in order), data.dtype),)
     raise ValueError(
         f"operator {operator!r} requires _shape and _dtype, or _outputs; "
         "automatic inference is limited to documented same-spec operators"
@@ -122,6 +162,8 @@ def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tenso
             value = attributes.setdefault(attribute, False)
             if not isinstance(value, bool):
                 raise TypeError(f"MatMul {attribute} must be bool")
+    if operator == "Convert" and "destination_type" in attributes:
+        attributes["destination_type"] = normalize_dtype(attributes["destination_type"])
     specs = _output_specs(operator, tuple(inputs), metadata, attributes)
     node_name = metadata.get("_name")
     if node_name is not None and not isinstance(node_name, str):

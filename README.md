@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-07:** One connected graph now composes custom FP32→FP16, two-input FP16, and FP16→FP32 kernels around an ordinary DPU `MatMul`, with exact host-oracle agreement after carrier and program reloads. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#16-connected-mixed-precision-custom-and-dpu-composition).
+> **Latest breakthrough — 2026-10-12:** Ordinary NPU graphs now accept I32 host tensors: copied and shared Abs, multi-input/multi-output `Concat`/`Transpose`, and FP32↔I32 `Convert` paths matched exact host oracles. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#17-i32-graph-io-and-structural-graphs).
 
 ## Quick example
 
@@ -82,6 +82,9 @@ uses custom kernels on both sides of an ordinary FP16 graph operation.
 The [connected mixed-precision example](examples/example_connected_mixed_precision.py)
 adds a two-input custom kernel, DPU matrix multiplication, reviewed build plan,
 prepared-carrier reload, and saved-program reload in one path.
+The [I32 structural example](examples/example_i32_structural.py) needs no
+MoviTools and demonstrates ordinary multi-input/multi-output `Concat`,
+`Transpose`, and `Convert` execution.
 
 ## Why npunlock?
 
@@ -164,6 +167,8 @@ reference.
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
 - connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
+- ordinary static graph execution with FP16, FP32, or I32 inputs and outputs
+- inferred contracts for `Concat`, constant-order `Transpose`, `Convert`, and rank-2 `MatMul`
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools

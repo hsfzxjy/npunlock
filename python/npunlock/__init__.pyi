@@ -393,3 +393,26 @@ def Multiply(
     _name: str | None = ...,
     **attributes: object,
 ) -> Tensor: ...
+def Convert(
+    data: Tensor,
+    *,
+    destination_type: object,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...
+def Concat(
+    *inputs: Tensor,
+    axis: int,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...
+def Transpose(
+    data: Tensor,
+    order: Tensor,
+    *,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...

@@ -360,7 +360,8 @@ static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *pr
   }
   if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16) {
     element_size = sizeof(uint16_t);
-  } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP32) {
+  } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP32 ||
+             properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I32) {
     element_size = sizeof(uint32_t);
   } else {
     return false;
@@ -426,8 +427,8 @@ static bool query_arguments(const infer_request *request, const graph_functions 
          metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT) ||
         !argument_data_size(&metadata, &argument->data_size)) {
       result->status = NPUNLOCK_INFER_UNSUPPORTED;
-      set_diagnostic(result,
-                     "graphinfer supports only bounded static FP16/FP32 inputs and outputs");
+      set_diagnostic(
+          result, "graphinfer supports only bounded static FP16/FP32/I32 inputs and outputs");
       free(arguments);
       return false;
     }
@@ -722,7 +723,7 @@ void npunlock_infer_execute(const npunlock_infer_request *request, npunlock_infe
       for (element = 0; element < argument->data_size / sizeof(uint16_t); ++element) {
         ((uint16_t *)argument->allocation)[element] = 0x7e00u;
       }
-    } else {
+    } else if (argument->precision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP32) {
       size_t element;
       for (element = 0; element < argument->data_size / sizeof(uint32_t); ++element) {
         ((uint32_t *)argument->allocation)[element] = 0x7fc00000u;

@@ -87,6 +87,40 @@ class SymbolicTests(unittest.TestCase):
         )
         self.assertEqual(explicitly_shaped.shape, (1, 2, 4))
 
+    def test_structural_operator_inference(self) -> None:
+        left = npu.input("left", shape=(2, 3), dtype="i32")
+        right = npu.input("right", shape=(1, 3), dtype="i32")
+        joined = npu.Concat(left, right, axis=0)
+        transposed = npu.Transpose(joined, npu.constant(np.asarray([1, 0], dtype=np.int64)))
+        converted = npu.Convert(transposed, destination_type="f32")
+
+        self.assertEqual(joined.spec, npu.TensorSpec((3, 3), "i32"))
+        self.assertEqual(transposed.spec, npu.TensorSpec((3, 3), "i32"))
+        self.assertEqual(converted.spec, npu.TensorSpec((3, 3), "f32"))
+
+        with self.assertRaisesRegex(TypeError, "integer axis"):
+            npu.Concat(left, right, axis=True)
+        with self.assertRaisesRegex(ValueError, "out of range"):
+            npu.Concat(left, right, axis=2)
+        with self.assertRaisesRegex(ValueError, "equal non-axis dimensions"):
+            npu.Concat(left, npu.input("bad", shape=(1, 4), dtype="i32"), axis=0)
+        with self.assertRaisesRegex(ValueError, "constant order"):
+            npu.Transpose(left, npu.input("order", shape=(2,), dtype="i64"))
+        with self.assertRaisesRegex(ValueError, "permutation"):
+            npu.Transpose(left, npu.constant(np.asarray([0, 0], dtype=np.int64)))
+
+    def test_structural_operator_attributes_are_serialized(self) -> None:
+        left = npu.input("left", shape=(1, 2), dtype="i32")
+        right = npu.input("right", shape=(1, 2), dtype="i32")
+        joined = npu.Concat(left, right, axis=0)
+        converted = npu.Convert(joined, destination_type="f32")
+        root = ET.fromstring(npu.serialize_ir(npu.Graph([left, right], [converted])).xml)
+
+        concat_data = root.find("./layers/layer[@type='Concat']/data")
+        convert_data = root.find("./layers/layer[@type='Convert']/data")
+        self.assertEqual(concat_data.attrib, {"axis": "0"})
+        self.assertEqual(convert_data.attrib, {"destination_type": "f32"})
+
     def test_missing_output_contract_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")
         with self.assertRaisesRegex(ValueError, "limited to documented same-spec operators"):
@@ -407,7 +441,7 @@ class FakeNative:
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
         self.infer_args = (graph_blob, values, kwargs)
-        dtype = np.dtype({"f16": "float16", "f32": "float32"}[self.infer_dtype])
+        dtype = np.dtype({"f16": "float16", "f32": "float32", "i32": "int32"}[self.infer_dtype])
         source = np.frombuffer(values[0].data, dtype=dtype)
         output = (source + dtype.type(1)).astype(dtype).tobytes()
         return npu.InferenceResult(
@@ -453,7 +487,7 @@ class FakeInferenceSession:
         self.calls.append((input_values, output_values))
         source_buffer = input_values[0][1]
         output_buffer = output_values[0][1]
-        dtype = np.dtype({"f16": "float16", "f32": "float32"}[self._libraries.infer_dtype])
+        dtype = np.dtype({"f16": "float16", "f32": "float32", "i32": "int32"}[self._libraries.infer_dtype])
         source_bytes = (ctypes.c_uint8 * source_buffer.size).from_address(source_buffer.address)
         output_bytes = (ctypes.c_uint8 * output_buffer.size).from_address(output_buffer.address)
         source = np.frombuffer(source_bytes, dtype=dtype)
@@ -1389,6 +1423,35 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(shared_output.dtype, np.dtype("float16"))
         self.assertIs(shared_input._allocation._session, fake.shared_session)
         self.assertIs(shared_output._allocation._session, fake.shared_session)
+
+    def test_program_i32_copied_and_shared_inference(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="i32")
+        y = npu.Abs(x, _name="y")
+        fake = FakeNative()
+        fake.infer_dtype = "i32"
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        values = np.arange(32, dtype=np.int32).reshape(1, 32)
+
+        copied = program.run_one(values)
+        shared_input = program.shared_input()
+        shared_output = program.shared_output()
+        np.copyto(shared_input, values)
+        shared = program.run_one(shared_input, output=shared_output)
+
+        np.testing.assert_array_equal(copied, values + np.int32(1))
+        self.assertIs(shared, shared_output)
+        self.assertEqual(shared_input.dtype, np.dtype("int32"))
+        np.testing.assert_array_equal(shared_output, values + np.int32(1))
+
+        bundle = ROOT / "build" / "python-api-i32-program.npunlock"
+        try:
+            program.export(bundle)
+            loaded = npu.load(bundle, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            bundle.unlink(missing_ok=True)
+        self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "i32"),))
+        self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "i32"),))
+        np.testing.assert_array_equal(loaded.run_one(values), values + np.int32(1))
 
     def test_program_single_shared_tensor_helpers_reject_ambiguous_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

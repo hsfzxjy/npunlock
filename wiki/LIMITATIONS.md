@@ -18,6 +18,7 @@ output does not match that contract.
 | FP32 | validated unary accuracy-mode carrier, one same-precision scalar-input binary carrier, and explicit unary FP16/FP32 conversion |
 | binary custom kernel | static dense FP16 carriers with uniform inputs or a scalar second input; one FP32 scalar-input carrier |
 | kernel image | one linked executable image, shareable by selected ranges |
+| ordinary graph I/O | static dense FP16, FP32, and I32 through copied or shared buffers |
 | execution | installed Intel NPU driver through Level Zero |
 
 No other Intel NPU generation is claimed to work merely because it exposes a
@@ -38,9 +39,10 @@ There is no general support for:
 - arbitrary tensor arity; or
 - automatic layout conversion inside custom code.
 
-The Python serializer knows more IR dtype names than the native execution and
-custom-kernel layers support. Serialization capability must not be mistaken
-for an execution guarantee.
+The Python serializer knows more IR dtype names than native execution supports.
+Ordinary graph execution is validated for FP16, FP32, and I32, while custom
+ACT-kernel contracts remain limited to the FP16/FP32 cases below. Serialization
+capability must not be mistaken for either execution or custom-kernel support.
 
 ## Invocation-local memory
 
@@ -92,7 +94,11 @@ Static dense FP16 is the established general MVP path. FP32 support is limited
 to the documented unary carrier and one scalar-second-input binary carrier,
 both with precision-conversion suppression and accuracy-mode graph compilation.
 
-Other dtypes, mixed-precision contracts beyond unary FP16/FP32 conversion,
+I32 has been validated only for ordinary graph inputs and outputs, including
+Abs, Concat, Transpose, and FP32-to-I32 Convert graphs. It is not a supported
+custom ACT-kernel precision.
+
+Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32 conversion,
 FP32 binary kernels beyond the scalar-second-input carrier, and implicit dtype
 conversion are unsupported.
 
@@ -134,9 +140,9 @@ finite, but a driver API call that never returns cannot be killed independently
 of the application. Shared arrays remain opt-in; ordinary inputs and outputs
 are copied through internal Level Zero host allocations.
 
-Shared bindings require complete contiguous FP16 or FP32 arrays allocated by
-the same program. Partial views, foreign arrays, mixed copied/shared bindings,
-and resizing shared storage are rejected.
+Shared bindings require complete contiguous FP16, FP32, or I32 arrays allocated
+by the same program. Partial views, foreign arrays, mixed copied/shared
+bindings, and resizing shared storage are rejected.
 
 Driver acceptance, graph creation, or successful command submission does not
 prove that a new custom kernel is semantically correct. Validate output against

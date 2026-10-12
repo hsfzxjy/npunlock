@@ -80,6 +80,11 @@ __all__ = [
 _configured_movi_dll_dir: str | None = None
 _native_library_cache: dict[str, NativeLibraries] = {}
 _native_library_cache_lock = threading.Lock()
+_EXECUTION_NUMPY_DTYPES = {
+    "f16": np.dtype("float16"),
+    "f32": np.dtype("float32"),
+    "i32": np.dtype("int32"),
+}
 
 
 def configure(*, movi_dll_dir: str | Path | None) -> None:
@@ -450,9 +455,9 @@ class Program:
         """Allocate a NumPy-compatible host/NPU shared tensor buffer."""
 
         spec = TensorSpec(shape, dtype)
-        numpy_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(spec.dtype)
+        numpy_dtype = _EXECUTION_NUMPY_DTYPES.get(spec.dtype)
         if numpy_dtype is None:
-            raise ValueError("shared arrays currently support only f16 and f32")
+            raise ValueError("shared arrays currently support only f16, f32, and i32")
         size = prod(spec.shape) * numpy_dtype.itemsize
         session = self._execution_state.get_session(self._libraries, self.graph_blob, self._timeout_ms)
         return SharedArray(session.create_buffer(size), spec.shape, numpy_dtype)
@@ -511,7 +516,7 @@ class Program:
         name: str,
         session: InferenceSession,
     ) -> SharedArray:
-        expected_dtype = {"f16": np.dtype("float16"), "f32": np.dtype("float32")}.get(tensor.dtype)
+        expected_dtype = _EXECUTION_NUMPY_DTYPES.get(tensor.dtype)
         if not isinstance(value, SharedArray) or value._allocation is None:
             raise TypeError(f"shared tensor {name!r} must be a live SharedArray")
         if (
@@ -531,10 +536,7 @@ class Program:
         *,
         outputs: Mapping[str, object] | None = None,
     ) -> Mapping[str, object]:
-        numpy_dtypes = {
-            "f16": np.dtype("float16"),
-            "f32": np.dtype("float32"),
-        }
+        numpy_dtypes = _EXECUTION_NUMPY_DTYPES
         if not isinstance(inputs, Mapping):
             raise TypeError("Program.run() inputs must be a mapping")
         input_contracts = self.input_contracts
@@ -709,7 +711,7 @@ def _manifest_contracts(value: object, label: str) -> tuple[TensorContract, ...]
         if not isinstance(name, str) or name in names:
             raise ValueError(f"program bundle {label} contains an empty or duplicate tensor name")
         contract = TensorContract(name, shape, dtype)
-        if contract.dtype not in {"f16", "f32"} or len(contract.shape) > 5:
+        if contract.dtype not in {"f16", "f32", "i32"} or len(contract.shape) > 5:
             raise ValueError(f"program bundle tensor {name!r} is outside the graphinfer contract")
         names.add(name)
         contracts.append(contract)

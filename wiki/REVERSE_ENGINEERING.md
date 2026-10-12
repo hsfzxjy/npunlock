@@ -596,12 +596,43 @@ tested NPU3720/compiler pair. It does not establish arbitrary mixed-precision
 graphs, mixed-dtype binary kernels, automatic placement, or general matrix
 support.
 
+## 17. I32 graph I/O and structural graphs
+
+On 2026-10-12, graph compiler 8.3 accepted static I32 graph arguments on the
+tested NPU3720. Level Zero reported device precision `0x05` (`INT32`), and the
+existing bounded allocation path was extended to size those arguments as
+four-byte elements. This extends ordinary graph execution, not the custom ACT
+descriptor contract.
+
+Three independent device checks passed:
+
+- a `[1,32]` I32 Abs graph matched 32 copied and 32 explicitly shared results;
+- a two-input I32 `Concat -> Transpose -> Abs` graph matched all nine output
+  elements; and
+- an FP32 `Convert(destination_type="i32") -> Abs` graph matched all 16 I32
+  outputs for exactly representable integer-valued inputs.
+
+A further public example returned two outputs from one graph: the I32 result
+of `Concat -> Transpose` and an FP32 conversion of that result. Both nine-
+element outputs matched NumPy exactly. The graph frontend now infers static
+contracts for `Concat`, constant-order `Transpose`, and `Convert`; that
+inference is only a convenience; the Intel compiler remains the final operator
+authority.
+
+The runnable proof is
+[`example_i32_structural.py`](../examples/example_i32_structural.py). These
+results establish static dense I32 host graph arguments for the tested
+compiler/device and operations. They do not establish I32 ACT descriptors,
+integer custom kernels, dynamic shapes, every integer operation, or the other
+integer widths listed by the Level Zero extension.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
 The project does not currently claim support for:
 
-- dynamic shapes, arbitrary strides, layouts, or precisions;
+- dynamic shapes, arbitrary strides or layouts, or precisions beyond the
+  documented ordinary graph and custom-kernel paths;
 - cross-invocation or graph-global memory access;
 - nonempty custom kernel data sections or unresolved code/data fixups;
 - a general mapping from source node names to native ACT records;

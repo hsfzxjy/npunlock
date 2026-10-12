@@ -59,6 +59,12 @@ underscore keyword arguments   npunlock metadata
   boolean transpose flags, and matching effective inner dimensions. Omitted
   transpose flags are serialized explicitly as `false`, so `a @ b` works for
   ordinary `(M, K) @ (K, N)` tensors.
+- `Concat` accepts equal-rank, equal-dtype inputs, checks every non-axis
+  dimension, and sums the selected axis;
+- `Transpose` infers its shape when its order input is a one-dimensional
+  integer constant containing a complete axis permutation; and
+- `Convert` preserves shape and uses its normalized `destination_type` as the
+  output dtype.
 
 This is frontend convenience, not general graph or broadcasting inference.
 Unknown operations, mismatched elementwise inputs, batched/broadcast MatMul,
@@ -593,8 +599,9 @@ result = outputs["y"]
 
 Input names must match exactly. Shape and dtype must match the symbolic graph;
 noncontiguous arrays are copied to contiguous storage. The current execution
-boundary supports static FP16 and FP32 graph inputs and outputs with at most
-five dimensions.
+boundary supports static FP16, FP32, and I32 graph inputs and outputs with at
+most five dimensions. I32 is an ordinary graph-execution feature; it does not
+extend the custom ACT-kernel ABI beyond its documented FP16/FP32 contracts.
 
 Returned arrays own their data. Native buffers are copied before the matching
 C release function is called. The first call lazily creates an execution
@@ -684,6 +691,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
+- [I32 structural graph](../examples/example_i32_structural.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision custom branches with prepared binding](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+_GRAPHINFER_DTYPES = {1: "f32", 2: "f16", 5: "i32"}
+
 
 class NativeError(RuntimeError):
     def __init__(
@@ -579,7 +581,7 @@ class InferenceSession:
                     output.argument_index,
                     _buffer_bytes(output.argument_name_utf8).decode("utf-8", errors="strict"),
                     tuple(output.dims[: output.dims_count]),
-                    {1: "f32", 2: "f16"}.get(output.precision, f"precision-{output.precision}"),
+                    _GRAPHINFER_DTYPES.get(output.precision, f"precision-{output.precision}"),
                     _buffer_bytes(output.data),
                 )
                 for output in result.outputs[: result.output_count]
@@ -1145,7 +1147,7 @@ class NativeLibraries:
                     output.argument_index,
                     _buffer_bytes(output.argument_name_utf8).decode("utf-8", errors="strict"),
                     tuple(output.dims[: output.dims_count]),
-                    {1: "f32", 2: "f16"}.get(output.precision, f"precision-{output.precision}"),
+                    _GRAPHINFER_DTYPES.get(output.precision, f"precision-{output.precision}"),
                     _buffer_bytes(output.data),
                 )
                 for output in result.outputs[: result.output_count]
