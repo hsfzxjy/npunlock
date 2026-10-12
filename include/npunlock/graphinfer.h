@@ -22,7 +22,8 @@ typedef enum graphinfer_precision {
   GRAPHINFER_PRECISION_I32 = 5,
   GRAPHINFER_PRECISION_I16 = 6,
   GRAPHINFER_PRECISION_I8 = 7,
-  GRAPHINFER_PRECISION_U32 = 10
+  GRAPHINFER_PRECISION_U32 = 10,
+  GRAPHINFER_PRECISION_I64 = 17
 } graphinfer_precision;
 
 typedef struct graphinfer_options {

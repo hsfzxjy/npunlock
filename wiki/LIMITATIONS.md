@@ -19,6 +19,7 @@ output does not match that contract.
 | binary custom kernel | static dense FP16 carriers with uniform inputs or a scalar second input; one FP32 scalar-input carrier |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
+| restricted graph input | I64 only as caller-provided indices for the validated U8 Gather graph |
 | execution | installed Intel NPU driver through Level Zero |
 
 No other Intel NPU generation is claimed to work merely because it exposes a
@@ -40,9 +41,10 @@ There is no general support for:
 - automatic layout conversion inside custom code.
 
 The Python serializer knows more IR dtype names than native execution supports.
-Ordinary graph execution is validated for FP16, FP32, U8, I8, U16, I16, U32, and I32, while custom
-ACT-kernel contracts remain limited to the FP16/FP32 cases below. Serialization
-capability must not be mistaken for either execution or custom-kernel support.
+Ordinary graph execution is validated for FP16, FP32, U8, I8, U16, I16, U32,
+and I32, while I64 is limited to the Gather-index role. Custom ACT-kernel
+contracts remain limited to the FP16/FP32 cases below. Serialization capability
+must not be mistaken for either execution or custom-kernel support.
 
 ## Invocation-local memory
 
@@ -121,6 +123,11 @@ U32 has been validated for ordinary graph input/output through an equal static
 three-way Split, including exact values through `2**32 - 1`. This does not
 establish U32 arithmetic operators or a U32 custom ACT-kernel precision.
 
+I64 has been validated only as a caller-provided index input to the tested U8
+Gather graph. An I64 Split compiled and ran, but values outside signed 32-bit
+range were silently narrowed and one extreme shared run returned a device
+error. General I64 graph data and outputs are therefore unsupported.
+
 Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32 conversion,
 FP32 binary kernels beyond the scalar-second-input carrier, and implicit dtype
 conversion are unsupported.
@@ -163,9 +170,10 @@ finite, but a driver API call that never returns cannot be killed independently
 of the application. Shared arrays remain opt-in; ordinary inputs and outputs
 are copied through internal Level Zero host allocations.
 
-Shared bindings require complete contiguous FP16, FP32, U8, I8, U16, I16, U32, or I32 arrays allocated
-by the same program. Partial views, foreign arrays, mixed copied/shared
-bindings, and resizing shared storage are rejected.
+Shared bindings require complete contiguous arrays allocated by the same
+program, using one of the ordinary graph dtypes above or I64 for a validated
+Gather index input. Partial views, foreign arrays, mixed copied/shared bindings,
+and resizing shared storage are rejected.
 
 Driver acceptance, graph creation, or successful command submission does not
 prove that a new custom kernel is semantically correct. Validate output against

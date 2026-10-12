@@ -8,7 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-_GRAPHINFER_DTYPES = {1: "f32", 2: "f16", 3: "u16", 4: "u8", 5: "i32", 6: "i16", 7: "i8", 10: "u32"}
+_GRAPHINFER_DTYPES = {
+    1: "f32",
+    2: "f16",
+    3: "u16",
+    4: "u8",
+    5: "i32",
+    6: "i16",
+    7: "i8",
+    10: "u32",
+    17: "i64",
+}
 
 
 class NativeError(RuntimeError):

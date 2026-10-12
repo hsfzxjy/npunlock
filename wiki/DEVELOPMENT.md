@@ -60,6 +60,8 @@ provide Job Object recovery from a driver call that never returns.
 Static graph arguments may be FP16, FP32, U8, I8, U16, I16, U32, or I32. This graph-execution
 precision list is separate from `patchblob`'s narrower validated custom
 ACT-kernel contracts.
+I64 is additionally accepted only for the validated caller-provided Gather
+index input; full-width I64 graph data and outputs are not supported.
 
 Protocol responses, stdout, and stderr are independent byte streams. The C
 results expose both captured process streams. `npurun` writes both verbatim

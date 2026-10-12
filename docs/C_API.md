@@ -277,8 +277,9 @@ ambiguous graph structures fail closed.
 
 `graphinfer_infer()` executes a caller-provided native graph in-process and
 copies tensors through internal Level Zero host allocations. Its
-current contract is static FP16, FP32, U8, I8, U16, I16, U32, or I32 graph inputs and outputs
-with at most five dimensions. The caller must provide exactly one descriptor
+current contract is static FP16, FP32, U8, I8, U16, I16, U32, or I32 graph
+inputs and outputs, plus I64 inputs in the validated Gather-index role, with at
+most five dimensions. The caller must provide exactly one descriptor
 for every graph input, selected either by argument index or by exact UTF-8
 name.
 

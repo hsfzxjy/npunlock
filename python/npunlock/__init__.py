@@ -89,6 +89,7 @@ _EXECUTION_NUMPY_DTYPES = {
     "i16": np.dtype("int16"),
     "u32": np.dtype("uint32"),
     "i32": np.dtype("int32"),
+    "i64": np.dtype("int64"),
 }
 
 
@@ -468,7 +469,7 @@ class Program:
         spec = TensorSpec(shape, dtype)
         numpy_dtype = _EXECUTION_NUMPY_DTYPES.get(spec.dtype)
         if numpy_dtype is None:
-            raise ValueError("shared arrays currently support only f16, f32, and i32")
+            raise ValueError(f"shared arrays do not support dtype {spec.dtype!r}")
         size = prod(spec.shape) * numpy_dtype.itemsize
         session = self._execution_state.get_session(self._libraries, self.graph_blob, self._timeout_ms)
         return SharedArray(session.create_buffer(size), spec.shape, numpy_dtype)
@@ -490,6 +491,8 @@ class Program:
     def shared_outputs(self) -> dict[str, SharedArray]:
         """Allocate one shared array for every graph output."""
 
+        if any(tensor.dtype == "i64" for tensor in self.output_contracts):
+            raise ValueError("I64 graph outputs are not supported")
         return {tensor.name: self.shared_array(tensor.shape, tensor.dtype) for tensor in self.output_contracts}
 
     def shared_output(self) -> SharedArray:
@@ -501,6 +504,8 @@ class Program:
                 f"Program.shared_output() requires exactly one output; program has {len(contracts)} outputs"
             )
         tensor = contracts[0]
+        if tensor.dtype == "i64":
+            raise ValueError("I64 graph outputs are not supported")
         return self.shared_array(tensor.shape, tensor.dtype)
 
     @property
@@ -722,7 +727,10 @@ def _manifest_contracts(value: object, label: str) -> tuple[TensorContract, ...]
         if not isinstance(name, str) or name in names:
             raise ValueError(f"program bundle {label} contains an empty or duplicate tensor name")
         contract = TensorContract(name, shape, dtype)
-        if contract.dtype not in {"f16", "f32", "u8", "i8", "u16", "i16", "u32", "i32"} or len(contract.shape) > 5:
+        if (
+            contract.dtype not in {"f16", "f32", "u8", "i8", "u16", "i16", "u32", "i32", "i64"}
+            or len(contract.shape) > 5
+        ):
             raise ValueError(f"program bundle tensor {name!r} is outside the graphinfer contract")
         names.add(name)
         contracts.append(contract)

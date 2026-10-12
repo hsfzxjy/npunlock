@@ -369,6 +369,8 @@ static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *pr
              properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_U32 ||
              properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I32) {
     element_size = sizeof(uint32_t);
+  } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I64) {
+    element_size = sizeof(uint64_t);
   } else {
     return false;
   }
@@ -435,7 +437,14 @@ static bool query_arguments(const infer_request *request, const graph_functions 
       result->status = NPUNLOCK_INFER_UNSUPPORTED;
       set_diagnostic(
           result,
-          "graphinfer supports only bounded static FP16/FP32/U8/I8/U16/I16/U32/I32 inputs and outputs");
+          "graphinfer supports only bounded static FP16/FP32/U8/I8/U16/I16/U32/I32 tensors and I64 inputs");
+      free(arguments);
+      return false;
+    }
+    if (metadata.devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I64 &&
+        metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
+      result->status = NPUNLOCK_INFER_UNSUPPORTED;
+      set_diagnostic(result, "I64 is supported only as a validated Gather index input");
       free(arguments);
       return false;
     }

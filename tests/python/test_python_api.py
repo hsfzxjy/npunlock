@@ -542,6 +542,7 @@ class FakeNative:
                 "i16": "int16",
                 "u32": "uint32",
                 "i32": "int32",
+                "i64": "int64",
             }[self.infer_dtype]
         )
         source = np.frombuffer(values[0].data, dtype=dtype)
@@ -599,6 +600,7 @@ class FakeInferenceSession:
                 "i16": "int16",
                 "u32": "uint32",
                 "i32": "int32",
+                "i64": "int64",
             }[self._libraries.infer_dtype]
         )
         source_bytes = (ctypes.c_uint8 * source_buffer.size).from_address(source_buffer.address)
@@ -1710,6 +1712,52 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "u32"),))
         self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "u32"),))
         np.testing.assert_array_equal(loaded.run_one(values), values + np.uint32(1))
+
+    def test_program_i64_gather_index_contract(self) -> None:
+        data = npu.input("data", shape=(1, 32), dtype="u8")
+        indices = npu.input("indices", shape=(32,), dtype="i64")
+        axis = npu.constant(np.asarray(1, dtype=np.int64))
+        y = npu.Gather(data, indices, axis, _name="y")
+        fake = FakeNative()
+        fake.infer_dtype = "u8"
+        program = npu.compile(
+            npu.Graph([data, indices], [y]), native_dir="unused", libraries=fake  # type: ignore[arg-type]
+        )
+        values = np.arange(32, dtype=np.uint8).reshape(1, 32)
+        index_values = np.arange(31, -1, -1, dtype=np.int64)
+
+        copied = program.run({"data": values, "indices": index_values})["y"]
+        shared_inputs = program.shared_inputs()
+        shared_output = program.shared_output()
+        np.copyto(shared_inputs["data"], values)
+        np.copyto(shared_inputs["indices"], index_values)
+        shared = program.run(shared_inputs, outputs={"y": shared_output})["y"]
+
+        np.testing.assert_array_equal(copied, values + np.uint8(1))
+        self.assertIs(shared, shared_output)
+        self.assertEqual(shared_inputs["indices"].dtype, np.dtype("int64"))
+        np.testing.assert_array_equal(shared_output, values + np.uint8(1))
+
+        bundle = ROOT / "build" / "python-api-i64-index-program.npunlock"
+        try:
+            program.export(bundle)
+            loaded = npu.load(bundle, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            bundle.unlink(missing_ok=True)
+        self.assertEqual(
+            loaded.input_contracts,
+            (npu.TensorContract("data", (1, 32), "u8"), npu.TensorContract("indices", (32,), "i64")),
+        )
+        np.testing.assert_array_equal(loaded.run({"data": values, "indices": index_values})["y"], values + np.uint8(1))
+
+        i64_data = npu.input("i64_data", shape=(1, 32), dtype="i64")
+        unsupported_output = npu.compile(
+            npu.Graph([i64_data], [npu.Abs(i64_data)]),
+            native_dir="unused",
+            libraries=FakeNative(),  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(ValueError, "I64 graph outputs are not supported"):
+            unsupported_output.shared_output()
 
     def test_program_single_shared_tensor_helpers_reject_ambiguous_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

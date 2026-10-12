@@ -312,6 +312,8 @@ static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *pr
              properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_U32 ||
              properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I32) {
     element_size = sizeof(uint32_t);
+  } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I64) {
+    element_size = sizeof(uint64_t);
   } else {
     return false;
   }
@@ -358,9 +360,16 @@ static npunlock_status query_arguments(graphinfer_session *session,
     if ((metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT &&
          metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT) ||
         !argument_data_size(&metadata, &argument->data_size)) {
-      return npunlock_set_diagnostic(
-          &result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED, "graphinfer.session",
-          "only bounded static FP16/FP32/U8/I8/U16/I16/U32/I32 tensors are supported");
+      return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
+                                     "graphinfer.session",
+                                     "only bounded static FP16/FP32/U8/I8/U16/I16/U32/I32 tensors "
+                                     "and I64 inputs are supported");
+    }
+    if (metadata.devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I64 &&
+        metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT) {
+      return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
+                                     "graphinfer.session",
+                                     "I64 is supported only as a validated Gather index input");
     }
     name_end = (const char *)memchr(metadata.name, 0, sizeof(metadata.name));
     if (name_end == NULL) {

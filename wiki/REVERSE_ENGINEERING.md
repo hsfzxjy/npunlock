@@ -754,6 +754,30 @@ This establishes ordinary U32 graph transport for the tested structural graph.
 It does not establish U32 arithmetic operators, conversion paths, custom ACT
 descriptors, uneven splits, dynamic axes, or support outside NPU3720.
 
+## 23. I64 Gather indices and the I64 data boundary
+
+On 2026-10-12, a U8 Gather graph with a caller-provided I64 `[2]` indices input
+executed correctly on the tested NPU3720. Copied and explicitly shared paths
+both matched `numpy.take` exactly for reordered rows and U8 boundary values.
+The 85,064-byte carrier had SHA-256
+`bc906d4073af22d1ccc0e8f8e5a78c8ac65892c7f3c0397866fca93e61de29c5`.
+Level Zero reported precision `0x11` (`INT64`) for the index argument, so
+graphinfer uses checked eight-byte element sizing for that restricted role.
+
+An adjacent I64-data Split established a sharp negative boundary. Small signed
+values happened to round-trip, but values outside the signed 32-bit range were
+silently narrowed or truncated. For example, `2**31` returned as
+`-2147483648`, and `2**63 - 1` returned as `-1`. A shared run containing the
+extreme values also once returned a device error at fence synchronization.
+Compiler acceptance and successful submission therefore do not establish
+full-width I64 data support.
+
+The runnable positive proof is
+[`example_u8_gather_i64.py`](../examples/example_u8_gather_i64.py). The public
+contract accepts I64 only as an index input for the validated Gather shape; it
+does not claim I64 graph outputs, arithmetic, conversion, or custom ACT
+descriptors.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
