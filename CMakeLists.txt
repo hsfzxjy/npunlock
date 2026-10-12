@@ -399,10 +399,21 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   add_test(NAME cli_version COMMAND npurun --version)
   set_tests_properties(cli_version PROPERTIES PASS_REGULAR_EXPRESSION "npunlock 0.1.0")
   add_test(NAME cli_help COMMAND npurun --help)
-  set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "--shave-elf")
+  set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "--native-graph")
   add_test(NAME cli_rejects_kernel_input_conflict
            COMMAND ${CMAKE_COMMAND} -DNPURUN=$<TARGET_FILE:npurun> -P
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_cli_kernel_conflict.cmake)
+  add_test(NAME cli_rejects_graph_input_conflict
+           COMMAND ${CMAKE_COMMAND} -DNPURUN=$<TARGET_FILE:npurun> -P
+                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_cli_graph_conflict.cmake)
+  add_test(
+    NAME cli_patches_native_graph_offline
+    COMMAND
+      ${CMAKE_COMMAND} -DNPURUN=$<TARGET_FILE:npurun>
+      -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720
+      -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR} -P
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_cli_native_graph.cmake
+  )
 
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)

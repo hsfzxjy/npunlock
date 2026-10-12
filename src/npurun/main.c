@@ -24,6 +24,7 @@ typedef struct file_buffer {
 
 typedef struct build_arguments {
   const char *ir_path;
+  const char *native_graph_path;
   const char *weights_path;
   const char *source_path;
   const char *elf_path;
@@ -51,6 +52,7 @@ typedef struct build_arguments {
   uint32_t image_alignment;
   uint32_t tail_padding;
   uint32_t run_input_index;
+  int build_flags_set;
   int run_add1;
 } build_arguments;
 
@@ -59,6 +61,7 @@ typedef struct build_provenance {
   char weights_hash[65];
   char source_hash[65];
   char elf_hash[65];
+  char carrier_hash[65];
   char linker_script_hash[65];
   char movi_compile_hash[65];
   char movi_asm_hash[65];
@@ -67,7 +70,8 @@ typedef struct build_provenance {
 
 static void print_usage(const char *program) {
   printf("usage: %s --version\n", program);
-  printf("       %s build --ir MODEL.xml [--weights MODEL.bin] \\\n", program);
+  printf("       %s build (--ir MODEL.xml [--weights MODEL.bin] | \\\n", program);
+  printf("         --native-graph CARRIER.blob) \\\n");
   printf("         (--shave-source KERNEL.c | --shave-elf KERNEL.elf) \\\n");
   printf("         [--movi-dll-dir MVC_DEPEND] \\\n");
   printf("         [--linker-script FILE] \\\n");
@@ -163,6 +167,7 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     continue;                                                                                      \
   }
     STRING_OPTION("--ir", ir_path)
+    STRING_OPTION("--native-graph", native_graph_path)
     STRING_OPTION("--weights", weights_path)
     STRING_OPTION("--shave-source", source_path)
     STRING_OPTION("--shave-elf", elf_path)
@@ -170,13 +175,18 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     STRING_OPTION("--linker-script", linker_script_path)
     STRING_OPTION("--output", output_path)
     STRING_OPTION("--manifest", manifest_path)
-    STRING_OPTION("--build-flags", build_flags)
     STRING_OPTION("--movi-worker", movi_worker_path)
     STRING_OPTION("--ir-worker", ir_worker_path)
     STRING_OPTION("--run-input", run_input_path)
     STRING_OPTION("--run-output", run_output_path)
 #undef STRING_OPTION
-    if (strcmp(option, "--run-add1") == 0) {
+    if (strcmp(option, "--build-flags") == 0) {
+      if (!option_value(argument_count, arguments, &index, &value)) {
+        return 0;
+      }
+      build->build_flags = value;
+      build->build_flags_set = 1;
+    } else if (strcmp(option, "--run-add1") == 0) {
       build->run_add1 = 1;
     } else if (strcmp(option, "--patch-position") == 0) {
       if (build->patch_position != PATCHBLOB_UNUSED_INDEX ||
@@ -249,6 +259,15 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
       return 0;
     }
   }
+  if ((build->ir_path == NULL) == (build->native_graph_path == NULL)) {
+    fprintf(stderr, "exactly one of --ir or --native-graph is required\n");
+    return 0;
+  }
+  if (build->native_graph_path != NULL &&
+      (build->weights_path != NULL || build->ir_worker_path != NULL || build->build_flags_set)) {
+    fprintf(stderr, "--native-graph cannot be combined with IR compiler options\n");
+    return 0;
+  }
   if ((build->source_path == NULL) == (build->elf_path == NULL)) {
     fprintf(stderr, "exactly one of --shave-source or --shave-elf is required\n");
     return 0;
@@ -268,8 +287,7 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
             MOVITOOLS_DIRECTORY_ENV);
     return 0;
   }
-  if (build->ir_path == NULL || build->output_path == NULL || build->manifest_path == NULL ||
-      build->timeout_ms == 0) {
+  if (build->output_path == NULL || build->manifest_path == NULL || build->timeout_ms == 0) {
     fprintf(stderr, "missing or inconsistent required build options\n");
     return 0;
   }
@@ -289,13 +307,15 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
     return 0;
   }
   if (strcmp(build->output_path, build->manifest_path) == 0 ||
-      strcmp(build->output_path, build->ir_path) == 0 ||
+      strcmp(build->output_path,
+             build->ir_path == NULL ? build->native_graph_path : build->ir_path) == 0 ||
       strcmp(build->output_path,
              build->source_path == NULL ? build->elf_path : build->source_path) == 0 ||
       (build->linker_script_path != NULL &&
        strcmp(build->output_path, build->linker_script_path) == 0) ||
       (build->weights_path != NULL && strcmp(build->output_path, build->weights_path) == 0) ||
-      strcmp(build->manifest_path, build->ir_path) == 0 ||
+      strcmp(build->manifest_path,
+             build->ir_path == NULL ? build->native_graph_path : build->ir_path) == 0 ||
       strcmp(build->manifest_path,
              build->source_path == NULL ? build->elf_path : build->source_path) == 0 ||
       (build->linker_script_path != NULL &&
@@ -304,7 +324,8 @@ static int parse_build_arguments(int argument_count, char **arguments, build_arg
       (build->run_output_path != NULL &&
        (strcmp(build->run_output_path, build->output_path) == 0 ||
         strcmp(build->run_output_path, build->manifest_path) == 0 ||
-        strcmp(build->run_output_path, build->ir_path) == 0 ||
+        strcmp(build->run_output_path,
+               build->ir_path == NULL ? build->native_graph_path : build->ir_path) == 0 ||
         strcmp(build->run_output_path,
                build->source_path == NULL ? build->elf_path : build->source_path) == 0 ||
         (build->linker_script_path != NULL &&
@@ -468,9 +489,9 @@ static int write_json_string(FILE *stream, const char *value) {
 }
 
 static int write_manifest(const char *path, const build_arguments *build,
-                          const ir2blob_result *ir_result, npunlock_view kernel_elf,
-                          const patchblob_result *patch_result, const build_provenance *provenance,
-                          const graphinfer_result *run_result) {
+                          const ir2blob_result *ir_result, npunlock_view carrier_graph,
+                          npunlock_view kernel_elf, const patchblob_result *patch_result,
+                          const build_provenance *provenance, const graphinfer_result *run_result) {
   FILE *stream = NULL;
   size_t index;
 #ifdef _WIN32
@@ -485,11 +506,15 @@ static int write_manifest(const char *path, const build_arguments *build,
   }
   if (fprintf(stream, "{\n  \"schema\": \"npunlock.build.v1\",\n  \"inputs\": {\n    \"ir\": ") <
           0 ||
-      !write_json_string(stream, build->ir_path) ||
+      !write_json_string(stream, build->ir_path == NULL ? "" : build->ir_path) ||
       fprintf(stream, ", \"ir_sha256\": \"%s\",\n    \"weights\": ", provenance->ir_hash) < 0 ||
       !write_json_string(stream, build->weights_path == NULL ? "" : build->weights_path) ||
-      fprintf(stream, ", \"weights_sha256\": \"%s\",\n    \"shave_source\": ",
+      fprintf(stream, ", \"weights_sha256\": \"%s\",\n    \"native_graph\": ",
               provenance->weights_hash) < 0 ||
+      !write_json_string(stream,
+                         build->native_graph_path == NULL ? "" : build->native_graph_path) ||
+      fprintf(stream, ", \"native_graph_sha256\": \"%s\",\n    \"shave_source\": ",
+              build->native_graph_path == NULL ? "" : provenance->carrier_hash) < 0 ||
       !write_json_string(stream, build->source_path == NULL ? "" : build->source_path) ||
       fprintf(stream, ",\n    \"shave_elf\": ") < 0 ||
       !write_json_string(stream, build->elf_path == NULL ? "" : build->elf_path) ||
@@ -525,17 +550,34 @@ static int write_manifest(const char *path, const build_arguments *build,
               build->source_path == NULL ? "caller" : "shavecc", kernel_elf.size,
               provenance->elf_hash) < 0 ||
       fprintf(stream,
-              "  \"ir2blob\": {\"driver_index\": %u, \"device_index\": %u, "
-              "\"driver_version\": %u, \"device_vendor_id\": %u, \"device_id\": %u, "
-              "\"graph_extension_version\": %u, \"compiler_version\": \"%u.%u\", "
-              "\"max_opset\": %u, \"native_blob_size\": %zu, \"build_flags\": ",
-              ir_result->selected_driver_index, ir_result->selected_device_index,
-              ir_result->driver_version, ir_result->device_vendor_id, ir_result->device_id,
-              ir_result->graph_extension_version, ir_result->compiler_version_major,
-              ir_result->compiler_version_minor, ir_result->max_opset_version,
-              ir_result->graph_blob.size) < 0 ||
-      !write_json_string(stream, build->build_flags) || fprintf(stream, "},\n") < 0 ||
-      fprintf(stream, "  \"compiler_definitions\": [") < 0) {
+              "  \"carrier_graph\": {\"source\": \"%s\", \"size\": %zu, "
+              "\"sha256\": \"%s\"},\n",
+              build->ir_path == NULL ? "caller" : "ir2blob", carrier_graph.size,
+              provenance->carrier_hash) < 0) {
+    fclose(stream);
+    return 0;
+  }
+  if (build->ir_path == NULL) {
+    if (fprintf(stream, "  \"ir2blob\": null,\n") < 0) {
+      fclose(stream);
+      return 0;
+    }
+  } else if (fprintf(stream,
+                     "  \"ir2blob\": {\"driver_index\": %u, \"device_index\": %u, "
+                     "\"driver_version\": %u, \"device_vendor_id\": %u, "
+                     "\"device_id\": %u, \"graph_extension_version\": %u, "
+                     "\"compiler_version\": \"%u.%u\", \"max_opset\": %u, "
+                     "\"native_blob_size\": %zu, \"build_flags\": ",
+                     ir_result->selected_driver_index, ir_result->selected_device_index,
+                     ir_result->driver_version, ir_result->device_vendor_id, ir_result->device_id,
+                     ir_result->graph_extension_version, ir_result->compiler_version_major,
+                     ir_result->compiler_version_minor, ir_result->max_opset_version,
+                     ir_result->graph_blob.size) < 0 ||
+             !write_json_string(stream, build->build_flags) || fprintf(stream, "},\n") < 0) {
+    fclose(stream);
+    return 0;
+  }
+  if (fprintf(stream, "  \"compiler_definitions\": [") < 0) {
     fclose(stream);
     return 0;
   }
@@ -698,6 +740,7 @@ static int run_build(const build_arguments *build) {
   static const uint8_t cpu[] = "3720xx";
   static const uint8_t entry[] = "controlled_act";
   file_buffer ir = {0};
+  file_buffer native_graph = {0};
   file_buffer weights = {0};
   file_buffer source = {0};
   file_buffer elf = {0};
@@ -716,6 +759,7 @@ static int run_build(const build_arguments *build) {
   patchblob_discovery_result_v2 discovery_result_v2 = {0};
   graphinfer_result run_result = {0};
   build_provenance provenance = {0};
+  npunlock_view carrier_graph = {0};
   npunlock_view kernel_elf = {0};
   npunlock_status status;
   size_t index;
@@ -723,13 +767,20 @@ static int run_build(const build_arguments *build) {
   int use_v2_targets = 0;
   int success = 0;
 
-  ir = read_file(build->ir_path, 0);
-  if (ir.size == SIZE_MAX) {
-    goto cleanup;
-  }
-  if (build->weights_path != NULL) {
-    weights = read_file(build->weights_path, 1);
-    if (weights.size == SIZE_MAX) {
+  if (build->ir_path != NULL) {
+    ir = read_file(build->ir_path, 0);
+    if (ir.size == SIZE_MAX) {
+      goto cleanup;
+    }
+    if (build->weights_path != NULL) {
+      weights = read_file(build->weights_path, 1);
+      if (weights.size == SIZE_MAX) {
+        goto cleanup;
+      }
+    }
+  } else {
+    native_graph = read_file(build->native_graph_path, 0);
+    if (native_graph.size == SIZE_MAX) {
       goto cleanup;
     }
   }
@@ -750,8 +801,10 @@ static int run_build(const build_arguments *build) {
       goto cleanup;
     }
   }
-  hash_view((npunlock_view){ir.data, ir.size}, provenance.ir_hash);
-  hash_view((npunlock_view){weights.data, weights.size}, provenance.weights_hash);
+  if (build->ir_path != NULL) {
+    hash_view((npunlock_view){ir.data, ir.size}, provenance.ir_hash);
+    hash_view((npunlock_view){weights.data, weights.size}, provenance.weights_hash);
+  }
   if (build->source_path != NULL) {
     hash_view((npunlock_view){source.data, source.size}, provenance.source_hash);
     hash_view(build->linker_script_path == NULL
@@ -764,22 +817,28 @@ static int run_build(const build_arguments *build) {
       goto cleanup;
     }
   }
-  ir_options.struct_size = sizeof(ir_options);
-  ir_options.driver_index = IR2BLOB_AUTO_INDEX;
-  ir_options.device_index = IR2BLOB_AUTO_INDEX;
-  ir_options.timeout_ms = build->timeout_ms;
-  ir_options.worker_executable_utf8 =
-      (npunlock_view){(const uint8_t *)build->ir_worker_path,
-                      build->ir_worker_path == NULL ? 0 : strlen(build->ir_worker_path)};
-  ir_options.build_flags =
-      (npunlock_view){(const uint8_t *)build->build_flags, strlen(build->build_flags)};
-  status = ir2blob_compile(&ir_options, (npunlock_view){ir.data, ir.size},
-                           (npunlock_view){weights.data, weights.size}, &ir_result);
-  report_worker_streams(&ir_result.stdout_log, &ir_result.stderr_log, status);
-  if (status != NPUNLOCK_STATUS_OK) {
-    print_diagnostic(&ir_result.diagnostic);
-    goto cleanup;
+  if (build->ir_path != NULL) {
+    ir_options.struct_size = sizeof(ir_options);
+    ir_options.driver_index = IR2BLOB_AUTO_INDEX;
+    ir_options.device_index = IR2BLOB_AUTO_INDEX;
+    ir_options.timeout_ms = build->timeout_ms;
+    ir_options.worker_executable_utf8 =
+        (npunlock_view){(const uint8_t *)build->ir_worker_path,
+                        build->ir_worker_path == NULL ? 0 : strlen(build->ir_worker_path)};
+    ir_options.build_flags =
+        (npunlock_view){(const uint8_t *)build->build_flags, strlen(build->build_flags)};
+    status = ir2blob_compile(&ir_options, (npunlock_view){ir.data, ir.size},
+                             (npunlock_view){weights.data, weights.size}, &ir_result);
+    report_worker_streams(&ir_result.stdout_log, &ir_result.stderr_log, status);
+    if (status != NPUNLOCK_STATUS_OK) {
+      print_diagnostic(&ir_result.diagnostic);
+      goto cleanup;
+    }
+    carrier_graph = (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size};
+  } else {
+    carrier_graph = (npunlock_view){native_graph.data, native_graph.size};
   }
+  hash_view(carrier_graph, provenance.carrier_hash);
   if (build->source_path != NULL) {
     for (index = 0; index < build->definition_count; ++index) {
       definition_views[index] = (npunlock_view){(const uint8_t *)build->definitions[index],
@@ -810,13 +869,10 @@ static int run_build(const build_arguments *build) {
   }
   hash_view(kernel_elf, provenance.elf_hash);
   if (build->patch_position != PATCHBLOB_UNUSED_INDEX) {
-    status = patchblob_discover_targets(
-        (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size}, &discovery_result);
+    status = patchblob_discover_targets(carrier_graph, &discovery_result);
     if (status == NPUNLOCK_STATUS_UNSUPPORTED) {
       patchblob_discovery_result_release(&discovery_result);
-      status = patchblob_discover_targets_v2(
-          (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
-          &discovery_result_v2);
+      status = patchblob_discover_targets_v2(carrier_graph, &discovery_result_v2);
       if (status != NPUNLOCK_STATUS_OK) {
         print_diagnostic(&discovery_result_v2.diagnostic);
         goto cleanup;
@@ -874,13 +930,11 @@ static int run_build(const build_arguments *build) {
   patch_options.image_alignment = build->image_alignment;
   patch_options.tail_padding = build->tail_padding;
   if (use_v2_targets) {
-    status = patchblob_patch_v2(
-        &patch_options, (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
-        kernel_elf, targets_v2, selected_target_count, &patch_result);
+    status = patchblob_patch_v2(&patch_options, carrier_graph, kernel_elf, targets_v2,
+                                selected_target_count, &patch_result);
   } else {
-    status = patchblob_patch(&patch_options,
-                             (npunlock_view){ir_result.graph_blob.data, ir_result.graph_blob.size},
-                             kernel_elf, targets, selected_target_count, &patch_result);
+    status = patchblob_patch(&patch_options, carrier_graph, kernel_elf, targets,
+                             selected_target_count, &patch_result);
   }
   if (status != NPUNLOCK_STATUS_OK) {
     print_diagnostic(&patch_result.diagnostic);
@@ -911,8 +965,8 @@ static int run_build(const build_arguments *build) {
     }
   }
   if (!write_file(build->output_path, patch_result.graph_blob.data, patch_result.graph_blob.size) ||
-      !write_manifest(build->manifest_path, build, &ir_result, kernel_elf, &patch_result,
-                      &provenance, build->run_add1 ? &run_result : NULL) ||
+      !write_manifest(build->manifest_path, build, &ir_result, carrier_graph, kernel_elf,
+                      &patch_result, &provenance, build->run_add1 ? &run_result : NULL) ||
       (build->run_add1 && !write_file(build->run_output_path, run_result.outputs[0].data.data,
                                       run_result.outputs[0].data.size))) {
     goto cleanup;
@@ -934,6 +988,7 @@ cleanup:
   patchblob_result_release(&patch_result);
   shavecc_result_release(&shave_result);
   ir2blob_result_release(&ir_result);
+  free(native_graph.data);
   free(elf.data);
   free(linker_script.data);
   free(run_input.data);

@@ -3,7 +3,7 @@ if(NOT DEFINED NPURUN)
 endif()
 
 execute_process(
-  COMMAND "${NPURUN}" build --shave-source kernel.c --shave-elf kernel.elf
+  COMMAND "${NPURUN}" build --ir model.xml --shave-source kernel.c --shave-elf kernel.elf
   RESULT_VARIABLE result
   OUTPUT_VARIABLE stdout
   ERROR_VARIABLE stderr)

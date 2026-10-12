@@ -147,10 +147,10 @@ release functions, and consumer linking.
 
 ## File-oriented CLI
 
-`npurun build` is the file boundary over the four C libraries. It compiles an
-IR graph, obtains a linked kernel from C source or a caller ELF, selects a
-validated positional ACT group, and writes the patched graph plus a provenance
-manifest:
+`npurun build` is the file boundary over the four C libraries. It obtains a
+native carrier from IR compilation or a caller blob, obtains a linked kernel
+from C source or a caller ELF, selects a validated positional ACT group, and
+writes the patched graph plus a provenance manifest:
 
 ```powershell
 npurun build `
@@ -181,6 +181,25 @@ worker overrides because none apply. The ELF still passes through the normal
 native validation before the graph is changed. The manifest records which
 input mode supplied the ELF, its size and SHA-256, and emits `shavecc: null`
 when compilation was skipped.
+
+The graph carrier can be reused in the same way. A completely offline patch
+uses two artifacts produced earlier and invokes neither the Intel graph
+compiler nor MoviTools:
+
+```powershell
+npurun build `
+  --native-graph carrier.blob `
+  --shave-elf kernel.elf `
+  --patch-position 0 `
+  --output patched.blob `
+  --manifest patched.json
+```
+
+`--ir` and `--native-graph` are mutually exclusive. Native-graph mode rejects
+weights, build flags, and IR worker overrides because none apply. The caller
+blob still passes through ACT discovery and the normal fail-closed patch
+validation. Its path, size, and SHA-256 are recorded; `ir2blob` is `null`
+rather than containing invented driver or compiler provenance.
 
 `--patch-position` is a zero-based discovered ACT group, not a source node
 name. Positional selection first uses the original same-precision contract and
