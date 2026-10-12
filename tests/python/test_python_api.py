@@ -171,17 +171,46 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "divisible"):
             npu.Split(data, npu.constant(np.asarray(1, dtype=np.int64)), num_splits=4)
 
+    def test_static_gather_inference_and_rejections(self) -> None:
+        data = npu.input("data", shape=(3, 4), dtype="u16")
+        indices = npu.input("indices", shape=(2,), dtype="i32")
+        gathered = npu.Gather(data, indices, npu.constant(np.asarray(0, dtype=np.int64)))
+
+        self.assertEqual(gathered.spec, npu.TensorSpec((2, 4), "u16"))
+
+        matrix_indices = npu.input("matrix_indices", shape=(2, 2), dtype="i32")
+        trailing = npu.Gather(data, matrix_indices, npu.constant(np.asarray(-1, dtype=np.int64)))
+        self.assertEqual(trailing.spec, npu.TensorSpec((3, 2, 2), "u16"))
+
+        with self.assertRaisesRegex(ValueError, "I32 or I64 indices"):
+            npu.Gather(data, npu.input("bad_indices", shape=(2,), dtype="u16"), npu.constant(np.asarray(0)))
+        with self.assertRaisesRegex(ValueError, "constant axis"):
+            npu.Gather(data, indices, npu.input("axis", shape=(), dtype="i64"))
+        with self.assertRaisesRegex(ValueError, "scalar integer"):
+            npu.Gather(data, indices, npu.constant(np.asarray([0], dtype=np.int64)))
+        with self.assertRaisesRegex(ValueError, "batch_dims=0"):
+            npu.Gather(data, indices, npu.constant(np.asarray(0)), batch_dims=1)
+        with self.assertRaisesRegex(ValueError, "axis is out of range"):
+            npu.Gather(data, indices, npu.constant(np.asarray(2)))
+        with self.assertRaisesRegex(TypeError, "batch_dims must be an integer"):
+            npu.Gather(data, indices, npu.constant(np.asarray(0)), batch_dims=False)
+
     def test_structural_operator_attributes_are_serialized(self) -> None:
         left = npu.input("left", shape=(1, 2), dtype="i32")
         right = npu.input("right", shape=(1, 2), dtype="i32")
         joined = npu.Concat(left, right, axis=0)
         converted = npu.Convert(joined, destination_type="f32")
-        root = ET.fromstring(npu.serialize_ir(npu.Graph([left, right], [converted])).xml)
+        indices = npu.input("indices", shape=(1,), dtype="i32")
+        axis = npu.constant(np.asarray(0, dtype=np.int64))
+        gathered = npu.Gather(left, indices, axis)
+        root = ET.fromstring(npu.serialize_ir(npu.Graph([left, right, indices], [converted, gathered])).xml)
 
         concat_data = root.find("./layers/layer[@type='Concat']/data")
         convert_data = root.find("./layers/layer[@type='Convert']/data")
+        gather_data = root.find("./layers/layer[@type='Gather']/data")
         self.assertEqual(concat_data.attrib, {"axis": "0"})
         self.assertEqual(convert_data.attrib, {"destination_type": "f32"})
+        self.assertEqual(gather_data.attrib, {"batch_dims": "0"})
 
     def test_missing_output_contract_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")
@@ -509,6 +538,7 @@ class FakeNative:
                 "f32": "float32",
                 "u8": "uint8",
                 "i8": "int8",
+                "u16": "uint16",
                 "i16": "int16",
                 "i32": "int32",
             }[self.infer_dtype]
@@ -564,6 +594,7 @@ class FakeInferenceSession:
                 "f32": "float32",
                 "u8": "uint8",
                 "i8": "int8",
+                "u16": "uint16",
                 "i16": "int16",
                 "i32": "int32",
             }[self._libraries.infer_dtype]
@@ -1619,6 +1650,35 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "i16"),))
         self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "i16"),))
         np.testing.assert_array_equal(loaded.run_one(values), values + np.int16(1))
+
+    def test_program_u16_copied_and_shared_inference(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="u16")
+        y = npu.Abs(x, _name="y")
+        fake = FakeNative()
+        fake.infer_dtype = "u16"
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        values = np.arange(32, dtype=np.uint16).reshape(1, 32)
+
+        copied = program.run_one(values)
+        shared_input = program.shared_input()
+        shared_output = program.shared_output()
+        np.copyto(shared_input, values)
+        shared = program.run_one(shared_input, output=shared_output)
+
+        np.testing.assert_array_equal(copied, values + np.uint16(1))
+        self.assertIs(shared, shared_output)
+        self.assertEqual(shared_input.dtype, np.dtype("uint16"))
+        np.testing.assert_array_equal(shared_output, values + np.uint16(1))
+
+        bundle = ROOT / "build" / "python-api-u16-program.npunlock"
+        try:
+            program.export(bundle)
+            loaded = npu.load(bundle, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            bundle.unlink(missing_ok=True)
+        self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "u16"),))
+        self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "u16"),))
+        np.testing.assert_array_equal(loaded.run_one(values), values + np.uint16(1))
 
     def test_program_single_shared_tensor_helpers_reject_ambiguous_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

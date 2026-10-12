@@ -17,6 +17,7 @@
 
 _Static_assert(GRAPHINFER_PRECISION_FP32 == 1, "FP32 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_FP16 == 2, "FP16 precision ABI changed");
+_Static_assert(GRAPHINFER_PRECISION_U16 == 3, "U16 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_U8 == 4, "U8 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_I32 == 5, "I32 precision ABI changed");
 _Static_assert(GRAPHINFER_PRECISION_I16 == 6, "I16 precision ABI changed");

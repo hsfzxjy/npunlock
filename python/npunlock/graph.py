@@ -247,6 +247,21 @@ def _output_specs(
         output_shape = list(data.shape)
         output_shape[axis] //= num_splits
         return tuple(TensorSpec(output_shape, data.dtype) for _ in range(num_splits))
+    if operator == "Gather":
+        if len(inputs) != 3:
+            raise ValueError("automatic Gather inference requires data, indices, and axis tensors")
+        data, indices, axis_tensor = inputs
+        if indices.dtype not in {"i32", "i64"}:
+            raise ValueError("automatic Gather inference requires I32 or I64 indices")
+        if attributes["batch_dims"] != 0:
+            raise ValueError("automatic Gather inference supports only batch_dims=0")
+        axis = _constant_integer_scalar(axis_tensor, "Gather", "axis")
+        rank = len(data.shape)
+        axis = axis + rank if axis < 0 else axis
+        if axis < 0 or axis >= rank:
+            raise ValueError("Gather axis is out of range")
+        output_shape = data.shape[:axis] + indices.shape + data.shape[axis + 1 :]
+        return (TensorSpec(output_shape, data.dtype),)
     raise ValueError(
         f"operator {operator!r} requires _shape and _dtype, or _outputs; "
         "automatic inference is limited to documented same-spec operators"
@@ -272,6 +287,10 @@ def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tenso
         special_zero = attributes.setdefault("special_zero", False)
         if not isinstance(special_zero, bool):
             raise TypeError("Reshape special_zero must be bool")
+    if operator == "Gather":
+        batch_dims = attributes.setdefault("batch_dims", 0)
+        if isinstance(batch_dims, bool) or not isinstance(batch_dims, int):
+            raise TypeError("Gather batch_dims must be an integer")
     specs = _output_specs(operator, tuple(inputs), metadata, attributes)
     node_name = metadata.get("_name")
     if node_name is not None and not isinstance(node_name, str):

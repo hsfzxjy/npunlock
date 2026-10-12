@@ -362,6 +362,7 @@ static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *pr
       properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I8) {
     element_size = sizeof(uint8_t);
   } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16 ||
+             properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_U16 ||
              properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I16) {
     element_size = sizeof(uint16_t);
   } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP32 ||
@@ -433,7 +434,7 @@ static bool query_arguments(const infer_request *request, const graph_functions 
       result->status = NPUNLOCK_INFER_UNSUPPORTED;
       set_diagnostic(
           result,
-          "graphinfer supports only bounded static FP16/FP32/U8/I8/I16/I32 inputs and outputs");
+          "graphinfer supports only bounded static FP16/FP32/U8/I8/U16/I16/I32 inputs and outputs");
       free(arguments);
       return false;
     }

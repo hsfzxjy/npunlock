@@ -708,6 +708,34 @@ The runnable positive proof is
 establish I16 ACT descriptors, arbitrary I16 operators, uneven splits, dynamic
 axes, or general multi-output operator support.
 
+## 21. U16 graph I/O and mixed-input Gather
+
+On 2026-10-12, graph compiler 8.3 accepted an equal two-way `Split` with one
+static U16 input and two U16 outputs on the tested NPU3720. Level Zero reported
+precision `0x03` (`UINT16`), which extends the ordinary graphinfer allocation
+path with checked two-byte element sizing. Copied and explicitly shared
+execution matched NumPy exactly for values from `0` through `65535`. The
+33,296-byte carrier had SHA-256
+`8ad4bd8254a3079591c8cbd8ce181bb5df7a2b059f733c4e8f37cd8dac684a5c`.
+
+A separate `Gather` graph used a U8 `[3,4]` data input, caller-provided I32
+`[2]` indices, and a scalar constant axis. Both copied and shared execution
+matched `numpy.take` exactly, including U8 boundary values and reordered rows.
+Its 58,408-byte carrier had SHA-256
+`0aa11f12cfdead73d07b7f6c08fe33f09ceb861f33abfe5ee3b124027d8bb70d`.
+The frontend therefore infers static `Gather` output contracts only for a
+constant scalar axis and `batch_dims=0`; compiler acceptance remains the final
+authority for each data dtype and shape.
+
+The failed adjacent probe is equally important: the same Gather shape with
+U16 data compiled and submitted successfully, but every output value was
+incorrect. A successful fence is not a semantic oracle, so U16 Gather is not
+claimed. The positive runnable proofs are
+[`example_u16_split.py`](../examples/example_u16_split.py) and
+[`example_u8_gather.py`](../examples/example_u8_gather.py). They do not
+establish U16 ACT descriptors, arbitrary U16 operators, batched Gather,
+dynamic axes, out-of-range-index behavior, or general mixed-dtype graphs.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -459,3 +459,13 @@ def Split(
     _name: str | None = ...,
     **attributes: object,
 ) -> tuple[Tensor, ...]: ...
+def Gather(
+    data: Tensor,
+    indices: Tensor,
+    axis: Tensor,
+    *,
+    batch_dims: int = ...,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...

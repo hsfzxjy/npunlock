@@ -69,7 +69,8 @@ underscore keyword arguments   npunlock metadata
   constant axes, including normalized negative axes;
 - `Split` accepts a scalar integer constant axis and positive `num_splits`,
   requires exact axis divisibility, and returns one contract per equal part;
-  and
+- `Gather` accepts integer indices and a scalar integer constant axis, infers
+  the static output shape, and currently requires `batch_dims=0`; and
 - `Convert` preserves shape and uses its normalized `destination_type` as the
   output dtype.
 
@@ -606,10 +607,15 @@ result = outputs["y"]
 
 Input names must match exactly. Shape and dtype must match the symbolic graph;
 noncontiguous arrays are copied to contiguous storage. The current execution
-boundary supports static FP16, FP32, U8, I8, I16, and I32 graph inputs and
-outputs with at most five dimensions. U8, I8, I16, and I32 are ordinary
+boundary supports static FP16, FP32, U8, I8, U16, I16, and I32 graph inputs and
+outputs with at most five dimensions. U8, I8, U16, I16, and I32 are ordinary
 graph-execution features; they do not extend the custom ACT-kernel ABI beyond
 its documented FP16/FP32 contracts.
+
+The supported dtype list describes tensor transport, not every operator/dtype
+combination. In particular, U8 data with I32 indices has passed `Gather`, while
+the tested U16-data `Gather` returned incorrect values despite successful graph
+submission. Treat the installed compiler and a host oracle as authoritative.
 
 For a multi-output node, output mappings use the compiler-compatible source
 names, such as `split.0`, `split.1`, and `split.2`. Give the node `_name=` when
@@ -708,6 +714,8 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [U8 Reshape and conversion graph](../examples/example_u8_reshape.py)
 - [I8 Squeeze/Unsqueeze and conversion graph](../examples/example_i8_axes.py)
 - [I16 multi-output Split graph](../examples/example_i16_split.py)
+- [U16 multi-output Split graph](../examples/example_u16_split.py)
+- [mixed-input U8/I32 Gather graph](../examples/example_u8_gather.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision custom branches with prepared binding](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
