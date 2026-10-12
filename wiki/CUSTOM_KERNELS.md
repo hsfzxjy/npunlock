@@ -301,16 +301,19 @@ source from the symbolic node:
 
 ```python
 custom_output = npu.custom(x, carrier="Abs", _name="custom_output")
-prepared = npu.prepare(npu.Graph([x], [custom_output]))
-program = prepared.build(kernels={custom_output: compiled})
+program = npu.compile(
+    npu.Graph([x], [custom_output]),
+    kernels={custom_output: compiled},
+)
 ```
 
 Every such source-free node requires an explicit `KernelSpec` or
 `CompiledKernel` override. Calling `plan()` without one is rejected before
 MoviTools or graph mutation. Supplying `source=` remains the normal workflow
 for `npu.compile()` and for plans that compile C during the build.
-Use `prepared.plan(kernels=...)` instead when you want to inspect
-`plan.explain()` before patching or when the graph needs explicit bindings.
+The one-call form requires an unambiguous automatic mapping. Use `prepare()`
+and `prepared.plan(kernels=...)` when you want to inspect `plan.explain()`
+before patching or when the graph needs explicit bindings.
 
 When iterating on kernel C, save the driver-compiled carrier and reviewed
 binding separately with `prepared.export("network.prepared.npunlock",

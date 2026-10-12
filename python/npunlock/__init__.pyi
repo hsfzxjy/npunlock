@@ -326,6 +326,7 @@ def compile(
     *,
     native_dir: str | PathLike[str] | None = ...,
     movi_dll_dir: str | PathLike[str] | None = ...,
+    kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = ...,
     linker_script: str | PathLike[str] | bytes | None = ...,
     build_flags: str = ...,
     definitions: tuple[str, ...] = ...,

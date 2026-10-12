@@ -493,6 +493,24 @@ class CompilationFlowTests(unittest.TestCase):
         np.testing.assert_array_equal(result["Result_0"], np.ones((1, 32), dtype=np.float16))
         self.assertEqual(fake.infer_args[1][0].selector, "x")
 
+    def test_compile_accepts_source_free_compiled_kernel(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, carrier="Abs", _name="compiled")
+        fake = FakeNative()
+
+        with patch.dict("os.environ", {}, clear=True):
+            program = npu.compile(
+                npu.Graph([x], [y], name="one_call_compiled"),
+                native_dir="unused",
+                kernels={y: npu.CompiledKernel(b"linked elf")},
+                libraries=fake,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(fake.compile_ir_count, 1)
+        self.assertEqual(fake.shave_calls, [])
+        self.assertEqual(fake.patch_calls[0][1], b"linked elf")
+        self.assertEqual(program.graph_blob, b"patched")
+
     def test_custom_only_graph_infers_targets_by_position(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         y = npu.custom(

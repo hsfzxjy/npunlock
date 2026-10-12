@@ -1980,6 +1980,7 @@ def compile(
     *,
     native_dir: str | Path | None = None,
     movi_dll_dir: str | Path | None = None,
+    kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = None,
     linker_script: str | Path | bytes | None = None,
     build_flags: str = "",
     definitions: tuple[str, ...] = (),
@@ -1999,6 +2000,7 @@ def compile(
         libraries=libraries,
     )
     return prepared.build(
+        kernels=kernels,
         movi_dll_dir=movi_dll_dir,
         linker_script=linker_script,
         definitions=definitions,

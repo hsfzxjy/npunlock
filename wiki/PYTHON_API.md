@@ -125,14 +125,18 @@ symbolic node:
 
 ```python
 y = npu.custom(x, carrier="Abs", _name="y")
-prepared = npu.prepare(npu.Graph([x], [y]))
-program = prepared.build(kernels={y: npu.CompiledKernel("kernels/custom.elf")})
+program = npu.compile(
+    npu.Graph([x], [y]),
+    kernels={y: npu.CompiledKernel("kernels/custom.elf")},
+)
 ```
 
 This is deliberately a plan-time contract. Every source-free custom node must
 have an explicit `KernelSpec` or `CompiledKernel` entry in `kernels`; otherwise
 `plan()` reports the missing symbolic node before invoking MoviTools or
 patching the carrier. Normal source-based `npu.compile()` usage is unchanged.
+The one-call form is limited to graphs with unambiguous automatic ACT mapping.
+Use `prepare()` and explicit bindings for any graph whose mapping needs review.
 
 Normal code can rely on automatic selection only for graphs satisfying the
 documented positional contract. The usual case maps one ACT group to each
@@ -390,6 +394,12 @@ carriers, but each plan still validates the ELF and its selected ACT targets.
 mapped graph. Use `plan(kernels=...)` when the selection should be printed and
 reviewed before building, and add explicit `bindings=` whenever placement is
 ambiguous. Both forms execute the same plan validation and patch path.
+
+For an unambiguous graph that does not need separate carrier reuse or plan
+inspection, `npu.compile(graph, kernels={output: compiled})` combines
+`prepare()` and `PreparedGraph.build()` in one call. A plan containing only
+`CompiledKernel` values needs no MoviTools configuration; mixed mappings invoke
+MoviTools only for their `KernelSpec` entries.
 
 `PreparedGraph.build()` remains the compact API and delegates through the same
 plan validation. Both paths patch the carrier already held by `PreparedGraph`;
