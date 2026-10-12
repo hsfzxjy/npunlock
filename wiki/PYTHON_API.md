@@ -618,9 +618,19 @@ arrays.
 
 ### Shared input and output buffers
 
-For repeated inference without tensor copies, allocate host/NPU shared arrays
-from the compiled program and provide every output explicitly. The dictionary
-helpers use the saved graph argument names, shapes, and dtypes:
+For a one-input/one-output program, allocate correctly shaped host/NPU shared
+arrays without repeating the tensor contract:
+
+```python
+shared_x = program.shared_input()
+shared_y = program.shared_output()
+np.copyto(shared_x, input_value)
+result = program.run_one(shared_x, output=shared_y)
+assert result is shared_y
+```
+
+For a general graph, the dictionary helpers use every saved graph argument
+name, shape, and dtype:
 
 ```python
 shared_inputs = program.shared_inputs()
@@ -633,9 +643,6 @@ np.clip(shared_x, -4, 4, out=shared_x)
 outputs = program.run(shared_inputs, outputs=shared_outputs)
 assert outputs["y"] is shared_y
 ```
-
-For a one-input/one-output program, the equivalent shared call is
-`program.run_one(shared_x, output=shared_y)` and returns `shared_y` itself.
 
 `program.shared_array(shape, dtype)` remains available for callers that need a
 manually shaped shared allocation.

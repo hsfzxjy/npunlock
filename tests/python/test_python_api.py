@@ -1374,6 +1374,46 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertIs(shared, shared_output)
         np.testing.assert_array_equal(shared_output, values + np.float16(1))
 
+    def test_program_single_shared_tensor_helpers(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x, _name="y")
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+
+        shared_input = program.shared_input()
+        shared_output = program.shared_output()
+
+        self.assertEqual(shared_input.shape, x.shape)
+        self.assertEqual(shared_input.dtype, np.dtype("float16"))
+        self.assertEqual(shared_output.shape, y.shape)
+        self.assertEqual(shared_output.dtype, np.dtype("float16"))
+        self.assertIs(shared_input._allocation._session, fake.shared_session)
+        self.assertIs(shared_output._allocation._session, fake.shared_session)
+
+    def test_program_single_shared_tensor_helpers_reject_ambiguous_contracts(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        peer = npu.input("peer", shape=(1, 32), dtype="f16")
+        two_inputs = npu.compile(
+            npu.Graph([x, peer], [npu.Add(x, peer)]),
+            native_dir="unused",
+            libraries=FakeNative(),  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(ValueError, "requires exactly one input; program has 2 inputs"):
+            two_inputs.shared_input()
+
+        left, right = npu.Split(
+            x,
+            axis=1,
+            _outputs=(npu.TensorSpec((1, 16), "f16"), npu.TensorSpec((1, 16), "f16")),
+        )
+        two_outputs = npu.compile(
+            npu.Graph([x], [left, right]),
+            native_dir="unused",
+            libraries=FakeNative(),  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(ValueError, "requires exactly one output; program has 2 outputs"):
+            two_outputs.shared_output()
+
     def test_program_run_one_rejects_multi_tensor_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         peer = npu.input("peer", shape=(1, 32), dtype="f16")

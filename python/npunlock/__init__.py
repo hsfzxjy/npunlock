@@ -462,10 +462,30 @@ class Program:
 
         return {tensor.name: self.shared_array(tensor.shape, tensor.dtype) for tensor in self.input_contracts}
 
+    def shared_input(self) -> SharedArray:
+        """Allocate the input of an exactly one-input program."""
+
+        contracts = self.input_contracts
+        if len(contracts) != 1:
+            raise ValueError(f"Program.shared_input() requires exactly one input; program has {len(contracts)} inputs")
+        tensor = contracts[0]
+        return self.shared_array(tensor.shape, tensor.dtype)
+
     def shared_outputs(self) -> dict[str, SharedArray]:
         """Allocate one shared array for every graph output."""
 
         return {tensor.name: self.shared_array(tensor.shape, tensor.dtype) for tensor in self.output_contracts}
+
+    def shared_output(self) -> SharedArray:
+        """Allocate the output of an exactly one-output program."""
+
+        contracts = self.output_contracts
+        if len(contracts) != 1:
+            raise ValueError(
+                f"Program.shared_output() requires exactly one output; program has {len(contracts)} outputs"
+            )
+        tensor = contracts[0]
+        return self.shared_array(tensor.shape, tensor.dtype)
 
     @property
     def closed(self) -> bool:
