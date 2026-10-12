@@ -817,8 +817,43 @@ class CompilationFlowTests(unittest.TestCase):
                 )
             ],
         )
-        with self.assertRaisesRegex(TypeError, "requires a KernelSpec"):
-            npu.compile_kernel(b"source", movi_dll_dir="movi", libraries=fake)  # type: ignore[arg-type]
+
+        direct = npu.compile_kernel(
+            b"direct source",
+            definitions=("MODE=4",),
+            linker_script=b"direct linker",
+            movi_dll_dir="movi",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(direct.elf_name, "<compiled from <bytes>>")
+        self.assertEqual(fake.shave_calls[-1][0], b"direct source")
+        self.assertEqual(fake.shave_calls[-1][1]["definitions"], ("MODE=4",))
+        self.assertEqual(fake.shave_calls[-1][1]["linker_script"], b"direct linker")
+
+        source_path = ROOT / "build" / "compile-kernel-direct.c"
+        source_path.write_bytes(b"path source")
+        try:
+            from_path = npu.compile_kernel(
+                source_path,
+                movi_dll_dir="movi",
+                libraries=fake,  # type: ignore[arg-type]
+            )
+        finally:
+            source_path.unlink(missing_ok=True)
+        self.assertEqual(from_path.elf_name, f"<compiled from {source_path}>")
+        self.assertEqual(fake.shave_calls[-1][0], b"path source")
+
+        call_count = len(fake.shave_calls)
+        with self.assertRaisesRegex(ValueError, "cannot override a KernelSpec"):
+            npu.compile_kernel(
+                spec,
+                definitions=("MODE=9",),
+                movi_dll_dir="movi",
+                libraries=fake,  # type: ignore[arg-type]
+            )
+        self.assertEqual(len(fake.shave_calls), call_count)
+        with self.assertRaisesRegex(TypeError, "KernelSpec, source bytes, or a source path"):
+            npu.compile_kernel(object(), movi_dll_dir="movi", libraries=fake)  # type: ignore[arg-type]
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaisesRegex(ValueError, "requires an MVC_DEPEND root"):
                 npu.compile_kernel(spec, libraries=fake)  # type: ignore[arg-type]

@@ -287,11 +287,15 @@ carrier, so this option does not relax the kernel ABI or graph contract.
 Compile once and save the linked image through the same high-level API:
 
 ```python
-spec = npu.KernelSpec("kernels/custom.c", definitions=("MODE=2",))
-compiled = npu.compile_kernel(spec)
+compiled = npu.compile_kernel(
+    "kernels/custom.c",
+    definitions=("MODE=2",),
+)
 compiled.save("kernels/custom.elf")
 ```
 
+Passing an existing `KernelSpec` is equivalent and preserves its snapshotted
+settings; separate definitions or a linker script cannot override that spec.
 The returned object can be passed directly to `PreparedGraph.plan()`. A later
 process can reconstruct the same value with
 `npu.CompiledKernel("kernels/custom.elf")`.

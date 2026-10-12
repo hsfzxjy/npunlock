@@ -282,8 +282,10 @@ class PreparedGraph:
 def input(name: str, *, shape: object, dtype: object) -> Tensor: ...
 def configure(*, movi_dll_dir: str | PathLike[str] | None) -> None: ...
 def compile_kernel(
-    kernel: KernelSpec,
+    kernel: KernelSpec | bytes | str | PathLike[str],
     *,
+    definitions: Sequence[str] = ...,
+    linker_script: bytes | str | PathLike[str] | None = ...,
     native_dir: str | PathLike[str] | None = ...,
     movi_dll_dir: str | PathLike[str] | None = ...,
     timeout_ms: int = ...,

@@ -778,18 +778,30 @@ def load(
 
 
 def compile_kernel(
-    kernel: KernelSpec,
+    kernel: KernelSpec | bytes | str | os.PathLike[str],
     *,
+    definitions: Sequence[str] = (),
+    linker_script: bytes | str | os.PathLike[str] | None = None,
     native_dir: str | Path | None = None,
     movi_dll_dir: str | Path | None = None,
     timeout_ms: int = 20_000,
     movi_worker: str | None = None,
     libraries: NativeLibraries | None = None,
 ) -> CompiledKernel:
-    """Compile one snapshotted kernel spec into a reusable linked SHAVE ELF."""
+    """Compile C source or a snapshotted spec into a reusable linked SHAVE ELF."""
 
-    if not isinstance(kernel, KernelSpec):
-        raise TypeError("compile_kernel() requires a KernelSpec")
+    if isinstance(kernel, KernelSpec):
+        if tuple(definitions) or linker_script is not None:
+            raise ValueError("compile_kernel() definitions and linker_script cannot override a KernelSpec")
+        spec = kernel
+    elif isinstance(kernel, (bytes, str, os.PathLike)):
+        spec = KernelSpec(
+            kernel,
+            definitions=definitions,
+            linker_script=linker_script,
+        )
+    else:
+        raise TypeError("compile_kernel() requires a KernelSpec, source bytes, or a source path")
     resolved_movi_dll_dir = _resolve_movi_dll_dir(movi_dll_dir)
     if resolved_movi_dll_dir is None:
         raise ValueError(
@@ -798,15 +810,15 @@ def compile_kernel(
         )
     native = libraries or _default_native_libraries(native_dir)
     elf = native.compile_shave(
-        kernel.source,
+        spec.source,
         movi_dll_dir=resolved_movi_dll_dir,
-        linker_script=kernel.linker_script,
-        definitions=kernel.definitions,
+        linker_script=spec.linker_script,
+        definitions=spec.definitions,
         timeout_ms=timeout_ms,
         worker=movi_worker,
     )
     result = CompiledKernel(elf)
-    object.__setattr__(result, "elf_name", f"<compiled from {kernel.source_name}>")
+    object.__setattr__(result, "elf_name", f"<compiled from {spec.source_name}>")
     return result
 
 

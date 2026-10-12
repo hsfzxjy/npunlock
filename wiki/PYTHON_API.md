@@ -372,11 +372,10 @@ compiled inputs by path and SHA-256.
 The high-level API can produce and persist that reusable value directly:
 
 ```python
-spec = npu.KernelSpec(
+compiled = npu.compile_kernel(
     "kernels/custom.c",
     definitions=("MODE=2",),
 )
-compiled = npu.compile_kernel(spec)
 compiled.save("kernels/custom.elf")
 
 # Attach the immutable ELF directly for the common unambiguous case.
@@ -389,6 +388,9 @@ program = npu.compile(npu.Graph([x], [custom_output]))
 `compile_kernel()` uses the same native `shavecc` implementation, bounded
 worker, embedded default linker script, and MoviTools directory precedence as
 graph compilation. It does not compile an IR graph or require NPU execution.
+It accepts source bytes, a source path, or an existing `KernelSpec`. Settings
+passed separately cannot override an existing spec because its bytes and
+compiler settings were already snapshotted.
 The returned `CompiledKernel` may be reused across compatible prepared
 carriers, but each plan still validates the ELF and its selected ACT targets.
 `kernel=` also accepts a `KernelSpec` when per-node definitions or a linker
