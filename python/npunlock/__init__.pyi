@@ -425,3 +425,19 @@ def Reshape(
     _dtype: object = ...,
     _name: str | None = ...,
 ) -> Tensor: ...
+def Squeeze(
+    data: Tensor,
+    axes: Tensor,
+    *,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...
+def Unsqueeze(
+    data: Tensor,
+    axes: Tensor,
+    *,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...

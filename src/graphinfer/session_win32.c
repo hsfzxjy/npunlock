@@ -301,7 +301,8 @@ static bool argument_data_size(const npunlock_ze_graph_argument_properties_3 *pr
   if (properties->dims_count == 0 || properties->dims_count > GRAPHINFER_MAX_DIMS) {
     return false;
   }
-  if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_U8) {
+  if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_U8 ||
+      properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_I8) {
     element_size = sizeof(uint8_t);
   } else if (properties->devicePrecision == NPUNLOCK_ZE_GRAPH_ARGUMENT_PRECISION_FP16) {
     element_size = sizeof(uint16_t);
@@ -354,9 +355,9 @@ static npunlock_status query_arguments(graphinfer_session *session,
     if ((metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_INPUT &&
          metadata.type != NPUNLOCK_ZE_GRAPH_ARGUMENT_TYPE_OUTPUT) ||
         !argument_data_size(&metadata, &argument->data_size)) {
-      return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
-                                     "graphinfer.session",
-                                     "only bounded static FP16/FP32/U8/I32 tensors are supported");
+      return npunlock_set_diagnostic(
+          &result->diagnostic, NPUNLOCK_STATUS_UNSUPPORTED, "graphinfer.session",
+          "only bounded static FP16/FP32/U8/I8/I32 tensors are supported");
     }
     name_end = (const char *)memchr(metadata.name, 0, sizeof(metadata.name));
     if (name_end == NULL) {

@@ -61,6 +61,20 @@ def _validate_operator_name(name: object) -> str:
     return name
 
 
+def _constant_integer_vector(tensor: Tensor, operator: str, role: str) -> tuple[int, ...]:
+    if tensor.producer.op != "Const":
+        raise ValueError(f"automatic {operator} inference requires a constant {role} tensor")
+    array = tensor.producer.metadata.get("value")
+    if array is None:
+        raise ValueError(f"{operator} {role} constant has no value")
+    if getattr(array, "ndim", None) != 1 or getattr(getattr(array, "dtype", None), "kind", None) not in {
+        "i",
+        "u",
+    }:
+        raise ValueError(f"{operator} {role} must be a one-dimensional integer constant")
+    return tuple(int(value) for value in array.reshape(-1))  # type: ignore[union-attr]
+
+
 def _output_specs(
     operator: str,
     inputs: tuple[Tensor, ...],
@@ -128,19 +142,7 @@ def _output_specs(
         return (TensorSpec(shape, inputs[0].dtype),)
     if operator == "Transpose" and len(inputs) == 2:
         data, order_tensor = inputs
-        if order_tensor.producer.op != "Const":
-            raise ValueError("automatic Transpose inference requires a constant order tensor")
-        order_array = order_tensor.producer.metadata.get("value")
-        if order_array is None:
-            raise ValueError("Transpose order constant has no value")
-        if getattr(order_array, "ndim", None) != 1 or getattr(
-            getattr(order_array, "dtype", None), "kind", None
-        ) not in {
-            "i",
-            "u",
-        }:
-            raise ValueError("Transpose order must be a one-dimensional integer constant")
-        order = tuple(int(value) for value in order_array.reshape(-1))  # type: ignore[union-attr]
+        order = _constant_integer_vector(order_tensor, "Transpose", "order")
         if len(order) != len(data.shape) or set(order) != set(range(len(data.shape))):
             raise ValueError("Transpose order must be a permutation of every input axis")
         return (TensorSpec(tuple(data.shape[axis] for axis in order), data.dtype),)
@@ -148,17 +150,8 @@ def _output_specs(
         if len(inputs) != 2:
             raise ValueError("automatic Reshape inference requires data and pattern tensors")
         data, pattern_tensor = inputs
-        if pattern_tensor.producer.op != "Const":
-            raise ValueError("automatic Reshape inference requires a constant pattern tensor")
-        pattern_array = pattern_tensor.producer.metadata.get("value")
-        if pattern_array is None:
-            raise ValueError("Reshape pattern constant has no value")
-        if getattr(pattern_array, "ndim", None) != 1 or getattr(
-            getattr(pattern_array, "dtype", None), "kind", None
-        ) not in {"i", "u"}:
-            raise ValueError("Reshape pattern must be a one-dimensional integer constant")
+        pattern = _constant_integer_vector(pattern_tensor, "Reshape", "pattern")
         special_zero = attributes["special_zero"]
-        pattern = tuple(int(value) for value in pattern_array.reshape(-1))  # type: ignore[union-attr]
         inferred_index: int | None = None
         output_shape: list[int] = []
         known_elements = 1
@@ -186,6 +179,42 @@ def _output_specs(
             output_shape[inferred_index] = input_elements // known_elements
         elif known_elements != input_elements:
             raise ValueError("Reshape input and output element counts do not match")
+        return (TensorSpec(output_shape, data.dtype),)
+    if operator == "Squeeze":
+        if len(inputs) != 2:
+            raise ValueError("automatic Squeeze inference requires data and axes tensors")
+        data, axes_tensor = inputs
+        axes = _constant_integer_vector(axes_tensor, "Squeeze", "axes")
+        if not axes:
+            raise ValueError("automatic Squeeze inference requires at least one axis")
+        rank = len(data.shape)
+        normalized_axes = tuple(axis + rank if axis < 0 else axis for axis in axes)
+        if any(axis < 0 or axis >= rank for axis in normalized_axes):
+            raise ValueError("Squeeze axis is out of range")
+        if len(set(normalized_axes)) != len(normalized_axes):
+            raise ValueError("Squeeze axes must be unique")
+        if any(data.shape[axis] != 1 for axis in normalized_axes):
+            raise ValueError("Squeeze axes must select dimensions of size one")
+        output_shape = tuple(dimension for index, dimension in enumerate(data.shape) if index not in normalized_axes)
+        if not output_shape:
+            raise ValueError("automatic Squeeze inference does not produce scalar tensors")
+        return (TensorSpec(output_shape, data.dtype),)
+    if operator == "Unsqueeze":
+        if len(inputs) != 2:
+            raise ValueError("automatic Unsqueeze inference requires data and axes tensors")
+        data, axes_tensor = inputs
+        axes = _constant_integer_vector(axes_tensor, "Unsqueeze", "axes")
+        if not axes:
+            raise ValueError("automatic Unsqueeze inference requires at least one axis")
+        output_rank = len(data.shape) + len(axes)
+        normalized_axes = tuple(axis + output_rank if axis < 0 else axis for axis in axes)
+        if any(axis < 0 or axis >= output_rank for axis in normalized_axes):
+            raise ValueError("Unsqueeze axis is out of range")
+        if len(set(normalized_axes)) != len(normalized_axes):
+            raise ValueError("Unsqueeze axes must be unique")
+        inserted = set(normalized_axes)
+        source_dimensions = iter(data.shape)
+        output_shape = tuple(1 if axis in inserted else next(source_dimensions) for axis in range(output_rank))
         return (TensorSpec(output_shape, data.dtype),)
     raise ValueError(
         f"operator {operator!r} requires _shape and _dtype, or _outputs; "

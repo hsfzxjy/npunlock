@@ -654,6 +654,32 @@ The runnable proof is
 not establish U8 ACT descriptors, U8 custom kernels, arbitrary quantized
 networks, every U8 operation, or dynamic shapes.
 
+## 19. I8 graph I/O and static axis transforms
+
+On 2026-10-12, graph compiler 8.3 accepted static signed-I8 graph arguments on
+the tested NPU3720. Level Zero reported precision `0x07` (`INT8`), and the
+bounded execution path sized it as one byte per element. This is ordinary graph
+I/O only; the custom ACT contract remains FP16/FP32.
+
+One graph took a `[1,2,1,3]` I8 input, applied positive-axis `Squeeze`, restored
+the original shape with `Unsqueeze`, and returned a parallel FP32 conversion of
+the squeezed result. Copied and explicitly shared executions both matched
+NumPy exactly for `-128`, `-127`, `-1`, `0`, `1`, and `127`. The initial
+compiler probe produced a 79,000-byte carrier with SHA-256
+`6a95a4e47964b2f4c765f917559f3fdc0ed1b850dec36e0335f3e59ab4c8d71c`.
+
+The frontend now infers `Squeeze` and `Unsqueeze` output shapes from a
+one-dimensional integer constant, validates uniqueness and bounds, and
+normalizes negative axes. That frontend calculation does not prove compiler
+acceptance: graph compiler 8.3 rejected the otherwise equivalent `[0,-2]`
+Squeeze axes as a duplicate axis while accepting `[0,2]`. The verified device
+path therefore uses positive axes.
+
+The runnable proof is
+[`example_i8_axes.py`](../examples/example_i8_axes.py). These results do not
+establish I8 ACT descriptors, I8 custom kernels, quantization semantics,
+arbitrary signed-byte operators, or negative-axis compiler support.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

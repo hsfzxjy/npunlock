@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-12:** Ordinary NPU graphs now accept U8 host tensors: copied and shared `Reshape`, plus a multi-output U8-to-FP32 path, matched exact NumPy oracles. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#18-u8-graph-io-and-static-reshape).
+> **Latest breakthrough — 2026-10-12:** Ordinary NPU graphs now accept signed I8 host tensors: copied and shared `Squeeze`/`Unsqueeze`, plus a parallel I8-to-FP32 output, matched exact NumPy oracles. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#19-i8-graph-io-and-static-axis-transforms).
 
 ## Quick example
 
@@ -87,6 +87,8 @@ MoviTools and demonstrates ordinary multi-input/multi-output `Concat`,
 `Transpose`, and `Convert` execution.
 The [U8 reshape example](examples/example_u8_reshape.py) likewise needs no
 MoviTools and returns both reshaped U8 data and its FP32 conversion.
+The [I8 axis-transform example](examples/example_i8_axes.py) covers signed-byte
+`Squeeze`, `Unsqueeze`, and FP32 conversion in one ordinary graph.
 
 ## Why npunlock?
 
@@ -169,8 +171,8 @@ reference.
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
 - connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
-- ordinary static graph execution with FP16, FP32, U8, or I32 inputs and outputs
-- inferred contracts for `Concat`, constant-order `Transpose`, constant-pattern `Reshape`, `Convert`, and rank-2 `MatMul`
+- ordinary static graph execution with FP16, FP32, U8, I8, or I32 inputs and outputs
+- inferred contracts for `Concat`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools

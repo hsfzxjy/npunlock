@@ -57,7 +57,7 @@ host/NPU shared allocations so NumPy can view the same memory used by the NPU.
 Sessions serialize executions and use finite fence waits, but neither mode can
 provide Job Object recovery from a driver call that never returns.
 
-Static graph arguments may be FP16, FP32, U8, or I32. This graph-execution
+Static graph arguments may be FP16, FP32, U8, I8, or I32. This graph-execution
 precision list is separate from `patchblob`'s narrower validated custom
 ACT-kernel contracts.
 

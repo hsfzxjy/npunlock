@@ -137,6 +137,24 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "special_zero must be bool"):
             npu.Reshape(data, npu.constant(np.asarray([3, 8], dtype=np.int64)), special_zero=1)
 
+    def test_static_squeeze_unsqueeze_inference_and_rejections(self) -> None:
+        data = npu.input("data", shape=(1, 2, 1, 3), dtype="i8")
+        axes = npu.constant(np.asarray([0, -2], dtype=np.int64))
+        squeezed = npu.Squeeze(data, axes)
+        restored = npu.Unsqueeze(squeezed, axes)
+
+        self.assertEqual(squeezed.spec, npu.TensorSpec((2, 3), "i8"))
+        self.assertEqual(restored.spec, data.spec)
+
+        with self.assertRaisesRegex(ValueError, "constant axes"):
+            npu.Squeeze(data, npu.input("axes", shape=(2,), dtype="i64"))
+        with self.assertRaisesRegex(ValueError, "dimensions of size one"):
+            npu.Squeeze(data, npu.constant(np.asarray([1], dtype=np.int64)))
+        with self.assertRaisesRegex(ValueError, "axes must be unique"):
+            npu.Unsqueeze(squeezed, npu.constant(np.asarray([0, 0], dtype=np.int64)))
+        with self.assertRaisesRegex(ValueError, "axis is out of range"):
+            npu.Unsqueeze(squeezed, npu.constant(np.asarray([4], dtype=np.int64)))
+
     def test_structural_operator_attributes_are_serialized(self) -> None:
         left = npu.input("left", shape=(1, 2), dtype="i32")
         right = npu.input("right", shape=(1, 2), dtype="i32")
@@ -469,7 +487,9 @@ class FakeNative:
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
         self.infer_args = (graph_blob, values, kwargs)
-        dtype = np.dtype({"f16": "float16", "f32": "float32", "u8": "uint8", "i32": "int32"}[self.infer_dtype])
+        dtype = np.dtype(
+            {"f16": "float16", "f32": "float32", "u8": "uint8", "i8": "int8", "i32": "int32"}[self.infer_dtype]
+        )
         source = np.frombuffer(values[0].data, dtype=dtype)
         output = (source + dtype.type(1)).astype(dtype).tobytes()
         return npu.InferenceResult(
@@ -516,7 +536,9 @@ class FakeInferenceSession:
         source_buffer = input_values[0][1]
         output_buffer = output_values[0][1]
         dtype = np.dtype(
-            {"f16": "float16", "f32": "float32", "u8": "uint8", "i32": "int32"}[self._libraries.infer_dtype]
+            {"f16": "float16", "f32": "float32", "u8": "uint8", "i8": "int8", "i32": "int32"}[
+                self._libraries.infer_dtype
+            ]
         )
         source_bytes = (ctypes.c_uint8 * source_buffer.size).from_address(source_buffer.address)
         output_bytes = (ctypes.c_uint8 * output_buffer.size).from_address(output_buffer.address)
@@ -1511,6 +1533,35 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "u8"),))
         self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "u8"),))
         np.testing.assert_array_equal(loaded.run_one(values), values + np.uint8(1))
+
+    def test_program_i8_copied_and_shared_inference(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="i8")
+        y = npu.Abs(x, _name="y")
+        fake = FakeNative()
+        fake.infer_dtype = "i8"
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        values = np.arange(-16, 16, dtype=np.int8).reshape(1, 32)
+
+        copied = program.run_one(values)
+        shared_input = program.shared_input()
+        shared_output = program.shared_output()
+        np.copyto(shared_input, values)
+        shared = program.run_one(shared_input, output=shared_output)
+
+        np.testing.assert_array_equal(copied, values + np.int8(1))
+        self.assertIs(shared, shared_output)
+        self.assertEqual(shared_input.dtype, np.dtype("int8"))
+        np.testing.assert_array_equal(shared_output, values + np.int8(1))
+
+        bundle = ROOT / "build" / "python-api-i8-program.npunlock"
+        try:
+            program.export(bundle)
+            loaded = npu.load(bundle, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            bundle.unlink(missing_ok=True)
+        self.assertEqual(loaded.input_contracts, (npu.TensorContract("x", (1, 32), "i8"),))
+        self.assertEqual(loaded.output_contracts, (npu.TensorContract("y", (1, 32), "i8"),))
+        np.testing.assert_array_equal(loaded.run_one(values), values + np.int8(1))
 
     def test_program_single_shared_tensor_helpers_reject_ambiguous_contracts(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
