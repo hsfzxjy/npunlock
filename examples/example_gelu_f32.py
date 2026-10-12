@@ -43,9 +43,9 @@ def main() -> None:
     program = npu.compile(npu.Graph(inputs=[x], outputs=[y], name="gelu_f32_example"))
 
     input_value = np.linspace(-4, 4, N, dtype=np.float32).reshape(1, -1)
-    outputs = program.run({"x": input_value})
+    output = program.run_one(input_value)
     reference = gelu_reference(input_value).astype(np.float32)
-    max_abs_error = np.max(np.abs(outputs["y"] - reference))
+    max_abs_error = np.max(np.abs(output - reference))
     print(f"maximum absolute error: {max_abs_error:g}")
 
 

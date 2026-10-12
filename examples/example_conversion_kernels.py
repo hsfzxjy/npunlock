@@ -60,7 +60,7 @@ to_f32_group = prepared.find_group(input_dtypes=("f16",), output_dtype="f32")
 program = prepared.build(bindings={half: to_f16_group, y: to_f32_group})
 
 input_value = np.linspace(-5.0, 3.0, 16, dtype=np.float32).reshape(shape)
-actual = program.run({"x": input_value})["to_f32"]
+actual = program.run_one(input_value)
 half_reference = (input_value * np.float32(0.5) + np.float32(1.0)).astype(np.float16)
 reference = np.abs(half_reference).astype(np.float32) * np.float32(2.0) - np.float32(0.25)
 np.testing.assert_allclose(actual, reference, rtol=0.0, atol=0.0)

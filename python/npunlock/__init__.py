@@ -576,6 +576,24 @@ class Program:
             values[name] = np.frombuffer(output.data, dtype=expected_dtype).copy().reshape(tensor.shape)
         return values
 
+    def run_one(self, input_value: object, *, output: object | None = None) -> object:
+        """Run an exactly one-input, one-output program."""
+
+        input_contracts = self.input_contracts
+        output_contracts = self.output_contracts
+        if len(input_contracts) != 1 or len(output_contracts) != 1:
+            input_suffix = "" if len(input_contracts) == 1 else "s"
+            output_suffix = "" if len(output_contracts) == 1 else "s"
+            raise ValueError(
+                "Program.run_one() requires exactly one input and one output; "
+                f"program has {len(input_contracts)} input{input_suffix} and "
+                f"{len(output_contracts)} output{output_suffix}"
+            )
+        input_name = input_contracts[0].name
+        output_name = output_contracts[0].name
+        requested_outputs = None if output is None else {output_name: output}
+        return self.run({input_name: input_value}, outputs=requested_outputs)[output_name]
+
 
 def _native_blob_bytes(value: object) -> bytes:
     if isinstance(value, bytes):

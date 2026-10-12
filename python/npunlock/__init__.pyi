@@ -220,6 +220,7 @@ class Program:
         *,
         outputs: Mapping[str, object] | None = ...,
     ) -> Mapping[str, object]: ...
+    def run_one(self, input_value: object, *, output: object | None = ...) -> object: ...
 
 class BuildPlan:
     group_indices: tuple[tuple[int, ...], ...]

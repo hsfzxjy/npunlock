@@ -1357,6 +1357,48 @@ class CompilationFlowTests(unittest.TestCase):
         np.testing.assert_array_equal(shared_output, shared_input + np.float16(1))
         self.assertEqual(len(fake.shared_session.calls), 1)
 
+    def test_program_run_one_supports_copied_and_shared_tensors(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x, _name="y")
+        fake = FakeNative()
+        program = npu.compile(npu.Graph([x], [y]), native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        values = np.arange(32, dtype=np.float16).reshape(1, 32)
+
+        copied = program.run_one(values)
+        shared_input = program.shared_array(x.shape, x.dtype)
+        shared_output = program.shared_array(y.shape, y.dtype)
+        np.copyto(shared_input, values)
+        shared = program.run_one(shared_input, output=shared_output)
+
+        np.testing.assert_array_equal(copied, values + np.float16(1))
+        self.assertIs(shared, shared_output)
+        np.testing.assert_array_equal(shared_output, values + np.float16(1))
+
+    def test_program_run_one_rejects_multi_tensor_contracts(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        peer = npu.input("peer", shape=(1, 32), dtype="f16")
+        fake = FakeNative()
+        two_inputs = npu.compile(
+            npu.Graph([x, peer], [npu.Add(x, peer)]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(ValueError, "program has 2 inputs and 1 output"):
+            two_inputs.run_one(np.zeros((1, 32), dtype=np.float16))
+
+        left, right = npu.Split(
+            x,
+            axis=1,
+            _outputs=(npu.TensorSpec((1, 16), "f16"), npu.TensorSpec((1, 16), "f16")),
+        )
+        two_outputs = npu.compile(
+            npu.Graph([x], [left, right]),
+            native_dir="unused",
+            libraries=FakeNative(),  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(ValueError, "program has 1 input and 2 outputs"):
+            two_outputs.run_one(np.zeros((1, 32), dtype=np.float16))
+
     def test_program_reuses_session_for_ordinary_inference(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         y = npu.Abs(x)

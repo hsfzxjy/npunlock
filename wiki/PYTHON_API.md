@@ -501,7 +501,7 @@ to execute a compiled program without reconstructing its symbolic `Graph`:
 program.export("my_program.npunlock")
 
 loaded = npu.load("my_program.npunlock")
-output = loaded.run({"x": input_value})
+output = loaded.run_one(input_value)
 ```
 
 The versioned bundle contains the patched native graph, static input/output
@@ -574,12 +574,20 @@ buffer is distinct from its operating-system stderr stream.
 
 ## Execution
 
-`Program.run()` accepts a mapping from every declared input name to a NumPy
-array:
+For an exactly one-input, one-output graph, `Program.run_one()` accepts the
+input array and returns the output array directly:
 
 ```python
 input_value = np.linspace(-4, 4, 1024, dtype=np.float16).reshape(1, 1024)
-outputs = program.run({"x": input_value})
+result = program.run_one(input_value)
+```
+
+It rejects programs with multiple inputs or outputs instead of choosing one.
+For general graphs, `Program.run()` accepts a mapping from every declared
+input name and returns a mapping by output name:
+
+```python
+outputs = program.run({"x": x_value, "peer": peer_value})
 result = outputs["y"]
 ```
 
@@ -625,6 +633,9 @@ np.clip(shared_x, -4, 4, out=shared_x)
 outputs = program.run(shared_inputs, outputs=shared_outputs)
 assert outputs["y"] is shared_y
 ```
+
+For a one-input/one-output program, the equivalent shared call is
+`program.run_one(shared_x, output=shared_y)` and returns `shared_y` itself.
 
 `program.shared_array(shape, dtype)` remains available for callers that need a
 manually shaped shared allocation.

@@ -58,7 +58,7 @@ y = npu.custom(
 program = npu.compile(npu.Graph(inputs=[x], outputs=[y], name="gelu_f32_example"))
 
 input_value = np.linspace(-4, 4, N, dtype=np.float32).reshape(1, -1)
-output = program.run({"x": input_value})["y"]
+output = program.run_one(input_value)
 reference = 0.5 * input_value * (
     1.0
     + np.tanh(
