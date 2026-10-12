@@ -132,6 +132,10 @@ class SymbolicTests(unittest.TestCase):
         self.assertEqual(dtype_override.shape, (1, 32))
         self.assertEqual(dtype_override.dtype, "f32")
 
+        source_free = npu.custom(x, carrier="Abs", _name="compiled_later")
+        self.assertIsNone(source_free.producer.metadata["_kernel"])
+        self.assertEqual(source_free.spec, x.spec)
+
     def test_undeclared_graph_input_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")
         hidden = npu.input("hidden", shape=(1,), dtype="f16")
@@ -746,7 +750,7 @@ class CompilationFlowTests(unittest.TestCase):
 
     def test_compiled_kernel_build_does_not_require_movitools(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
-        y = npu.custom(x, source=b"unused source", carrier="Abs", _name="precompiled")
+        y = npu.custom(x, carrier="Abs", _name="precompiled")
         fake = FakeNative()
         prepared = npu.prepare(
             npu.Graph([x], [y], name="precompiled_plan"),
@@ -764,13 +768,29 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(program.graph_blob, b"patched")
         self.assertIn("compiled_elf='<bytes>'", plan.explain())
         self.assertIn(kernel.elf_sha256, plan.explain())
-        self.assertNotIn("unused source", plan.explain())
         with self.assertRaisesRegex(TypeError, "KernelSpec or CompiledKernel"):
             prepared.plan(kernels={y: object()})  # type: ignore[dict-item]
 
+    def test_source_free_custom_node_requires_kernel_override(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, carrier="Abs", _name="compiled_later")
+        fake = FakeNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y], name="missing_kernel_override"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "custom node 'compiled_later' has no C source; provide a KernelSpec or CompiledKernel override",
+        ):
+            prepared.plan()
+        self.assertEqual(fake.shave_calls, [])
+
     def test_mixed_kernel_plan_compiles_only_source_entries(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
-        first = npu.custom(x, source=b"unused", carrier="Abs", _name="first")
+        first = npu.custom(x, carrier="Abs", _name="first")
         second = npu.custom(first, source=b"source to compile", carrier="Sqrt", _name="second")
         fake = FakeNative()
         fake.discovery_groups = (

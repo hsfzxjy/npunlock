@@ -1627,8 +1627,14 @@ class PreparedGraph:
         for node in custom_nodes:
             kernel = overrides.get(node)
             if kernel is None:
+                source = node.metadata.get("_kernel")
+                if source is None:
+                    raise ValueError(
+                        f"custom node {node.name or '<unnamed>'!r} has no C source; "
+                        "provide a KernelSpec or CompiledKernel override in kernels"
+                    )
                 kernel = KernelSpec(
-                    node.metadata.get("_kernel"),  # type: ignore[arg-type]
+                    source,  # type: ignore[arg-type]
                     definitions=default_definitions,
                     linker_script=default_linker_script,
                 )

@@ -293,7 +293,7 @@ def constant(value: object, *, name: str | None = ...) -> Tensor: ...
 def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tensor, ...]: ...
 def custom(
     *inputs: Tensor,
-    source: str | bytes | PathLike[str],
+    source: str | bytes | PathLike[str] | None = ...,
     carrier: str,
     _shape: object | None = ...,
     _dtype: object | None = ...,

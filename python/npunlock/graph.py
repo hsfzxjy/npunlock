@@ -172,7 +172,7 @@ def normalize_numpy_dtype(dtype: object) -> str:
 
 def custom(
     *inputs: Tensor,
-    source: str | bytes | Path,
+    source: str | bytes | Path | None = None,
     carrier: str,
     _shape: object | None = None,
     _dtype: object | None = None,
@@ -181,7 +181,11 @@ def custom(
     _patch_targets: Sequence[object] | None = None,
     **attributes: object,
 ) -> Tensor | tuple[Tensor, ...]:
-    """Create a custom node, inheriting a single output from its first input."""
+    """Create a custom node, inheriting a single output from its first input.
+
+    Source may be omitted when a kernel override will be supplied to the
+    prepared graph's build plan.
+    """
 
     metadata: dict[str, object] = {
         "_kernel": source,

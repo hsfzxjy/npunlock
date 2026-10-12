@@ -120,6 +120,22 @@ compiled separately and installed after the native graph is returned. See
 [Custom kernels](CUSTOM_KERNELS.md) for the bundled NPU3720 include, entry
 function, tensor helpers, and math-link compatibility macro.
 
+When deployment already has a linked kernel, source may be omitted from the
+symbolic node:
+
+```python
+y = npu.custom(x, carrier="Abs", _name="y")
+prepared = npu.prepare(npu.Graph([x], [y]))
+program = prepared.plan(
+    kernels={y: npu.CompiledKernel("kernels/custom.elf")},
+).build()
+```
+
+This is deliberately a plan-time contract. Every source-free custom node must
+have an explicit `KernelSpec` or `CompiledKernel` entry in `kernels`; otherwise
+`plan()` reports the missing symbolic node before invoking MoviTools or
+patching the carrier. Normal source-based `npu.compile()` usage is unchanged.
+
 Normal code can rely on automatic selection only for graphs satisfying the
 documented positional contract. The usual case maps one ACT group to each
 computational node. If the compiler partitions one large custom operation into
@@ -360,7 +376,9 @@ spec = npu.KernelSpec(
 compiled = npu.compile_kernel(spec)
 compiled.save("kernels/custom.elf")
 
-# Use `compiled` immediately, or reconstruct it from the saved file later.
+# The symbolic node does not need placeholder source when this override exists.
+custom_output = npu.custom(x, carrier="Abs", _name="custom_output")
+prepared = npu.prepare(npu.Graph([x], [custom_output]))
 program = prepared.plan(kernels={custom_output: compiled}).build()
 ```
 

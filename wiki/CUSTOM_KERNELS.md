@@ -296,6 +296,20 @@ The returned object can be passed directly to `PreparedGraph.plan()`. A later
 process can reconstruct the same value with
 `npu.CompiledKernel("kernels/custom.elf")`.
 
+A graph intended only for compiled-kernel deployment can omit placeholder C
+source from the symbolic node:
+
+```python
+custom_output = npu.custom(x, carrier="Abs", _name="custom_output")
+prepared = npu.prepare(npu.Graph([x], [custom_output]))
+plan = prepared.plan(kernels={custom_output: compiled})
+```
+
+Every such source-free node requires an explicit `KernelSpec` or
+`CompiledKernel` override. Calling `plan()` without one is rejected before
+MoviTools or graph mutation. Supplying `source=` remains the normal workflow
+for `npu.compile()` and for plans that compile C during the build.
+
 When iterating on kernel C, save the driver-compiled carrier and reviewed
 binding separately with `prepared.export("network.prepared.npunlock",
 plan=plan)`. A later process can call `npu.load_prepared(..., graph=graph)`,
