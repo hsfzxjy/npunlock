@@ -17,6 +17,7 @@ extern "C" {
 typedef enum graphinfer_precision {
   GRAPHINFER_PRECISION_FP32 = 1,
   GRAPHINFER_PRECISION_FP16 = 2,
+  GRAPHINFER_PRECISION_U8 = 4,
   GRAPHINFER_PRECISION_I32 = 5
 } graphinfer_precision;
 

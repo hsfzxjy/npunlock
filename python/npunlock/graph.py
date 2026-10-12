@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import prod
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -143,6 +144,49 @@ def _output_specs(
         if len(order) != len(data.shape) or set(order) != set(range(len(data.shape))):
             raise ValueError("Transpose order must be a permutation of every input axis")
         return (TensorSpec(tuple(data.shape[axis] for axis in order), data.dtype),)
+    if operator == "Reshape":
+        if len(inputs) != 2:
+            raise ValueError("automatic Reshape inference requires data and pattern tensors")
+        data, pattern_tensor = inputs
+        if pattern_tensor.producer.op != "Const":
+            raise ValueError("automatic Reshape inference requires a constant pattern tensor")
+        pattern_array = pattern_tensor.producer.metadata.get("value")
+        if pattern_array is None:
+            raise ValueError("Reshape pattern constant has no value")
+        if getattr(pattern_array, "ndim", None) != 1 or getattr(
+            getattr(pattern_array, "dtype", None), "kind", None
+        ) not in {"i", "u"}:
+            raise ValueError("Reshape pattern must be a one-dimensional integer constant")
+        special_zero = attributes["special_zero"]
+        pattern = tuple(int(value) for value in pattern_array.reshape(-1))  # type: ignore[union-attr]
+        inferred_index: int | None = None
+        output_shape: list[int] = []
+        known_elements = 1
+        for index, dimension in enumerate(pattern):
+            if dimension == -1:
+                if inferred_index is not None:
+                    raise ValueError("Reshape pattern may contain at most one inferred dimension")
+                inferred_index = index
+                output_shape.append(1)
+                continue
+            if dimension == 0:
+                if not special_zero:
+                    raise ValueError("Reshape zero dimensions require special_zero=True")
+                if index >= len(data.shape):
+                    raise ValueError("Reshape special-zero dimension exceeds the input rank")
+                dimension = data.shape[index]
+            elif dimension < 0:
+                raise ValueError("Reshape pattern dimensions must be positive, zero, or -1")
+            output_shape.append(dimension)
+            known_elements *= dimension
+        input_elements = prod(data.shape)
+        if inferred_index is not None:
+            if known_elements == 0 or input_elements % known_elements != 0:
+                raise ValueError("Reshape inferred dimension does not divide the input element count")
+            output_shape[inferred_index] = input_elements // known_elements
+        elif known_elements != input_elements:
+            raise ValueError("Reshape input and output element counts do not match")
+        return (TensorSpec(output_shape, data.dtype),)
     raise ValueError(
         f"operator {operator!r} requires _shape and _dtype, or _outputs; "
         "automatic inference is limited to documented same-spec operators"
@@ -164,6 +208,10 @@ def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tenso
                 raise TypeError(f"MatMul {attribute} must be bool")
     if operator == "Convert" and "destination_type" in attributes:
         attributes["destination_type"] = normalize_dtype(attributes["destination_type"])
+    if operator == "Reshape":
+        special_zero = attributes.setdefault("special_zero", False)
+        if not isinstance(special_zero, bool):
+            raise TypeError("Reshape special_zero must be bool")
     specs = _output_specs(operator, tuple(inputs), metadata, attributes)
     node_name = metadata.get("_name")
     if node_name is not None and not isinstance(node_name, str):

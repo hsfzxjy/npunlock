@@ -626,6 +626,34 @@ compiler/device and operations. They do not establish I32 ACT descriptors,
 integer custom kernels, dynamic shapes, every integer operation, or the other
 integer widths listed by the Level Zero extension.
 
+## 18. U8 graph I/O and static Reshape
+
+On 2026-10-12, graph compiler 8.3 accepted a static U8 input and output on the
+tested NPU3720. Level Zero reported device precision `0x04` (`UINT8`), and the
+bounded allocation path sized those arguments as one-byte elements. As with
+I32, this is ordinary graph execution and does not extend the custom ACT
+descriptor contract.
+
+Two device checks used the boundary values `0`, `1`, `127`, `128`, `254`, and
+`255`:
+
+- a `[2,3] -> [3,2]` Reshape matched NumPy exactly through both copied and
+  explicitly shared input/output buffers; and
+- a two-output graph returned the reshaped U8 tensor and its FP32 conversion,
+  with every element matching the corresponding NumPy oracle.
+
+The first carrier was 23,416 bytes with SHA-256
+`6d2bb701ff5d7c98209b35223ebcbbfffab90872e24c1c67f8e62143b41d9a4f`.
+The frontend now infers a static Reshape contract only from a one-dimensional
+integer constant pattern. It validates total elements, one optional `-1`, and
+explicit `special_zero` semantics. Dynamic patterns still require unsupported
+dynamic graph contracts.
+
+The runnable proof is
+[`example_u8_reshape.py`](../examples/example_u8_reshape.py). These results do
+not establish U8 ACT descriptors, U8 custom kernels, arbitrary quantized
+networks, every U8 operation, or dynamic shapes.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

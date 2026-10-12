@@ -416,3 +416,12 @@ def Transpose(
     _dtype: object = ...,
     _name: str | None = ...,
 ) -> Tensor: ...
+def Reshape(
+    data: Tensor,
+    pattern: Tensor,
+    *,
+    special_zero: bool = ...,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...

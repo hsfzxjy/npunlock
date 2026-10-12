@@ -62,7 +62,10 @@ underscore keyword arguments   npunlock metadata
 - `Concat` accepts equal-rank, equal-dtype inputs, checks every non-axis
   dimension, and sums the selected axis;
 - `Transpose` infers its shape when its order input is a one-dimensional
-  integer constant containing a complete axis permutation; and
+  integer constant containing a complete axis permutation;
+- `Reshape` accepts a one-dimensional integer constant pattern, checks the
+  element count, supports one `-1`, and implements explicit `special_zero`;
+  and
 - `Convert` preserves shape and uses its normalized `destination_type` as the
   output dtype.
 
@@ -599,9 +602,10 @@ result = outputs["y"]
 
 Input names must match exactly. Shape and dtype must match the symbolic graph;
 noncontiguous arrays are copied to contiguous storage. The current execution
-boundary supports static FP16, FP32, and I32 graph inputs and outputs with at
-most five dimensions. I32 is an ordinary graph-execution feature; it does not
-extend the custom ACT-kernel ABI beyond its documented FP16/FP32 contracts.
+boundary supports static FP16, FP32, U8, and I32 graph inputs and outputs with
+at most five dimensions. U8 and I32 are ordinary graph-execution features;
+they do not extend the custom ACT-kernel ABI beyond its documented FP16/FP32
+contracts.
 
 Returned arrays own their data. Native buffers are copied before the matching
 C release function is called. The first call lazily creates an execution
@@ -692,6 +696,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [I32 structural graph](../examples/example_i32_structural.py)
+- [U8 Reshape and conversion graph](../examples/example_u8_reshape.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision custom branches with prepared binding](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)

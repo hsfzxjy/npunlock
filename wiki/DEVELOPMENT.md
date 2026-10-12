@@ -57,9 +57,9 @@ host/NPU shared allocations so NumPy can view the same memory used by the NPU.
 Sessions serialize executions and use finite fence waits, but neither mode can
 provide Job Object recovery from a driver call that never returns.
 
-Static graph arguments may be FP16, FP32, or I32. This graph-execution precision
-list is separate from `patchblob`'s narrower validated custom ACT-kernel
-contracts.
+Static graph arguments may be FP16, FP32, U8, or I32. This graph-execution
+precision list is separate from `patchblob`'s narrower validated custom
+ACT-kernel contracts.
 
 Protocol responses, stdout, and stderr are independent byte streams. The C
 results expose both captured process streams. `npurun` writes both verbatim
