@@ -276,6 +276,24 @@ def _output_specs(
         return tuple(
             TensorSpec(data.shape[:axis] + (length,) + data.shape[axis + 1 :], data.dtype) for length in lengths
         )
+    if operator == "Pad":
+        if len(inputs) != 4:
+            raise ValueError("automatic Pad inference requires data, pads_begin, pads_end, and pad_value tensors")
+        data, pads_begin_tensor, pads_end_tensor, pad_value = inputs
+        if attributes["mode"] != "constant":
+            raise ValueError("automatic Pad inference supports only constant mode")
+        pads_begin = _constant_integer_vector(pads_begin_tensor, "Pad", "pads_begin")
+        pads_end = _constant_integer_vector(pads_end_tensor, "Pad", "pads_end")
+        if len(pads_begin) != len(data.shape) or len(pads_end) != len(data.shape):
+            raise ValueError("Pad begin/end vectors must contain one value per data axis")
+        if any(value < 0 for value in pads_begin + pads_end):
+            raise ValueError("automatic Pad inference supports only nonnegative pads")
+        if pad_value.producer.op != "Const" or pad_value.shape:
+            raise ValueError("automatic Pad inference requires a scalar constant pad_value")
+        if pad_value.dtype != data.dtype:
+            raise ValueError("Pad data and pad_value dtypes must match")
+        output_shape = tuple(dimension + begin + end for dimension, begin, end in zip(data.shape, pads_begin, pads_end))
+        return (TensorSpec(output_shape, data.dtype),)
     if operator == "Slice":
         if len(inputs) != 5:
             raise ValueError("automatic Slice inference requires data, starts, stops, steps, and axes tensors")
@@ -346,6 +364,10 @@ def op(name: str, *inputs: Tensor, **attributes: object) -> Tensor | tuple[Tenso
         batch_dims = attributes.setdefault("batch_dims", 0)
         if isinstance(batch_dims, bool) or not isinstance(batch_dims, int):
             raise TypeError("Gather batch_dims must be an integer")
+    if operator == "Pad":
+        mode = attributes.setdefault("mode", "constant")
+        if not isinstance(mode, str):
+            raise TypeError("Pad mode must be a string")
     specs = _output_specs(operator, tuple(inputs), metadata, attributes)
     node_name = metadata.get("_name")
     if node_name is not None and not isinstance(node_name, str):

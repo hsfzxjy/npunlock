@@ -820,6 +820,24 @@ not establish dynamic bounds, zero or negative steps, empty outputs, arbitrary
 strides/layouts, non-U8 execution, or a general mapping from operator names to
 IR opset versions.
 
+## 26. Static constant-mode Pad
+
+On 2026-10-14, graph compiler 8.3 accepted a U8 `[2,3]` input padded to
+`[4,7]` by begin pads `[1,2]`, end pads `[1,2]`, and the scalar U8 value `255`.
+Copied and explicitly shared execution both matched `numpy.pad` exactly,
+including every filled border element.
+
+The carrier was 25,224 bytes with SHA-256
+`f7ca31d4663395dc6a69178ceff0272abb58387464582fc1f206f1d0bff0c368`.
+The frontend now infers this contract only when both pad vectors are constant,
+nonnegative, and contain one value per input axis; the fill must be a constant
+scalar with the same dtype as the data. The runnable proof is
+[`example_u8_pad.py`](../examples/example_u8_pad.py).
+
+This result does not establish dynamic padding, negative cropping, reflect or
+edge modes, non-scalar fill values, non-U8 execution, or custom ACT-kernel
+padding.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

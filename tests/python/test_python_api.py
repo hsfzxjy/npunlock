@@ -274,6 +274,29 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "zero-sized dimensions"):
             npu.Slice(data, vector, vector, npu.constant(np.asarray([1], dtype=np.int64)), vector)
 
+    def test_static_pad_inference_and_rejections(self) -> None:
+        data = npu.input("data", shape=(2, 3), dtype="u8")
+        pads_begin = npu.constant(np.asarray([1, 2], dtype=np.int64))
+        pads_end = npu.constant(np.asarray([1, 2], dtype=np.int64))
+        pad_value = npu.constant(np.asarray(255, dtype=np.uint8))
+        padded = npu.Pad(data, pads_begin, pads_end, pad_value)
+
+        self.assertEqual(padded.spec, npu.TensorSpec((4, 7), "u8"))
+        self.assertEqual(padded.producer.attrs, {"mode": "constant"})
+
+        with self.assertRaisesRegex(ValueError, "only constant mode"):
+            npu.Pad(data, pads_begin, pads_end, pad_value, mode="reflect")
+        with self.assertRaisesRegex(ValueError, "one value per data axis"):
+            npu.Pad(data, npu.constant(np.asarray([1])), pads_end, pad_value)
+        with self.assertRaisesRegex(ValueError, "only nonnegative pads"):
+            npu.Pad(data, npu.constant(np.asarray([-1, 0])), pads_end, pad_value)
+        with self.assertRaisesRegex(ValueError, "scalar constant pad_value"):
+            npu.Pad(data, pads_begin, pads_end, npu.input("fill", shape=(), dtype="u8"))
+        with self.assertRaisesRegex(ValueError, "dtypes must match"):
+            npu.Pad(data, pads_begin, pads_end, npu.constant(np.asarray(1, dtype=np.int32)))
+        with self.assertRaisesRegex(TypeError, "mode must be a string"):
+            npu.Pad(data, pads_begin, pads_end, pad_value, mode=1)
+
     def test_structural_operator_attributes_are_serialized(self) -> None:
         left = npu.input("left", shape=(1, 2), dtype="i32")
         right = npu.input("right", shape=(1, 2), dtype="i32")

@@ -72,6 +72,8 @@ underscore keyword arguments   npunlock metadata
 - `VariadicSplit` accepts a scalar integer constant axis and one-dimensional
   constant lengths, including at most one `-1` remainder, and returns one
   contract per positive unequal part;
+- `Pad` supports constant mode with nonnegative one-dimensional begin/end
+  constants and a scalar constant fill value matching the data dtype;
 - `Slice` accepts one-dimensional constant starts, stops, positive steps, and
   unique axes; it normalizes negative axes and Python-style negative bounds;
 - `Gather` accepts integer indices and a scalar integer constant axis, infers
@@ -730,6 +732,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [U8 Gather with I64 indices](../examples/example_u8_gather_i64.py)
 - [U8 unequal VariadicSplit graph](../examples/example_u8_variadic_split.py)
 - [U8 multi-axis Slice graph](../examples/example_u8_slice.py)
+- [U8 constant-mode Pad graph](../examples/example_u8_pad.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Mixed-precision custom branches with prepared binding](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)

@@ -488,3 +488,14 @@ def Slice(
     _dtype: object = ...,
     _name: str | None = ...,
 ) -> Tensor: ...
+def Pad(
+    data: Tensor,
+    pads_begin: Tensor,
+    pads_end: Tensor,
+    pad_value: Tensor,
+    *,
+    mode: str = ...,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...

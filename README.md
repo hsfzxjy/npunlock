@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-14:** Static positive-step `Slice` now runs through copied and shared buffers, including multi-axis striding with exact U8 results. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#25-static-positive-step-slice).
+> **Latest breakthrough — 2026-10-14:** Static constant-mode `Pad` now runs through copied and shared buffers with exact U8 fill values. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#26-static-constant-mode-pad).
 
 ## Quick example
 
@@ -101,7 +101,8 @@ The [I64-index Gather example](examples/example_u8_gather_i64.py) validates
 The [unequal U8 split example](examples/example_u8_variadic_split.py) binds
 three differently shaped outputs from one `VariadicSplit` node. The
 [U8 Slice example](examples/example_u8_slice.py) selects and strides two axes
-using constant bounds.
+using constant bounds, while the [U8 Pad example](examples/example_u8_pad.py)
+adds constant borders with an exact scalar fill value.
 
 ## Why npunlock?
 
@@ -186,7 +187,7 @@ reference.
 - connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
 - ordinary static graph execution with FP16, FP32, U8, I8, U16, I16, U32, or I32 inputs and outputs
 - caller-provided I64 index inputs for validated `Gather` graphs
-- inferred contracts for `Concat`, `Split`, `VariadicSplit`, positive-step `Slice`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
+- inferred contracts for `Concat`, `Split`, `VariadicSplit`, constant-mode `Pad`, positive-step `Slice`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
 - nonlinear math such as GELU and `tanhf`
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools
