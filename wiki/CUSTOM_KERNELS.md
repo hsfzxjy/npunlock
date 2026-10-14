@@ -36,6 +36,7 @@ The main helpers are:
 - `act_abi_load_le_u32()` for raw little-endian fields;
 - `ACT_ABI_LOAD_INVOCATION32_OR_RETURN()` for guarded rank,
   dimensions, and element-count loading;
+- `act_abi_dimension()` for a bounds-checked invocation dimension lookup;
 - `ACT_ABI_INPUT_PTR32()` and `ACT_ABI_OUTPUT_PTR32()` for tensor addresses;
   and
 - `MLIBM_DEFINE_LINK_COMPAT` as the opt-in switch for link-compatibility
@@ -221,6 +222,18 @@ counts such as `per-invocation=(8,8)->8`. The same values are available as
 counts vary across the group's invocations and must be inspected target by
 target.
 
+One five-input FP16 `FakeQuantize` carrier is also validated. Its parameter
+records contain inputs 0 through 4 followed by output record 5. Four observed
+invocations each reported `(8,8,8,8,8) -> 8`, so the entry uses:
+
+```c
+const __fp16 *input_4 = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 4u);
+__fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 5u);
+```
+
+All five inputs were independently host-bound and semantically distinguished.
+This is one validated carrier contract, not support for arbitrary arity.
+
 Automatic positional mapping normally maps one computational node to one ACT
 group. A large custom operation may use several consecutive compatible groups
 when their targets uniquely and exactly cover its declared output tensor. See
@@ -349,6 +362,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
+- [Five-input custom kernel](../examples/example_five_input_custom.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 - [Connected mixed-precision custom/DPU composition](../examples/example_connected_mixed_precision.py)

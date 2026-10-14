@@ -725,6 +725,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [FP16 custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
+- [FP16 five-input custom kernel](../examples/example_five_input_custom.py)
 - [I32 structural graph](../examples/example_i32_structural.py)
 - [U8 Reshape and conversion graph](../examples/example_u8_reshape.py)
 - [I8 Squeeze/Unsqueeze and conversion graph](../examples/example_i8_axes.py)

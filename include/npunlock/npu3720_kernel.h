@@ -49,7 +49,7 @@ ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
   }
   for (dimension_index = 0; dimension_index < rank; ++dimension_index) {
     unsigned dimension = act_abi_load_le_u32(dims32 + dimension_index * 4u);
-    if (dimension == 0) {
+    if (dimension == 0 || count > ~0u / dimension) {
       return 0;
     }
     count *= dimension;
@@ -59,6 +59,14 @@ ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
   invocation->rank = rank;
   invocation->element_count = count;
   return 1;
+}
+
+ACT_ABI_ALWAYS_INLINE unsigned act_abi_dimension(const act_abi_invocation *invocation,
+                                                 unsigned axis) {
+  if (invocation == 0 || invocation->dims32 == 0 || axis >= invocation->rank) {
+    return 0;
+  }
+  return act_abi_load_le_u32(invocation->dims32 + axis * 4u);
 }
 
 #define ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layer_params32, invocation)                            \

@@ -853,21 +853,50 @@ A custom entry computing `half(data[i] + bias[i])` matched NumPy's row
 broadcast exactly through copied and explicitly shared inputs and outputs. The
 64,808-byte unpatched carrier had SHA-256
 `87fd03faec4e4ee1bf97bd2e7c77b44286082d23c7c81d98c24b47ef1a1e5ebc`.
-The linked 844-byte SHAVE ELF had SHA-256
-`9aa979ebf4cfb95a4ba00cb36439f0bcb43374f36ee89d02ec7546be502ef081`,
-and the 65,320-byte patched graph had SHA-256
-`4454f3f14f2f77d1d01c0349a81a7337cfcbf583e1874e321e34945018f626d2`.
+With the current overflow-checked target header, the linked 924-byte SHAVE ELF
+had SHA-256
+`d78d5a472a887579ad868ef3e72b061996d74e6a269c451fcfe0aa433530e262`,
+and the 65,400-byte patched graph had SHA-256
+`78f788d42e8c748b55231e28631ab76c235db4430e6f0697907965fa36db069f`.
 
 `ActGroup` and `PreparedGraph.explain()` now expose stable per-invocation input
-and output element counts so kernel authors can distinguish a materialized
-dense operand from the existing scalar-second-input contract before patching.
+and output element counts so kernel authors can distinguish a complete dense
+operand descriptor from the existing scalar-second-input contract before
+patching.
 The runnable proof is
 [`example_broadcast_custom.py`](../examples/example_broadcast_custom.py).
 
 This establishes only this FP16 carrier, shapes, compiler version, and dense
-materialization. It does not establish arbitrary broadcasting, per-channel
-layouts, other ranks/dtypes, or permission to read beyond any invocation's
-advertised descriptor span.
+descriptor presentation. It does not establish arbitrary broadcasting,
+per-channel layouts, other ranks/dtypes, or permission to read beyond any
+invocation's advertised descriptor span.
+
+## 28. Five-input custom kernel
+
+On 2026-10-14, graph compiler 8.3 produced a patchable FP16 `FakeQuantize`
+carrier from five independently bound `[1,16]` graph inputs. Discovery found
+one group with four invocations. Each invocation contained five consecutive
+dense eight-element input descriptors followed by one disjoint eight-element
+output descriptor: `(8,8,8,8,8) -> 8`.
+
+A custom entry read records 0 through 4 and wrote record 5. It weighted the
+five operands by distinct powers of two so every input affected independently
+distinguishable output bits. Copied and explicitly shared execution both
+matched the exact NumPy oracle for all 16 graph outputs.
+
+The unpatched carrier was 95,080 bytes with SHA-256
+`abf9e903b79ca5fb3e4cc3f692b16d8d1ef0150c6fd4c314183b2fe06b15fc70`.
+The linked 1,020-byte SHAVE ELF had SHA-256
+`eca5e4be08aad433fac48ba3ec23966ad3aa8b898b3bd7bcff23bfa527934c25`,
+and the 96,104-byte patched graph had SHA-256
+`1c767cdc3e5dff8360e8c6a373662627e31bd38fb5fb9508b93187d8e508e016`.
+The runnable proof is
+[`example_five_input_custom.py`](../examples/example_five_input_custom.py).
+
+This establishes one static dense FP16 five-input layout. It does not establish
+arbitrary arity, unequal five-input spans, other dtypes, `FakeQuantize`
+semantics after patching, or a general rule that every high-arity graph
+operation becomes an ACT carrier.
 
 ## What remains deliberately unresolved
 

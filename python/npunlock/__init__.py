@@ -289,13 +289,12 @@ class ActGroup:
             if isinstance(target, PatchTargetV2):
                 values.add(tuple(tensor.element_count for tensor in target.tensors if tensor.role == "input"))
             else:
-                if target.input_count == 1:
-                    values.add((target.element_count,))
-                elif target.input_count == 2:
-                    second_count = 1 if target.contract_flags & 0x40 else target.element_count
-                    values.add((target.element_count, second_count))
-                else:
+                if not 1 <= target.input_count <= 8:
                     return None
+                counts = (target.element_count,) * target.input_count
+                if target.input_count == 2 and target.contract_flags & 0x40:
+                    counts = (target.element_count, 1)
+                values.add(counts)
         return next(iter(values)) if len(values) == 1 else None
 
     @property

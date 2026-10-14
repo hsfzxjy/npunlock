@@ -150,6 +150,8 @@ Kernel source may start with the virtual include
 copy before compilation. Its target-scoped helpers implement the descriptor
 loads and guarded element-count calculation described below; they are a
 convenience over this observed contract, not evidence of a broader ABI.
+`act_abi_dimension()` returns zero for an invalid axis, and invocation loading
+rejects a dimension product that would overflow its 32-bit element count.
 
 ## Reading tensor descriptors
 
@@ -185,14 +187,25 @@ binary kernel:
   input A at layerParams + 0x00
   input B at layerParams + 0x28
   output  at layerParams + 0x50
+
+validated five-input kernel:
+  inputs 0..4 at layerParams + index * 0x28
+  output      at layerParams + 0xc8
 ```
 
 Both internal operands and two independently bound host inputs have been
 validated for a narrow static dense FP16 binary carrier. A separate
 experimental FP16/FP32 carrier presented eight-element data and output chunks
 beside a one-element scalar input; reading `input_b[0]` for every output
-matched the host oracle. This establishes one scalar-broadcast contract, not
-general broadcasting, unequal shapes, or arbitrary input counts.
+matched the host oracle. A separate `[4,8]` plus `[1,8]` carrier presented the
+row bias as a dense eight-element operand to each invocation; this establishes
+the descriptor view, not physical copying of the bias.
+
+One `FakeQuantize` carrier exposed five independently bound, equal-sized FP16
+input records followed by one output record. Four invocations each advertised
+`(8,8,8,8,8) -> 8`, and a custom kernel that distinguished all operands
+matched its host oracle. This establishes one five-input layout, not arbitrary
+input counts or general `FakeQuantize` semantics.
 
 ## Invocation-local execution
 
@@ -206,6 +219,7 @@ Confirmed FP16 kernels include:
 - one code image selected by several graph ranges;
 - FP32 intermediate arithmetic with FP16 output;
 - two-input arithmetic with independently bound host inputs;
+- five-input arithmetic with independently bound host inputs;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 
@@ -261,8 +275,9 @@ Do not infer support for:
 - multiple executable images or alternate entry addresses;
 - high pointer halves;
 - dynamic shapes, non-dense layouts, or arbitrary precisions;
-- general broadcasting, unequal binary shapes beyond the tested scalar case,
-  or arbitrary arity;
+- general broadcasting or unequal binary shapes beyond the tested scalar and
+  descriptor-level row-broadcast cases;
+- arbitrary arity beyond the validated unary, binary, and five-input layouts;
 - graph-global neighborhoods or cross-chunk halos;
 - large stacks, exceptions, or a C++ runtime; or
 - SHAVE targets other than `3720xx`.

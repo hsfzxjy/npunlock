@@ -33,11 +33,12 @@ class SymbolicTests(unittest.TestCase):
             ),
         )
         scalar = npu.ActGroup(1, (npu.PatchTarget(2, 2, 2, 8, 16, 0x5F),))
+        five_input = npu.ActGroup(2, (npu.PatchTarget(3, 3, 5, 8, 16, 0x1F),))
         varying = npu.ActGroup(
-            2,
+            3,
             (
-                npu.PatchTarget(3, 3, 1, 8, 16, 0x1F),
-                npu.PatchTarget(4, 4, 1, 16, 32, 0x1F),
+                npu.PatchTarget(4, 4, 1, 8, 16, 0x1F),
+                npu.PatchTarget(5, 5, 1, 16, 32, 0x1F),
             ),
         )
 
@@ -45,6 +46,7 @@ class SymbolicTests(unittest.TestCase):
         self.assertEqual(dense.per_invocation_output_element_count, 8)
         self.assertEqual(scalar.per_invocation_input_element_counts, (8, 1))
         self.assertEqual(scalar.per_invocation_output_element_count, 8)
+        self.assertEqual(five_input.per_invocation_input_element_counts, (8, 8, 8, 8, 8))
         self.assertIsNone(varying.per_invocation_input_element_counts)
         self.assertIsNone(varying.per_invocation_output_element_count)
 
