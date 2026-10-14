@@ -220,6 +220,8 @@ Confirmed FP16 kernels include:
 - FP32 intermediate arithmetic with FP16 output;
 - two-input arithmetic with independently bound host inputs;
 - five-input arithmetic with independently bound host inputs;
+- a distinct same-file non-inlined helper with a data-dependent branch;
+- a source-level 128-byte volatile local scratch array;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 
@@ -227,9 +229,12 @@ The last result is a lower bound for local reach, not permission to cross an
 invocation boundary. Neighbor-based kernels must define their boundary
 behavior within each chunk.
 
-A small generated stack frame has executed successfully. Larger stack use,
-function calls, recursion, callee-save rules, and general runtime-library
-behavior remain outside the supported contract.
+A structured kernel with a distinct 50-byte local helper symbol, branching,
+invocation-local neighbor reads, and `volatile float scratch[32]` has executed
+successfully. Its final ELF had no relocations or undefined symbols. This
+establishes one same-file call and bounded source-level local storage; larger
+stack use, recursion, function pointers, the general callee-save convention,
+and arbitrary runtime-library behavior remain outside the supported contract.
 
 ## How the code image is installed
 

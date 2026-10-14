@@ -88,7 +88,9 @@ The linked custom kernel must have:
 
 Mutable globals, unresolved fixups, nonempty kernel data, multiple load
 images, arbitrary helper runtimes, C++ exceptions, and large or recursive
-stack use are unsupported.
+stack use are unsupported. A bounded same-file helper call, branching, and a
+source-level 128-byte local scratch array are execution-tested; this does not
+establish a general calling convention or stack-size limit.
 
 `mlibm.a` math functions work only when section garbage collection leaves a
 self-contained code image and no data dependency.

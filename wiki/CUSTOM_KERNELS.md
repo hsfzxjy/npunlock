@@ -169,6 +169,27 @@ Operations requiring neighboring values must define behavior at each chunk
 boundary. Graph-global coordinates and cross-chunk halos are not available in
 the current contract.
 
+## Control flow, helper calls, and local storage
+
+A custom entry does not have to be one flat elementwise loop. One validated
+FP16 kernel uses all of the following together:
+
+- a same-file `static` helper marked `__attribute__((noinline))`;
+- a branch inside that helper;
+- next-element reads clamped at each invocation boundary; and
+- a source-level `volatile float scratch[32]` local array.
+
+The helper remained a distinct function in the linked ELF, the ELF contained
+no unresolved symbols or relocations, and copied and shared execution both
+matched an exact NumPy oracle. See the complete
+[structured-kernel example](../examples/example_complex_kernel.py).
+
+This result validates bounded control flow, one internal helper, and that
+specific 128-byte source-level local array. It does not establish a general
+stack limit or calling convention. Keep helper definitions in the same source
+buffer, bound every local allocation, and treat recursion, function pointers,
+cross-invocation access, and large stack objects as unsupported.
+
 ## Carrier selection
 
 Python custom nodes name a carrier explicitly:
@@ -363,6 +384,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
+- [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 - [Connected mixed-precision custom/DPU composition](../examples/example_connected_mixed_precision.py)
