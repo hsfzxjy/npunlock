@@ -477,3 +477,14 @@ def VariadicSplit(
     _outputs: Sequence[TensorSpec] | None = ...,
     _name: str | None = ...,
 ) -> tuple[Tensor, ...]: ...
+def Slice(
+    data: Tensor,
+    starts: Tensor,
+    stops: Tensor,
+    steps: Tensor,
+    axes: Tensor,
+    *,
+    _shape: object = ...,
+    _dtype: object = ...,
+    _name: str | None = ...,
+) -> Tensor: ...

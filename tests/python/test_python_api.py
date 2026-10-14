@@ -222,6 +222,58 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inferred length must be positive"):
             npu.VariadicSplit(data, axis, npu.constant(np.asarray([7, -1])))
 
+    def test_static_slice_inference_and_rejections(self) -> None:
+        data = npu.input("data", shape=(3, 8), dtype="u8")
+        sliced = npu.Slice(
+            data,
+            npu.constant(np.asarray([1, 1], dtype=np.int64)),
+            npu.constant(np.asarray([3, 8], dtype=np.int64)),
+            npu.constant(np.asarray([1, 2], dtype=np.int64)),
+            npu.constant(np.asarray([0, -1], dtype=np.int64)),
+        )
+        clipped = npu.Slice(
+            data,
+            npu.constant(np.asarray([-3], dtype=np.int64)),
+            npu.constant(np.asarray([-1], dtype=np.int64)),
+            npu.constant(np.asarray([1], dtype=np.int64)),
+            npu.constant(np.asarray([1], dtype=np.int64)),
+        )
+
+        self.assertEqual(sliced.spec, npu.TensorSpec((2, 4), "u8"))
+        self.assertEqual(clipped.spec, npu.TensorSpec((3, 2), "u8"))
+
+        vector = npu.constant(np.asarray([0], dtype=np.int64))
+        with self.assertRaisesRegex(ValueError, "constant starts"):
+            npu.Slice(data, npu.input("starts", shape=(1,), dtype="i64"), vector, vector, vector)
+        with self.assertRaisesRegex(ValueError, "same nonzero length"):
+            npu.Slice(
+                data,
+                npu.constant(np.asarray([0, 0], dtype=np.int64)),
+                vector,
+                vector,
+                vector,
+            )
+        with self.assertRaisesRegex(ValueError, "only positive steps"):
+            npu.Slice(data, vector, vector, npu.constant(np.asarray([0], dtype=np.int64)), vector)
+        with self.assertRaisesRegex(ValueError, "axes must be unique"):
+            npu.Slice(
+                data,
+                npu.constant(np.asarray([0, 0], dtype=np.int64)),
+                npu.constant(np.asarray([1, 1], dtype=np.int64)),
+                npu.constant(np.asarray([1, 1], dtype=np.int64)),
+                npu.constant(np.asarray([0, 0], dtype=np.int64)),
+            )
+        with self.assertRaisesRegex(ValueError, "axis is out of range"):
+            npu.Slice(
+                data,
+                vector,
+                npu.constant(np.asarray([1], dtype=np.int64)),
+                npu.constant(np.asarray([1], dtype=np.int64)),
+                npu.constant(np.asarray([2])),
+            )
+        with self.assertRaisesRegex(ValueError, "zero-sized dimensions"):
+            npu.Slice(data, vector, vector, npu.constant(np.asarray([1], dtype=np.int64)), vector)
+
     def test_structural_operator_attributes_are_serialized(self) -> None:
         left = npu.input("left", shape=(1, 2), dtype="i32")
         right = npu.input("right", shape=(1, 2), dtype="i32")
@@ -238,6 +290,20 @@ class SymbolicTests(unittest.TestCase):
         self.assertEqual(concat_data.attrib, {"axis": "0"})
         self.assertEqual(convert_data.attrib, {"destination_type": "f32"})
         self.assertEqual(gather_data.attrib, {"batch_dims": "0"})
+
+    def test_slice_uses_its_required_ir_opset(self) -> None:
+        data = npu.input("data", shape=(3, 8), dtype="u8")
+        sliced = npu.Slice(
+            data,
+            npu.constant(np.asarray([1], dtype=np.int64)),
+            npu.constant(np.asarray([3], dtype=np.int64)),
+            npu.constant(np.asarray([1], dtype=np.int64)),
+            npu.constant(np.asarray([0], dtype=np.int64)),
+        )
+        root = ET.fromstring(npu.serialize_ir(npu.Graph([data], [sliced])).xml)
+
+        self.assertEqual(root.find("./layers/layer[@type='Slice']").attrib["version"], "opset8")
+        self.assertEqual(root.find("./layers/layer[@type='Parameter']").attrib["version"], "opset1")
 
     def test_missing_output_contract_is_rejected(self) -> None:
         x = npu.input("x", shape=(1,), dtype="f16")

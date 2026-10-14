@@ -799,6 +799,27 @@ The runnable proof is
 This does not establish dynamic split lengths, zero-length outputs, multiple
 inferred lengths, arbitrary output counts, or non-U8 compiler support.
 
+## 25. Static positive-step Slice
+
+On 2026-10-14, graph compiler 8.3 accepted a U8 `[3,8]` input sliced over two
+axes with constant starts `[1,1]`, stops `[3,8]`, steps `[1,2]`, and axes
+`[0,1]`. The resulting `[2,4]` output matched NumPy exactly through both copied
+and explicitly shared execution.
+
+The first probe was rejected because the frontend serialized every ordinary
+operation as `opset1`. `Slice` requires its later IR declaration; emitting it
+as `opset8` produced a 23,416-byte carrier with SHA-256
+`ac31959684192f3d5c07b923f2b4b615cc467a3f3662d3e03c1808ff686f00c4`.
+This is a frontend serialization rule, not a native graph ABI change.
+
+The frontend now infers static Slice contracts only from one-dimensional
+integer constants. It accepts unique in-range axes and positive steps, and
+normalizes negative axes and Python-style negative bounds. The runnable proof
+is [`example_u8_slice.py`](../examples/example_u8_slice.py). This result does
+not establish dynamic bounds, zero or negative steps, empty outputs, arbitrary
+strides/layouts, non-U8 execution, or a general mapping from operator names to
+IR opset versions.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

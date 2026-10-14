@@ -276,6 +276,32 @@ def _output_specs(
         return tuple(
             TensorSpec(data.shape[:axis] + (length,) + data.shape[axis + 1 :], data.dtype) for length in lengths
         )
+    if operator == "Slice":
+        if len(inputs) != 5:
+            raise ValueError("automatic Slice inference requires data, starts, stops, steps, and axes tensors")
+        data, starts_tensor, stops_tensor, steps_tensor, axes_tensor = inputs
+        starts = _constant_integer_vector(starts_tensor, "Slice", "starts")
+        stops = _constant_integer_vector(stops_tensor, "Slice", "stops")
+        steps = _constant_integer_vector(steps_tensor, "Slice", "steps")
+        axes = _constant_integer_vector(axes_tensor, "Slice", "axes")
+        if not starts or not (len(starts) == len(stops) == len(steps) == len(axes)):
+            raise ValueError("Slice starts, stops, steps, and axes must have the same nonzero length")
+        if any(step <= 0 for step in steps):
+            raise ValueError("automatic Slice inference supports only positive steps")
+        rank = len(data.shape)
+        normalized_axes = tuple(axis + rank if axis < 0 else axis for axis in axes)
+        if any(axis < 0 or axis >= rank for axis in normalized_axes):
+            raise ValueError("Slice axis is out of range")
+        if len(set(normalized_axes)) != len(normalized_axes):
+            raise ValueError("Slice axes must be unique")
+        output_shape = list(data.shape)
+        for start, stop, step, axis in zip(starts, stops, steps, normalized_axes):
+            normalized_start, normalized_stop, normalized_step = slice(start, stop, step).indices(data.shape[axis])
+            dimension = len(range(normalized_start, normalized_stop, normalized_step))
+            if dimension == 0:
+                raise ValueError("automatic Slice inference does not produce zero-sized dimensions")
+            output_shape[axis] = dimension
+        return (TensorSpec(output_shape, data.dtype),)
     if operator == "Gather":
         if len(inputs) != 3:
             raise ValueError("automatic Gather inference requires data, indices, and axis tensors")

@@ -21,6 +21,10 @@ _PRECISIONS = {
     "u64": "U64",
 }
 
+_OPSET_VERSIONS = {
+    "Slice": "opset8",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SerializedIR:
@@ -73,7 +77,12 @@ def serialize_ir(graph: Graph) -> SerializedIR:
         layer = ET.SubElement(
             layers,
             "layer",
-            {"id": str(node_id), "name": name, "type": layer_type, "version": "opset1"},
+            {
+                "id": str(node_id),
+                "name": name,
+                "type": layer_type,
+                "version": _OPSET_VERSIONS.get(layer_type, "opset1"),
+            },
         )
         if node.op == "Parameter":
             spec = node.output_specs[0]
