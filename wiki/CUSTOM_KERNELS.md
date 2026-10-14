@@ -205,6 +205,26 @@ the final `.text` image. On the tested toolchain that combined section is
 marked writable and executable, so “constant” describes the C contract rather
 than an ELF memory-protection guarantee.
 
+## Invocation-local reductions
+
+Multiple passes and reductions over the current invocation are also usable. A
+validated softmax-like kernel:
+
+1. finds the maximum FP16 input value as an FP32 scalar;
+2. evaluates `expf(input[i] - maximum)` into local scratch;
+3. accumulates the FP32 exponential sum; and
+4. writes normalized FP16 results in a third pass.
+
+For the tested logical 64-element tensor, the carrier exposed 32-element
+invocation chunks. The kernel therefore computes two independent normalized
+chunks; it is not graph-global or axis-wide softmax. Copied and shared results
+matched a NumPy oracle with `rtol=5e-3` and `atol=5e-4`. See the
+[invocation-local softmax example](../examples/example_invocation_softmax.py).
+
+Linking `expf` produced a 53,796-byte ELF because retained non-loadable debug
+sections dominate the file. The executable `.text` load image was 976 bytes.
+`patchblob` installs the validated load image, not the complete ELF container.
+
 ## Carrier selection
 
 Python custom nodes name a carrier explicitly:
@@ -282,10 +302,11 @@ archive with section garbage collection so only reachable code remains.
 
 The tested MoviTools compiler and `mlibm.a` combination allows most
 conventional `libm` functions to be called by their normal C names without
-including `<math.h>`. The GELU examples call `tanhf` this way. There is no
-complete supported-symbol catalog, so a host platform's `libm` is not the
-contract: the function must be accepted by MoviTools, resolve from `mlibm.a`,
-and produce a kernel ELF that passes the restrictions below.
+including `<math.h>`. The GELU examples call `tanhf` this way, and the
+invocation-local softmax example calls `expf`. There is no complete
+supported-symbol catalog, so a host platform's `libm` is not the contract: the
+function must be accepted by MoviTools, resolve from `mlibm.a`, and produce a
+kernel ELF that passes the restrictions below.
 
 The [observed `mlibm.a` symbol inventory](../ABI/MLIBM_SYMBOLS.md) lists the
 names that may be referenced. The archive does not determine their C
@@ -404,6 +425,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
 - [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
 - [Five-tap window kernel with nested helpers and an embedded coefficient table](../examples/example_window_kernel.py)
+- [Invocation-local softmax with max/sum reductions and `expf`](../examples/example_invocation_softmax.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 - [Connected mixed-precision custom/DPU composition](../examples/example_connected_mixed_precision.py)

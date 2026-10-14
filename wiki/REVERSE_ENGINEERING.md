@@ -898,6 +898,39 @@ arbitrary arity, unequal five-input spans, other dtypes, `FakeQuantize`
 semantics after patching, or a general rule that every high-arity graph
 operation becomes an ACT carrier.
 
+## 29. Structured kernels and invocation-local reductions
+
+On 2026-10-14, progressively more structured FP16 entries established that a
+custom kernel need not remain one flat elementwise loop. The first retained a
+distinct same-file helper, branched on the local index, read a clamped neighbor,
+and used a source-level 128-byte scratch array. The second executed a nested
+three-helper call chain, passed a local context structure, used a source-level
+256-byte scratch array, and read a retained 20-byte coefficient object while
+applying a five-tap invocation-local window. Both copied and shared execution
+matched exact chunk-aware NumPy oracles.
+
+The third entry performed a maximum reduction over each invocation, evaluated
+`expf(input[i] - maximum)` into scratch, accumulated a sum reduction, and
+normalized the output in a final pass. A logical 64-element tensor was exposed
+as 32-element chunks, so the result is two independent local normalizations,
+not graph-global softmax. Copied and shared FP16 results matched NumPy within
+`rtol=5e-3`, `atol=5e-4`; the deterministic proof input had zero observed FP16
+error.
+
+The softmax ELF was 53,796 bytes with SHA-256
+`6bda0666bd958565a85ed8e39cb6579a3229fc28da4e66f7855bead838f18e07`,
+but most bytes were non-loadable debug information. Its executable `.text`
+image was 976 bytes, `.arg.data` was empty, and no relocations or undefined
+symbols remained. This confirms that `patchblob` must install the validated
+load image rather than treating the complete ELF file size as kernel code.
+
+The runnable proofs are
+[`example_complex_kernel.py`](../examples/example_complex_kernel.py),
+[`example_window_kernel.py`](../examples/example_window_kernel.py), and
+[`example_invocation_softmax.py`](../examples/example_invocation_softmax.py).
+These results do not establish recursion, arbitrary call graphs or stack
+sizes, cross-invocation neighborhoods, or graph-global reductions.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

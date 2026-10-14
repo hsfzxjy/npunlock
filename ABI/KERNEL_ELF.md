@@ -225,6 +225,8 @@ Confirmed FP16 kernels include:
 - three nested same-file helpers, a local context structure, and a five-tap
   loop using a retained 20-byte coefficient object;
 - a source-level 256-byte volatile local scratch array;
+- three-pass invocation-local maximum/sum reductions around `mlibm.a`'s
+  `expf` implementation;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 
@@ -245,6 +247,13 @@ marked the combined `.text` section writable and executable even though the
 source object was `const volatile`. The final image still had an empty
 `.arg.data` and no relocations or undefined symbols. This is evidence for an
 embedded constant table, not for a generally separate read-only data segment.
+
+An invocation-local softmax-like kernel linked `expf` and `floorf`, performed
+two FP32 scalar reductions, reused a source-level 256-byte scratch array, and
+matched a chunk-aware host oracle. Its ELF file was 53,796 bytes because it
+retained non-loadable debug sections, while the single executable `.text`
+segment installed into the graph was 976 bytes. The file size is therefore not
+the injected code-image size.
 
 ## How the code image is installed
 

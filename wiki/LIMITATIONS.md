@@ -98,6 +98,11 @@ context structure, a source-level 256-byte scratch array, and a retained
 a writable/executable `.text` section, not a separately protected read-only
 segment. Recursion and arbitrary call graphs remain unsupported.
 
+Maximum and sum reductions plus `expf` have been validated only inside one ACT
+invocation. A logical tensor may span several invocations, so this supports
+chunk-local normalization but does not establish graph-global reduction,
+cross-invocation communication, or general axis semantics.
+
 `mlibm.a` math functions work only when section garbage collection leaves a
 self-contained code image and no data dependency.
 
