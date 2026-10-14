@@ -298,9 +298,11 @@ print(prepared.explain())
 
 `prepared.groups` contains immutable `ActGroup` values. Each group reports its
 index, input count, FP16/FP32 dtype when uniform, total element and byte span,
-contract flags, and invocation/range indices. `prepared.mappings` records
-whether each custom node has an automatic mapping or needs an explicit caller
-choice.
+stable per-invocation input/output element counts, contract flags, and
+invocation/range indices. The per-invocation count properties return `None`
+when targets vary, in which case inspect `group.targets` individually.
+`prepared.mappings` records whether each custom node has an automatic mapping
+or needs an explicit caller choice.
 
 Filter groups by validated contract fields and bind them to the actual
 symbolic custom outputs:
@@ -722,6 +724,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
+- [FP16 custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [I32 structural graph](../examples/example_i32_structural.py)
 - [U8 Reshape and conversion graph](../examples/example_u8_reshape.py)
 - [I8 Squeeze/Unsqueeze and conversion graph](../examples/example_i8_axes.py)

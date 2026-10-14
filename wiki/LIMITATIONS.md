@@ -16,7 +16,7 @@ output does not match that contract.
 | graph compiler | current path validated with version 8.3 |
 | primary custom tensors | static, dense FP16 |
 | FP32 | validated unary accuracy-mode carrier, one same-precision scalar-input binary carrier, and explicit unary FP16/FP32 conversion |
-| binary custom kernel | static dense FP16 carriers with uniform inputs or a scalar second input; one FP32 scalar-input carrier |
+| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; one FP32 scalar-input carrier |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
 | restricted graph input | I64 only as caller-provided indices for the validated U8 Gather graph |
@@ -35,7 +35,8 @@ There is no general support for:
 
 - arbitrary strides or layouts;
 - broadcasting or unequal binary input shapes beyond the implemented static
-  same-precision case with a one-element second input;
+  one-element second input and one descriptor-level FP16 `(4,8)` plus `(1,8)`
+  row broadcast;
 - arbitrary input/output aliasing;
 - arbitrary tensor arity; or
 - automatic layout conversion inside custom code.

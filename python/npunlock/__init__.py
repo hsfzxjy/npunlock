@@ -281,6 +281,34 @@ class ActGroup:
         return next(iter(values)) if len(values) == 1 else None
 
     @property
+    def per_invocation_input_element_counts(self) -> tuple[int, ...] | None:
+        """Return stable input counts for one invocation, or None when they vary."""
+
+        values: set[tuple[int, ...]] = set()
+        for target in self.targets:
+            if isinstance(target, PatchTargetV2):
+                values.add(tuple(tensor.element_count for tensor in target.tensors if tensor.role == "input"))
+            else:
+                if target.input_count == 1:
+                    values.add((target.element_count,))
+                elif target.input_count == 2:
+                    second_count = 1 if target.contract_flags & 0x40 else target.element_count
+                    values.add((target.element_count, second_count))
+                else:
+                    return None
+        return next(iter(values)) if len(values) == 1 else None
+
+    @property
+    def per_invocation_output_element_count(self) -> int | None:
+        """Return the stable output count for one invocation, or None when it varies."""
+
+        values = {
+            target.output.element_count if isinstance(target, PatchTargetV2) else target.element_count
+            for target in self.targets
+        }
+        return next(iter(values)) if len(values) == 1 else None
+
+    @property
     def output_dtype(self) -> str | None:
         if not self.targets or not all(isinstance(target, PatchTargetV2) for target in self.targets):
             return self.dtype
@@ -297,9 +325,14 @@ class ActGroup:
 def _act_group_summary(group: ActGroup) -> str:
     input_dtypes = group.input_dtypes
     inputs = ",".join(input_dtypes) if input_dtypes is not None else "unknown"
+    input_counts = group.per_invocation_input_element_counts
+    input_elements = ",".join(str(value) for value in input_counts) if input_counts is not None else "varies"
+    output_elements = group.per_invocation_output_element_count
     return (
         f"group[{group.index}](inputs={group.input_count}, input_dtypes={inputs}, "
         f"output_dtype={group.output_dtype or 'unknown'}, elements={group.element_count}, "
+        f"invocation_elements=({input_elements})->"
+        f"{output_elements if output_elements is not None else 'varies'}, "
         f"input_1_scalar={group.input_1_scalar}, invocations={group.invocation_indices})"
     )
 
@@ -1425,9 +1458,14 @@ class PreparedGraph:
                 if group.unary_conversion
                 else "unknown"
             )
+            input_counts = group.per_invocation_input_element_counts
+            input_elements = ",".join(str(value) for value in input_counts) if input_counts is not None else "varies"
+            output_elements = group.per_invocation_output_element_count
             lines.append(
                 f"  [{group.index}] inputs={group.input_count} dtype={dtype} "
                 f"elements={group.element_count} span={group.span_bytes} "
+                f"per-invocation=({input_elements})->"
+                f"{output_elements if output_elements is not None else 'varies'} "
                 f"targets={len(group.targets)} flags={flags}"
             )
         lines.append("Custom mappings:")

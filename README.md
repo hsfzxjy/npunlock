@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-14:** Static constant-mode `Pad` now runs through copied and shared buffers with exact U8 fill values. Custom ACT kernels remain FP16/FP32. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#26-static-constant-mode-pad).
+> **Latest breakthrough — 2026-10-14:** A custom FP16 binary kernel now consumes an independently bound `(1, 8)` bias broadcast across `(4, 8)` data, presented as dense ACT operands to every invocation. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#27-row-broadcast-at-the-act-descriptor-boundary).
 
 ## Quick example
 
@@ -73,7 +73,7 @@ The same code is available as the runnable
 [FP32 GELU example](examples/example_gelu_f32.py). See also the
 [FP16 GELU](examples/example_gelu.py) and
 [multi-layer two-input](examples/example_multilayer_multi_input.py) examples,
-plus a
+plus a [row-broadcast two-input kernel](examples/example_broadcast_custom.py), a
 [mixed-precision graph with unary and binary custom branches](examples/example_mixed_precision_multi_custom.py)
 and a
 [branched network combining DPU work with three custom kernels](examples/example_branched_network.py).
@@ -179,7 +179,7 @@ reference.
 
 - compile user-written C into ACT-SHAVE machine code
 - run custom kernels inside Intel NPU graphs
-- static dense FP16 unary and two-input custom kernels
+- static dense FP16 unary and two-input custom kernels, including one validated materialized row-broadcast carrier
 - verified unary and scalar-input binary FP32 paths
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels

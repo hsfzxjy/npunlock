@@ -24,6 +24,30 @@ from npunlock.doctor import collect_diagnostics, human_report
 
 
 class SymbolicTests(unittest.TestCase):
+    def test_act_group_reports_per_invocation_tensor_counts(self) -> None:
+        dense = npu.ActGroup(
+            0,
+            (
+                npu.PatchTarget(0, 0, 2, 8, 16, 0x1F),
+                npu.PatchTarget(1, 1, 2, 8, 16, 0x1F),
+            ),
+        )
+        scalar = npu.ActGroup(1, (npu.PatchTarget(2, 2, 2, 8, 16, 0x5F),))
+        varying = npu.ActGroup(
+            2,
+            (
+                npu.PatchTarget(3, 3, 1, 8, 16, 0x1F),
+                npu.PatchTarget(4, 4, 1, 16, 32, 0x1F),
+            ),
+        )
+
+        self.assertEqual(dense.per_invocation_input_element_counts, (8, 8))
+        self.assertEqual(dense.per_invocation_output_element_count, 8)
+        self.assertEqual(scalar.per_invocation_input_element_counts, (8, 1))
+        self.assertEqual(scalar.per_invocation_output_element_count, 8)
+        self.assertIsNone(varying.per_invocation_input_element_counts)
+        self.assertIsNone(varying.per_invocation_output_element_count)
+
     def test_dynamic_unknown_operator_and_attributes(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         y = npu.SomeFutureOp(
@@ -888,6 +912,7 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.compile_ir_count, 1)
         self.assertEqual(tuple(mapping.status for mapping in prepared.mappings), ("explicit-required",) * 2)
         self.assertIn("does not match its input arity", prepared.explain())
+        self.assertIn("per-invocation=(32,32)->32", prepared.explain())
         unary_group = prepared.find_group(input_count=1, dtype="f32")
         binary_group = prepared.find_group(input_count=2, dtype="f16")
         with self.assertRaisesRegex(ValueError, "is ambiguous") as ambiguous:
@@ -1341,6 +1366,8 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(prepared.mappings[0].group_indices, ())
         (group,) = prepared.find_groups(input_dtypes=("f32",), output_dtype="f16")
         self.assertTrue(group.unary_conversion)
+        self.assertEqual(group.per_invocation_input_element_counts, (16,))
+        self.assertEqual(group.per_invocation_output_element_count, 16)
         self.assertIn("f32->f16", prepared.explain())
         with self.assertRaisesRegex(ValueError, "tensor precisions"):
             prepared.build(bindings={y: prepared.groups[1]}, movi_dll_dir="movi")

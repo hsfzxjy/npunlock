@@ -838,6 +838,37 @@ This result does not establish dynamic padding, negative cropping, reflect or
 edge modes, non-scalar fill values, non-U8 execution, or custom ACT-kernel
 padding.
 
+## 27. Row broadcast at the ACT descriptor boundary
+
+On 2026-10-14, graph compiler 8.3 accepted independently bound FP16 inputs
+shaped `[4,8]` and `[1,8]` for a custom binary `Maximum` carrier. Discovery
+reported one group containing four invocations. Every invocation exposed two
+dense eight-element inputs and one dense eight-element output: `(8,8) -> 8`.
+The compiler therefore presented the host row broadcast as a complete dense
+operand to each custom entry rather than exposing a scalar contract or a
+separate indexing rule. This establishes descriptor-level availability, not
+whether the backing bias storage is physically copied or reused.
+
+A custom entry computing `half(data[i] + bias[i])` matched NumPy's row
+broadcast exactly through copied and explicitly shared inputs and outputs. The
+64,808-byte unpatched carrier had SHA-256
+`87fd03faec4e4ee1bf97bd2e7c77b44286082d23c7c81d98c24b47ef1a1e5ebc`.
+The linked 844-byte SHAVE ELF had SHA-256
+`9aa979ebf4cfb95a4ba00cb36439f0bcb43374f36ee89d02ec7546be502ef081`,
+and the 65,320-byte patched graph had SHA-256
+`4454f3f14f2f77d1d01c0349a81a7337cfcbf583e1874e321e34945018f626d2`.
+
+`ActGroup` and `PreparedGraph.explain()` now expose stable per-invocation input
+and output element counts so kernel authors can distinguish a materialized
+dense operand from the existing scalar-second-input contract before patching.
+The runnable proof is
+[`example_broadcast_custom.py`](../examples/example_broadcast_custom.py).
+
+This establishes only this FP16 carrier, shapes, compiler version, and dense
+materialization. It does not establish arbitrary broadcasting, per-channel
+layouts, other ranks/dtypes, or permission to read beyond any invocation's
+advertised descriptor span.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -192,10 +192,10 @@ The carrier's compiled arity and tensor layout must match the C entry. `Abs`
 is used by the validated unary examples. `Maximum` is used by the validated
 two-input carriers.
 
-The one supported unequal-count layout has an ordinary first input and output,
-plus a one-element second input of the same precision. Its C loop still uses
-the output chunk's `invocation.element_count`, but reads the second input only
-at index zero:
+Two narrow broadcasting cases are execution-tested. The unequal-count layout
+has an ordinary first input and output plus a one-element second input of the
+same precision. Its C loop still uses the output chunk's
+`invocation.element_count`, but reads the second input only at index zero:
 
 ```c
 for (unsigned i = 0; i < invocation.element_count; ++i) {
@@ -203,8 +203,23 @@ for (unsigned i = 0; i < invocation.element_count; ++i) {
 }
 ```
 
-Do not index the scalar with `i`. No other broadcasting layout is currently
-part of the public contract.
+Do not index the scalar with `i`.
+
+Separately, graph compiler 8.3 presents one FP16 row broadcast as dense ACT
+operands for a `Maximum` carrier. Host inputs shaped `(4, 8)` and `(1, 8)`
+produced four ACT invocations whose contracts were `(8, 8) -> 8`: both input
+records were dense and equal-sized inside every invocation. The custom C
+therefore reads `input_1[i]`, not `input_1[0]`. This establishes the descriptor
+contract visible to the entry, not whether backing storage is physically
+copied or reused. It validates that exact carrier and shape, not arbitrary
+NumPy broadcasting or an unequal ACT descriptor.
+
+Call `prepared.explain()` before patching to see stable per-invocation element
+counts such as `per-invocation=(8,8)->8`. The same values are available as
+`ActGroup.per_invocation_input_element_counts` and
+`ActGroup.per_invocation_output_element_count`. A `None` value means the
+counts vary across the group's invocations and must be inspected target by
+target.
 
 Automatic positional mapping normally maps one computational node to one ACT
 group. A large custom operation may use several consecutive compatible groups
@@ -333,6 +348,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
+- [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 - [Connected mixed-precision custom/DPU composition](../examples/example_connected_mixed_precision.py)
