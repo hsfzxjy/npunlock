@@ -92,6 +92,12 @@ stack use are unsupported. A bounded same-file helper call, branching, and a
 source-level 128-byte local scratch array are execution-tested; this does not
 establish a general calling convention or stack-size limit.
 
+One five-tap kernel also validates a three-helper nested call chain, a local
+context structure, a source-level 256-byte scratch array, and a retained
+20-byte `const volatile` coefficient object. The linker placed that object in
+a writable/executable `.text` section, not a separately protected read-only
+segment. Recursion and arbitrary call graphs remain unsupported.
+
 `mlibm.a` math functions work only when section garbage collection leaves a
 self-contained code image and no data dependency.
 

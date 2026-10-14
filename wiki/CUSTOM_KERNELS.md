@@ -190,6 +190,21 @@ stack limit or calling convention. Keep helper definitions in the same source
 buffer, bound every local allocation, and treat recursion, function pointers,
 cross-invocation access, and large stack objects as unsupported.
 
+A second validated kernel extends that result to a three-helper nested call
+chain, a local context structure, a source-level
+`volatile float scratch[64]`, and a five-tap loop over an embedded 20-byte
+coefficient table. Its clamped neighborhood is deliberately local to each
+32-element invocation chunk. Copied and shared execution matched the same
+chunk-aware host calculation exactly. See the
+[window-kernel example](../examples/example_window_kernel.py).
+
+The example declares the coefficients `const volatile`: `const` prevents the
+kernel from modifying them, while `volatile` keeps MoviTools from folding the
+entire table into instructions. The default linker places the object inside
+the final `.text` image. On the tested toolchain that combined section is
+marked writable and executable, so “constant” describes the C contract rather
+than an ELF memory-protection guarantee.
+
 ## Carrier selection
 
 Python custom nodes name a carrier explicitly:
@@ -294,8 +309,11 @@ link-compatibility definitions, not a general C runtime.
 The resulting kernel must be self-contained in `.text`. The current validator
 requires `.arg.data` to be empty, so mutable globals, retained writable library
 state, unresolved relocations, and general helper runtimes are unsupported.
-Read-only constants are usable when the linker places them inside the final
-`.text` image.
+Source-level constant objects are usable when the linker places them inside
+the final `.text` image. The window-kernel example demonstrates a retained
+constant table; the tested linker marks the combined output section writable
+and executable even though the C object is `const`, so ELF memory protection
+is not part of this contract.
 
 ## Compiler definitions and linker script
 
@@ -385,6 +403,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
 - [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
+- [Five-tap window kernel with nested helpers and an embedded coefficient table](../examples/example_window_kernel.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 - [Connected mixed-precision custom/DPU composition](../examples/example_connected_mixed_precision.py)

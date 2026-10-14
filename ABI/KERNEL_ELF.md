@@ -222,6 +222,9 @@ Confirmed FP16 kernels include:
 - five-input arithmetic with independently bound host inputs;
 - a distinct same-file non-inlined helper with a data-dependent branch;
 - a source-level 128-byte volatile local scratch array;
+- three nested same-file helpers, a local context structure, and a five-tap
+  loop using a retained 20-byte coefficient object;
+- a source-level 256-byte volatile local scratch array;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 
@@ -235,6 +238,13 @@ successfully. Its final ELF had no relocations or undefined symbols. This
 establishes one same-file call and bounded source-level local storage; larger
 stack use, recursion, function pointers, the general callee-save convention,
 and arbitrary runtime-library behavior remain outside the supported contract.
+
+The nested-window kernel produced three local helper symbols of 260, 70, and
+35 bytes plus a 20-byte global `window_weights` object in `.text`. MoviTools
+marked the combined `.text` section writable and executable even though the
+source object was `const volatile`. The final image still had an empty
+`.arg.data` and no relocations or undefined symbols. This is evidence for an
+embedded constant table, not for a generally separate read-only data segment.
 
 ## How the code image is installed
 
