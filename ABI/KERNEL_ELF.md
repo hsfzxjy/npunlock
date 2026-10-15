@@ -150,8 +150,11 @@ carriers, not a complete SHAVE calling-convention specification.
 
 `layerParams` is the low 32-bit address of the parameter block selected for
 the current graph invocation. Successful kernels read pointer-bearing fields
-with explicit little-endian 32-bit loads. High address bits have not been
-validated.
+with explicit little-endian 32-bit loads. Runtime self-check kernels observed
+zero in the upper 32-bit word of both input and output data addresses for the
+host-visible FP16 and FP32 unary paths. A nonzero upper word remains
+unsupported, and the 32-bit entry argument cannot report a hypothetical upper
+half of `layerParams`.
 
 Kernel source may start with the virtual include
 `#include <npunlock/npu3720_kernel.h>`. `shavecc` expands it from an embedded
@@ -168,6 +171,7 @@ kernel normally needs these fields:
 
 ```text
 descriptor +0x00  low 32 bits of tensor data address
+descriptor +0x04  observed-zero upper 32 bits of tensor data address
 descriptor +0x0c  rank as u32
 descriptor +0x10  low 32 bits of dimensions-array address
 ```
@@ -362,7 +366,8 @@ Do not infer support for:
 - arbitrary helper libraries or data-bearing library closures;
 - unresolved, dynamic, or runtime relocations;
 - multiple executable images or alternate entry addresses;
-- high pointer halves;
+- nonzero high tensor-address halves or a parameter block outside the observed
+  32-bit entry-address convention;
 - dynamic shapes, non-dense layouts, or arbitrary precisions;
 - general broadcasting or unequal binary shapes beyond the tested scalar and
   descriptor-level row-broadcast cases;

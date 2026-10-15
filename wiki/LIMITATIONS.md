@@ -102,6 +102,12 @@ stack use are unsupported. A bounded same-file helper call, branching, and a
 source-level 128-byte local scratch array are execution-tested; this does not
 establish a general calling convention or stack-size limit.
 
+The NPU3720 kernel header deliberately uses a 32-bit `layerParams` argument and
+low-32-bit pointer loads. Runtime probes observed zero upper words for input
+and output data addresses on the host-visible FP16 and FP32 unary paths.
+Nonzero upper data addresses, a wider parameter-block address, hidden replica
+routes, and other NPU generations remain unsupported.
+
 One five-tap kernel also validates a three-helper nested call chain, a local
 context structure, a source-level 256-byte scratch array, and a retained
 20-byte `const volatile` coefficient object. The linker placed that object in

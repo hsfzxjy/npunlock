@@ -1147,6 +1147,32 @@ execution is not a semantic check: local overflow can return normally with
 plausible but wrong tensor data. Production kernels should keep scratch well
 below this observed boundary and use a host oracle for the complete result.
 
+## 38. Runtime descriptors confirm the NPU3720 PTR32 contract
+
+On 2026-10-15, two self-check kernels reported the raw tensor records seen by
+the custom entry instead of applying an ordinary operator. One used the
+validated FP16 unary carrier and one used the FP32 unary carrier. Copied and
+explicitly shared execution produced the same metadata for both host-visible
+16-element chunks.
+
+For both input and output records, the low data-address word was nonzero and
+the word at `+0x04`—the upper half of the packed `dataAddr` field—was zero.
+Each output record began at `layerParams + 0x28`. Both carriers reported static
+rank-4 CMX tensors with first dimension 16. FP16 reported raw type 2 and a
+16-bit dense first stride; FP32 reported raw type 1 and a 32-bit dense first
+stride. The dimensions and strides pointer fields were nonzero.
+
+This runtime result agrees with the host parser's relocation and field checks,
+and directly supports the `ACT_ABI_*_PTR32` helpers for these NPU3720 paths.
+It does not establish that a nonzero upper address can be discarded: such a
+record remains unsupported. The entry receives `layerParams` as an unsigned
+32-bit argument, so the probe also cannot recover or validate a hypothetical
+upper half of the parameter-block address.
+
+The result covers the host-visible partitions selected by these carriers. It
+does not independently observe every hidden tile replica, prove the same
+layout on NPU4000+, or turn the packed record into a cross-generation ABI.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

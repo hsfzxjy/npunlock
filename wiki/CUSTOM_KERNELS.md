@@ -46,6 +46,14 @@ The main helpers are:
 block. The header makes that assumption visible but does not turn it into a
 cross-generation contract.
 
+On the tested host-visible FP16 and FP32 unary paths, runtime self-check
+kernels observed zero in the upper 32-bit word of both input and output data
+addresses. They also re-read the static, rank, type, placement, dimension, and
+stride fields that `patchblob` had validated before installation. This supports
+the header's `PTR32` accessors for NPU3720; it does not support nonzero upper
+halves, another NPU generation, or a parameter-block address wider than the
+entry's 32-bit argument.
+
 The dimensions array contains one 32-bit value per rank dimension. Always
 validate rank and dimension multiplication before entering the element loop.
 
@@ -92,6 +100,7 @@ Within each record, the fields used by the examples are:
 
 ```text
 +0x00  low 32 bits of data address
++0x04  observed-zero upper 32 bits of data address
 +0x0c  rank
 +0x10  low 32 bits of dimensions-array address
 ```

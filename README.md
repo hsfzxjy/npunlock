@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** A 7,168-byte invocation-local array ran repeatedly, while 7,184 bytes alternated between correct and silently corrupted output and 8,192 bytes faulted. Kernel stack use therefore needs a conservative bound and a semantic oracle, not just successful execution. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#37-local-stack-overflow-can-silently-corrupt-one-output-partition).
+> **Latest breakthrough — 2026-10-15:** Runtime self-check kernels confirmed the NPU3720 0x28-byte tensor record and zero upper data-address words for host-visible FP16 and FP32 paths. Nonzero high addresses and other NPU generations remain unsupported. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#38-runtime-descriptors-confirm-the-npu3720-ptr32-contract).
 
 ## Quick example
 
