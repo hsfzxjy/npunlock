@@ -25,6 +25,9 @@
 #define SHT_VPU_PLATFORM_INFO 0x8aaaaaafu
 #define SHT_VPU_COMPATIBILITY 0x8aaaaab2u
 #define R_VPU_64 4u
+#define VPU_RT_SYMTAB 0xff20u
+#define VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR 0u
+#define VPU_NNRD_SYM_LAST 7u
 #define NPU_VERSION_NOTE_SIZE 0x20u
 #define NPU_PLATFORM_INFO_SIZE 0x28u
 
@@ -576,20 +579,44 @@ static npunlock_status resolve_relocation(const graph_layout *layout, size_t rel
                                           size_t entry_index, graph_relocation *relocation,
                                           npunlock_diagnostic *diagnostic) {
   const graph_section *relocations;
+  const graph_section *target;
   const graph_section *symbols;
+  const graph_section *strings;
   const uint8_t *entry;
   uint64_t info;
   size_t symbol_count;
   const uint8_t *symbol;
+  uint32_t symbol_name_offset;
   uint16_t source_index;
+  const char *expected_relocation_name;
+  const char *expected_symbol_name;
+  const char *symbol_name;
 
   if (relocation_index >= layout->section_count) {
     return malformed(diagnostic, "relocation section index is invalid");
   }
   relocations = &layout->sections[relocation_index];
   if (relocations->type != SHT_RELA || relocations->entry_size != ELF64_RELA_SIZE ||
+      relocations->size % ELF64_RELA_SIZE != 0 ||
       entry_index >= relocations->size / ELF64_RELA_SIZE) {
     return malformed(diagnostic, "relocation entry is malformed");
+  }
+  if (relocations->flags != 0x40u || relocations->address != 0u || relocations->alignment != 8u ||
+      relocations->info >= layout->section_count) {
+    return unsupported(diagnostic, "relocation section has unsupported metadata");
+  }
+  target = &layout->sections[relocations->info];
+  if (strcmp(target->name, ".text.KernelParams") == 0) {
+    expected_relocation_name = ".rlt.text.KernelParams";
+  } else if (strcmp(target->name, ".text.ActKernelInvocations") == 0) {
+    expected_relocation_name = ".rlt.text.ActKernelInvocations";
+  } else if (strcmp(target->name, ".text.ActKernelRanges") == 0) {
+    expected_relocation_name = ".rlt.text.ActKernelRanges";
+  } else {
+    return unsupported(diagnostic, "relocation targets an unsupported native section");
+  }
+  if (strcmp(relocations->name, expected_relocation_name) != 0) {
+    return unsupported(diagnostic, "relocation section name does not match its target");
   }
   relocation->file_offset = relocations->offset + entry_index * ELF64_RELA_SIZE;
   entry = layout->blob.data + relocation->file_offset;
@@ -601,22 +628,55 @@ static npunlock_status resolve_relocation(const graph_layout *layout, size_t rel
   relocation->special_source = false;
   relocation->source_section_index = SIZE_MAX;
   if (relocations->link >= layout->section_count) {
+    if (relocations->link != VPU_RT_SYMTAB || relocation->symbol > VPU_NNRD_SYM_LAST) {
+      return unsupported(diagnostic, "relocation uses an unsupported VPU runtime symbol");
+    }
     relocation->special_source = true;
     return NPUNLOCK_STATUS_OK;
   }
   symbols = &layout->sections[relocations->link];
-  if (symbols->type != SHT_SYMTAB || symbols->entry_size != ELF64_SYMBOL_SIZE ||
-      symbols->size % ELF64_SYMBOL_SIZE != 0) {
-    return malformed(diagnostic, "relocation symbol table is malformed");
+  if (strcmp(symbols->name, ".symtab.tasks") != 0 || symbols->type != SHT_SYMTAB ||
+      symbols->flags != 0u || symbols->address != 0u || symbols->info != 0u ||
+      symbols->alignment != 8u || symbols->entry_size != ELF64_SYMBOL_SIZE ||
+      symbols->size % ELF64_SYMBOL_SIZE != 0 || symbols->link >= layout->section_count) {
+    return unsupported(diagnostic, "relocation symbol table is not the supported native form");
+  }
+  strings = &layout->sections[symbols->link];
+  if (strcmp(strings->name, ".symstrtab") != 0 || strings->type != SHT_STRTAB ||
+      strings->flags != 0u || strings->address != 0u || strings->link != 0u ||
+      strings->info != 0u || strings->alignment != 4u || strings->entry_size != 0u ||
+      strings->size == 0u || layout->blob.data[strings->offset] != 0u) {
+    return unsupported(diagnostic, "relocation string table is not the supported native form");
   }
   symbol_count = symbols->size / ELF64_SYMBOL_SIZE;
   if (relocation->symbol >= symbol_count) {
     return malformed(diagnostic, "relocation symbol index is outside the symbol table");
   }
   symbol = layout->blob.data + symbols->offset + relocation->symbol * ELF64_SYMBOL_SIZE;
+  symbol_name_offset = read_u32(symbol);
   source_index = read_u16(symbol + 6);
-  if (read_u64(symbol + 8) != 0 || source_index >= layout->section_count) {
+  if (symbol[4] != 0u || symbol[5] != 0u || read_u64(symbol + 8) != 0u ||
+      read_u64(symbol + 16) != 0u || source_index >= layout->section_count) {
     return unsupported(diagnostic, "relocation uses an unsupported source symbol");
+  }
+  if (strcmp(layout->sections[source_index].name, ".text.KernelText") == 0) {
+    expected_symbol_name = "sym_kernelTextSection";
+  } else if (strcmp(layout->sections[source_index].name, ".text.KernelData") == 0) {
+    expected_symbol_name = "sym_kernelDataSection";
+  } else if (strcmp(layout->sections[source_index].name, ".text.KernelParams") == 0) {
+    expected_symbol_name = "sym_kernelParamsSection";
+  } else {
+    return unsupported(diagnostic, "relocation references an unsupported source section");
+  }
+  if (symbol_name_offset >= strings->size) {
+    return malformed(diagnostic, "relocation symbol name is outside the string table");
+  }
+  symbol_name = (const char *)(layout->blob.data + strings->offset + symbol_name_offset);
+  if (memchr(symbol_name, 0, strings->size - symbol_name_offset) == NULL) {
+    return malformed(diagnostic, "relocation symbol name is not terminated");
+  }
+  if (strcmp(symbol_name, expected_symbol_name) != 0) {
+    return unsupported(diagnostic, "relocation symbol name does not match its source section");
   }
   relocation->source_section_index = source_index;
   return NPUNLOCK_STATUS_OK;
@@ -643,7 +703,8 @@ static npunlock_status find_pointer_relocation(const graph_layout *layout, size_
         return status;
       }
       if (candidate.target_offset == target_offset && candidate.type == R_VPU_64 &&
-          ((require_special && candidate.special_source) ||
+          ((require_special && candidate.special_source &&
+            candidate.symbol == VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR) ||
            (!require_special && !candidate.special_source &&
             candidate.source_section_index == source_index))) {
         *found = candidate;
@@ -841,8 +902,9 @@ static npunlock_status count_data_pointer_relocations(const graph_layout *layout
       if (status != NPUNLOCK_STATUS_OK) {
         return status;
       }
-      if (relocation.special_source && relocation.type == R_VPU_64 &&
-          relocation.target_offset >= base && relocation.target_offset < limit) {
+      if (relocation.special_source && relocation.symbol == VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR &&
+          relocation.type == R_VPU_64 && relocation.target_offset >= base &&
+          relocation.target_offset < limit) {
         ++special_count;
       }
     }

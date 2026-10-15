@@ -167,6 +167,10 @@ metadata, file-backed sections may not overlap, and their file offsets must
 satisfy the declared power-of-two alignments. Older `npunlock`-generated blobs
 that shifted sections without preserving those alignments can still be raw
 driver artifacts, but are not accepted for further discovery or patching.
+ACT relocation sources are likewise restricted to the observed
+`.symtab.tasks`/`.symstrtab` section symbols and VPU runtime-table index
+`0xff20`. Tensor data pointers must use runtime symbol 0. Other symbol-table
+layouts and loader namespaces are not inferred from similar-looking records.
 
 ## Precision
 

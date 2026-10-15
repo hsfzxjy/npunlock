@@ -240,6 +240,12 @@ alignment fields, aligned file offsets, and the established metadata of the
 required ACT sections. Patching rounds the inserted extent upward when needed
 so every shifted section keeps satisfying its declared alignment.
 
+ACT relocations must use the observed target-specific `.rlt.*` sections and
+either the `.symtab.tasks`/`.symstrtab` section-symbol pair or the exact VPU
+runtime symbol-table index `0xff20`. Tensor data pointers specifically use
+runtime symbol 0 plus a checked CMX addend. An arbitrary out-of-range ELF
+`sh_link` is not treated as a loader symbol table.
+
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
 carrier and same-precision scalar-second-input binary carrier.

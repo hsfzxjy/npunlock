@@ -119,6 +119,12 @@ and bounds every ACT tile index by the advertised tile count. A caller-supplied
 native blob therefore carries its own checked producer contract; the CLI does
 not rely on a filename or a user-entered version assertion.
 
+Relocation lookup is similarly bounded. Section-backed ACT references must use
+the observed `.symtab.tasks` and `.symstrtab` records with matching section
+symbol names. Loader-provided references must use the exact VPU runtime-table
+index `0xff20`; tensor data pointers use runtime symbol 0. This prevents an
+unknown non-section `sh_link` from being mistaken for a valid CMX address.
+
 The Python frontend normally maps the complete topological computational-node
 sequence one-to-one to the discovered ACT groups when arity and tensor
 precision also agree. This positional discovery is gated to the validated

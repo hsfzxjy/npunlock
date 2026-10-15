@@ -76,6 +76,13 @@ static uint64_t read_u64(const uint8_t *bytes) {
   return (uint64_t)read_u32(bytes) | ((uint64_t)read_u32(bytes + 4) << 32);
 }
 
+static void write_u32(uint8_t *bytes, uint32_t value) {
+  bytes[0] = (uint8_t)value;
+  bytes[1] = (uint8_t)(value >> 8);
+  bytes[2] = (uint8_t)(value >> 16);
+  bytes[3] = (uint8_t)(value >> 24);
+}
+
 static void write_u64(uint8_t *bytes, uint64_t value) {
   bytes[0] = (uint8_t)value;
   bytes[1] = (uint8_t)(value >> 8);
@@ -87,7 +94,8 @@ static void write_u64(uint8_t *bytes, uint64_t value) {
   bytes[7] = (uint8_t)(value >> 56);
 }
 
-static uint8_t *find_section_header(uint8_t *data, size_t size, const char *expected_name) {
+static uint8_t *find_section_header(uint8_t *data, size_t size, const char *expected_name,
+                                    uint32_t expected_link) {
   size_t section_table;
   size_t section_count;
   size_t string_index;
@@ -126,7 +134,8 @@ static uint8_t *find_section_header(uint8_t *data, size_t size, const char *expe
     if (memchr(name, 0, string_size - name_offset) == NULL) {
       return NULL;
     }
-    if (strcmp(name, expected_name) == 0) {
+    if (strcmp(name, expected_name) == 0 &&
+        (expected_link == UINT32_MAX || read_u32(header + 0x28u) == expected_link)) {
       return header;
     }
   }
@@ -262,8 +271,8 @@ int main(void) {
   malformed_sections.size = carrier.size;
   memcpy(malformed_sections.data, carrier.data, carrier.size);
   {
-    uint8_t *params =
-        find_section_header(malformed_sections.data, malformed_sections.size, ".text.KernelParams");
+    uint8_t *params = find_section_header(malformed_sections.data, malformed_sections.size,
+                                          ".text.KernelParams", UINT32_MAX);
     CHECK(params != NULL);
     write_u64(params + 0x18u, read_u64(params + 0x18u) + 1u);
   }
@@ -275,10 +284,10 @@ int main(void) {
   patchblob_discovery_result_release(&discovery);
   memcpy(malformed_sections.data, carrier.data, carrier.size);
   {
-    uint8_t *params =
-        find_section_header(malformed_sections.data, malformed_sections.size, ".text.KernelParams");
+    uint8_t *params = find_section_header(malformed_sections.data, malformed_sections.size,
+                                          ".text.KernelParams", UINT32_MAX);
     uint8_t *ranges = find_section_header(malformed_sections.data, malformed_sections.size,
-                                          ".text.ActKernelRanges");
+                                          ".text.ActKernelRanges", UINT32_MAX);
     CHECK(params != NULL && ranges != NULL);
     write_u64(params + 0x18u, read_u64(ranges + 0x18u));
   }
@@ -287,6 +296,71 @@ int main(void) {
   CHECK(status == NPUNLOCK_STATUS_MALFORMED_INPUT);
   CHECK(discovery.diagnostic.json.data != NULL);
   CHECK(strstr((const char *)discovery.diagnostic.json.data, "overlap") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  memcpy(malformed_sections.data, carrier.data, carrier.size);
+  {
+    uint8_t *relocations = find_section_header(malformed_sections.data, malformed_sections.size,
+                                               ".rlt.text.KernelParams", 0xff20u);
+    CHECK(relocations != NULL);
+    write_u32(relocations + 0x28u, 0xff21u);
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){malformed_sections.data, malformed_sections.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "VPU runtime symbol") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  memcpy(malformed_sections.data, carrier.data, carrier.size);
+  {
+    uint8_t *relocations = find_section_header(malformed_sections.data, malformed_sections.size,
+                                               ".rlt.text.KernelParams", 0xff20u);
+    size_t relocation_offset;
+    uint8_t *entry;
+    CHECK(relocations != NULL);
+    CHECK(read_u64(relocations + 0x18u) <= SIZE_MAX);
+    relocation_offset = (size_t)read_u64(relocations + 0x18u);
+    CHECK(relocation_offset <= malformed_sections.size - 24u);
+    entry = malformed_sections.data + relocation_offset;
+    write_u64(entry + 8u, (1ull << 32) | read_u32(entry + 8u));
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){malformed_sections.data, malformed_sections.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data,
+               "discoverable input/output contract") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  memcpy(malformed_sections.data, carrier.data, carrier.size);
+  {
+    uint8_t *symbols = find_section_header(malformed_sections.data, malformed_sections.size,
+                                           ".symtab.tasks", UINT32_MAX);
+    size_t section_table = (size_t)read_u64(malformed_sections.data + 0x28u);
+    uint32_t symbol_section_index;
+    uint8_t *relocations;
+    size_t relocation_offset;
+    size_t symbol_offset;
+    uint32_t symbol_index;
+    CHECK(symbols != NULL);
+    CHECK(symbols >= malformed_sections.data + section_table);
+    symbol_section_index =
+        (uint32_t)((size_t)(symbols - malformed_sections.data - section_table) / 64u);
+    relocations = find_section_header(malformed_sections.data, malformed_sections.size,
+                                      ".rlt.text.KernelParams", symbol_section_index);
+    CHECK(relocations != NULL);
+    CHECK(read_u64(relocations + 0x18u) <= SIZE_MAX);
+    relocation_offset = (size_t)read_u64(relocations + 0x18u);
+    CHECK(relocation_offset <= malformed_sections.size - 24u);
+    symbol_index = (uint32_t)(read_u64(malformed_sections.data + relocation_offset + 8u) >> 32);
+    CHECK(read_u64(symbols + 0x18u) <= SIZE_MAX);
+    symbol_offset = (size_t)read_u64(symbols + 0x18u) + (size_t)symbol_index * 24u;
+    CHECK(symbol_offset <= malformed_sections.size - 24u);
+    malformed_sections.data[symbol_offset + 4u] = 1u;
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){malformed_sections.data, malformed_sections.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "unsupported source symbol") != NULL);
   patchblob_discovery_result_release(&discovery);
   status = patchblob_discover_targets((npunlock_view){carrier.data, carrier.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {

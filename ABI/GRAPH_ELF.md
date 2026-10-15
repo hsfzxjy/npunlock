@@ -145,11 +145,30 @@ The exact section set, order, size, and file offsets vary by graph. Absolute
 file offsets are not an ABI. `npunlock` follows section references and
 relocations instead.
 
-Observed relocation tables use 24-byte ELF64 `SHT_RELA` entries. Relocation
-type 4 is used for ACT component pointers. Its official vendor name and write
-width are unknown, so the project supports only the exact uses described here.
-Some loader-managed tables use nonstandard section links; they are outside the
-patching contract.
+Observed ACT relocation tables use 24-byte ELF64 `SHT_RELA` entries, flags
+`0x40`, alignment 8, and names derived from their target section, such as
+`.rlt.text.KernelParams`. Relocation type 4 is used for the 64-bit ACT pointers
+that `npunlock` follows. The project supports only the exact uses described
+here.
+
+Two source namespaces occur in the supported compiler-8.3 blobs:
+
+- ordinary section references link to `.symtab.tasks`, whose string table is
+  `.symstrtab`; and
+- loader-provided addresses use the reserved section index `0xff20`, named
+  `VPU_RT_SYMTAB` by the compatible VPU ELF definitions.
+
+The supported ordinary symbols are zero-valued section symbols named
+`sym_kernelTextSection`, `sym_kernelDataSection`, or
+`sym_kernelParamsSection`, and the name must agree with the referenced
+section. Tensor descriptor data pointers use runtime symbol 0,
+`VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR`, plus a CMX offset in the relocation
+addend. Runtime symbols 2, 5, and 6 also occur in surrounding invocation
+metadata, but `npunlock` does not assign them a custom-kernel contract. Values
+outside the observed runtime-symbol range 0 through 7 are rejected.
+
+These names and numbers describe the validated native graph family. They are
+not a claim that every VPU ELF producer or newer NPU uses the same namespace.
 
 ## ACT invocation records
 

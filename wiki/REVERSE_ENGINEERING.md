@@ -1301,6 +1301,34 @@ mutations are rejected offline. This establishes the narrow compiler-8.3 ELF
 geometry used by this project; it does not claim that another native compiler
 or NPU generation uses the same section metadata.
 
+## 44. ACT relocation sources have two distinct namespaces
+
+On 2026-10-15, relocation sources were compared across the retained unary,
+binary, broadcast, conversion, and multi-operation native graphs. Every
+section-backed ACT reference used `.symtab.tasks` with a linked `.symstrtab`.
+The referenced records were zero-valued section symbols named
+`sym_kernelTextSection`, `sym_kernelDataSection`, or
+`sym_kernelParamsSection`, matching their source section.
+
+Loader-provided references did not use an arbitrary section index beyond the
+ELF table. They consistently used reserved index `0xff20`, identified as
+`VPU_RT_SYMTAB` by the compatible VPU ELF definitions. Runtime symbols stayed
+within the defined 0-through-7 range. In particular, every tensor descriptor
+data pointer used symbol 0, `VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR`, with its CMX
+offset carried by the relocation addend. Symbols 2, 5, and 6 appeared in other
+invocation metadata and are not interpreted as tensor pointers.
+
+The old parser treated every out-of-range relocation `sh_link` as a special
+loader source. `patchblob` now requires the exact runtime-table index, bounds
+its symbol number, validates the ordinary symbol and string tables, and
+requires runtime symbol 0 for tensor addresses. Controlled mutations of the
+runtime-table index, tensor symbol, and ordinary symbol metadata are rejected
+offline before target discovery.
+
+This establishes a safer boundary for compiler-8.3/NPU3720 ACT carriers. It
+does not establish that `0xff20`, the symbol names, or the runtime numbering
+remain compatible with another compiler family or NPU generation.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

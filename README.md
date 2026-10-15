@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Appending custom code must preserve the native graph's ELF section alignment. `npunlock` now rounds inserted storage correctly and rejects misaligned or overlapping section layouts before patching. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#43-appended-code-must-preserve-the-native-elf-section-layout).
+> **Latest breakthrough — 2026-10-15:** ACT relocations use separate section-symbol and VPU-runtime namespaces; tensor addresses specifically use runtime symbol 0. `npunlock` now validates that boundary instead of accepting any non-section link as loader-managed. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#44-act-relocation-sources-have-two-distinct-namespaces).
 
 ## Quick example
 
