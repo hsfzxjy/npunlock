@@ -207,10 +207,11 @@ blob still passes through ACT discovery and the normal fail-closed patch
 validation. The parser requires the blob's embedded `compatibility_string` to
 identify compiler 8.3, NPU3720, one or two tiles, loader-ELF 1.2.0, and
 mapped-inference 7.0.4. Dedicated version notes and ACT tile indices are
-cross-checked, so no separate version assertion is needed. Its path, size, and
-SHA-256 are recorded; `ir2blob` is `null` rather than containing invented
-driver or compiler-query provenance. The patch report records the contract
-validated from the blob itself.
+cross-checked, and the platform-info record must carry the NPU3720 architecture
+enum, so no separate version assertion is needed. Its path, size, and SHA-256
+are recorded; `ir2blob` is `null` rather than containing invented driver or
+compiler-query provenance. The patch report records the contract validated
+from the blob itself.
 
 `--patch-position` is a zero-based discovered ACT group, not a source node
 name. Positional selection first uses the original same-precision contract and

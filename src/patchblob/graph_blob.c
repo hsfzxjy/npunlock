@@ -19,9 +19,11 @@
 #define SHT_RELA 4u
 #define SHT_NOTE 7u
 #define SHT_NOBITS 8u
+#define SHT_VPU_PLATFORM_INFO 0x8aaaaaafu
 #define SHT_VPU_COMPATIBILITY 0x8aaaaab2u
 #define R_VPU_64 4u
 #define NPU_VERSION_NOTE_SIZE 0x20u
+#define NPU_PLATFORM_INFO_SIZE 0x28u
 
 typedef struct graph_section {
   uint32_t type;
@@ -51,6 +53,7 @@ typedef struct graph_layout {
   size_t compatibility_index;
   size_t loader_abi_version_index;
   size_t mapped_inference_version_index;
+  size_t platform_info_index;
   uint32_t tile_count;
 } graph_layout;
 
@@ -279,6 +282,24 @@ static npunlock_status validate_act_tile_indices(const graph_layout *layout,
   return NPUNLOCK_STATUS_OK;
 }
 
+static npunlock_status validate_platform_info(const graph_layout *layout,
+                                              npunlock_diagnostic *diagnostic) {
+  const graph_section *section = &layout->sections[layout->platform_info_index];
+  const uint8_t *data;
+
+  if (section->type != SHT_VPU_PLATFORM_INFO || section->size != NPU_PLATFORM_INFO_SIZE ||
+      section->alignment != 8u) {
+    return unsupported(diagnostic, "graph platform-info section has an unsupported form");
+  }
+  data = layout->blob.data + section->offset;
+  if (read_u64(data) != 0x20u || read_u64(data + 8u) != 0u || read_u64(data + 16u) != 1u ||
+      read_u64(data + 24u) != 8u || read_u64(data + 32u) != 3u) {
+    return unsupported(diagnostic,
+                       "graph platform-info record is not the supported NPU3720 contract");
+  }
+  return NPUNLOCK_STATUS_OK;
+}
+
 static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
                                    npunlock_diagnostic *diagnostic) {
   const uint8_t *bytes = blob.data;
@@ -297,6 +318,7 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
   layout->compatibility_index = SIZE_MAX;
   layout->loader_abi_version_index = SIZE_MAX;
   layout->mapped_inference_version_index = SIZE_MAX;
+  layout->platform_info_index = SIZE_MAX;
   if (blob.size < ELF64_HEADER_SIZE ||
       memcmp(bytes,
              "\x7f"
@@ -380,6 +402,7 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
     MATCH_REQUIRED(compatibility_index, "compatibility_string")
     MATCH_REQUIRED(loader_abi_version_index, ".note.LoaderABIVersion")
     MATCH_REQUIRED(mapped_inference_version_index, ".note.MappedInferenceVersion")
+    MATCH_REQUIRED(platform_info_index, ".meta.PlatformInfo")
 #undef MATCH_REQUIRED
   }
   if (layout->kernel_text_index == SIZE_MAX || layout->params_index == SIZE_MAX ||
@@ -396,6 +419,10 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
       layout->mapped_inference_version_index == SIZE_MAX) {
     graph_layout_release(layout);
     return unsupported(diagnostic, "graph does not contain the required version-note sections");
+  }
+  if (layout->platform_info_index == SIZE_MAX) {
+    graph_layout_release(layout);
+    return unsupported(diagnostic, "graph does not contain a platform-info section");
   }
   if (layout->sections[layout->kernel_text_index].type != SHT_PROGBITS ||
       layout->sections[layout->params_index].type != SHT_PROGBITS ||
@@ -428,6 +455,9 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
     }
     if (status == NPUNLOCK_STATUS_OK) {
       status = validate_act_tile_indices(layout, diagnostic);
+    }
+    if (status == NPUNLOCK_STATUS_OK) {
+      status = validate_platform_info(layout, diagnostic);
     }
     if (status != NPUNLOCK_STATUS_OK) {
       graph_layout_release(layout);

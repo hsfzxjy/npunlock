@@ -114,10 +114,10 @@ Before interpreting those compiler-specific records, `patchblob` reads the
 blob's vendor `compatibility_string` section. The current implementation
 requires compiler 8.3, NPU3720, one or two tiles, loader-ELF 1.2.0, and
 mapped-inference 7.0.4. It cross-checks the last two values against dedicated
-ELF notes and bounds every ACT tile index by the advertised tile count. A
-caller-supplied native blob therefore carries its own checked producer
-contract; the CLI does not rely on a filename or a user-entered version
-assertion.
+ELF notes, checks the serialized platform record's NPU3720 architecture enum,
+and bounds every ACT tile index by the advertised tile count. A caller-supplied
+native blob therefore carries its own checked producer contract; the CLI does
+not rely on a filename or a user-entered version assertion.
 
 The Python frontend normally maps the complete topological computational-node
 sequence one-to-one to the discovered ACT groups when arity and tensor

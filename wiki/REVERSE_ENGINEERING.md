@@ -1226,6 +1226,28 @@ tile count and both loader contracts. This narrows the accepted native
 container to the structure actually exercised; it does not claim that another
 loader or mapped-inference version is incompatible in principle.
 
+## 41. Platform metadata independently identifies NPU3720
+
+On 2026-10-15, `.meta.PlatformInfo` was compared across 78 local native-blob
+artifacts. Every section had vendor type `0x8aaaaaaf`, size 40, alignment 8,
+and the same five 64-bit words:
+
+```text
+0x20, 0, 1, 8, 3
+```
+
+The first four words form the serialized descriptor: data begins at offset
+0x20, there is no next descriptor, and it contains one eight-byte element. The
+element value is 3, the loader architecture enumeration for NPU3720. Unlike a
+filename or the free-form compatibility text, this is the structured platform
+record consumed by the loader.
+
+`patchblob` now requires this exact observed descriptor and NPU3720 value in
+addition to `npu=3720`. A controlled change of the architecture element from 3
+to 4 is rejected before ACT discovery. This is an independent consistency
+check, not a claim that the remaining descriptor words are a general platform
+ABI or that NPU4000 uses an otherwise compatible graph layout.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

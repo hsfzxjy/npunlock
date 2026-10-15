@@ -49,14 +49,14 @@ static npunlock_buffer read_file(const char *path) {
   return buffer;
 }
 
-static uint8_t *find_bytes(uint8_t *data, size_t data_size, const char *text) {
-  size_t text_size = strlen(text);
+static uint8_t *find_bytes(uint8_t *data, size_t data_size, const uint8_t *expected,
+                           size_t expected_size) {
   size_t index;
-  if (text_size > data_size) {
+  if (expected_size > data_size) {
     return NULL;
   }
-  for (index = 0; index <= data_size - text_size; ++index) {
-    if (memcmp(data + index, text, text_size) == 0) {
+  for (index = 0; index <= data_size - expected_size; ++index) {
+    if (memcmp(data + index, expected, expected_size) == 0) {
       return data + index;
     }
   }
@@ -73,6 +73,7 @@ int main(void) {
   npunlock_buffer expected;
   npunlock_buffer unsupported_carrier = {0};
   npunlock_buffer unsupported_tiles = {0};
+  npunlock_buffer unsupported_platform = {0};
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
@@ -100,8 +101,9 @@ int main(void) {
   unsupported_carrier.size = carrier.size;
   memcpy(unsupported_carrier.data, carrier.data, carrier.size);
   {
-    uint8_t *version =
-        find_bytes(unsupported_carrier.data, unsupported_carrier.size, "compiler=8.3;npu=3720");
+    static const uint8_t version_text[] = "compiler=8.3;npu=3720";
+    uint8_t *version = find_bytes(unsupported_carrier.data, unsupported_carrier.size, version_text,
+                                  sizeof(version_text) - 1u);
     CHECK(version != NULL);
     version[11] = '4';
   }
@@ -116,7 +118,9 @@ int main(void) {
   unsupported_tiles.size = two_operation_carrier.size;
   memcpy(unsupported_tiles.data, two_operation_carrier.data, two_operation_carrier.size);
   {
-    uint8_t *tiles = find_bytes(unsupported_tiles.data, unsupported_tiles.size, ";t=2;elf=");
+    static const uint8_t tile_text[] = ";t=2;elf=";
+    uint8_t *tiles = find_bytes(unsupported_tiles.data, unsupported_tiles.size, tile_text,
+                                sizeof(tile_text) - 1u);
     CHECK(tiles != NULL);
     tiles[3] = '1';
   }
@@ -125,6 +129,26 @@ int main(void) {
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
   CHECK(discovery.diagnostic.json.data != NULL);
   CHECK(strstr((const char *)discovery.diagnostic.json.data, "tile index exceeds") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  unsupported_platform.data = (uint8_t *)malloc(carrier.size);
+  CHECK(unsupported_platform.data != NULL);
+  unsupported_platform.size = carrier.size;
+  memcpy(unsupported_platform.data, carrier.data, carrier.size);
+  {
+    static const uint8_t platform_info[40] = {
+        0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+        0,    0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0,
+    };
+    uint8_t *platform = find_bytes(unsupported_platform.data, unsupported_platform.size,
+                                   platform_info, sizeof(platform_info));
+    CHECK(platform != NULL);
+    platform[32] = 4u;
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){unsupported_platform.data, unsupported_platform.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "supported NPU3720 contract") != NULL);
   patchblob_discovery_result_release(&discovery);
   status = patchblob_discover_targets((npunlock_view){carrier.data, carrier.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
@@ -286,6 +310,7 @@ int main(void) {
   free(elf.data);
   free(unsupported_carrier.data);
   free(unsupported_tiles.data);
+  free(unsupported_platform.data);
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);

@@ -107,6 +107,23 @@ duplicate, inconsistent, or different fields are rejected rather than treated
 as a similar-enough layout. Unknown extra compatibility fields are preserved
 without assigning them semantics.
 
+The `.meta.PlatformInfo` section independently identifies the architecture.
+For NPU3720 it has vendor section type `0x8aaaaaaf`, size 40, and alignment 8.
+Its bytes describe one eight-byte serialized element:
+
+```text
+data offset       0x20
+next descriptor  0
+element count     1
+element size      8
+architecture      3 (NPU3720)
+```
+
+The value 3 is the loader platform enumeration for NPU3720. All 78 current
+blob artifacts inspected used this exact descriptor. `npunlock` cross-checks
+it against `npu=3720`; it does not interpret other platform records as
+compatible.
+
 The exact section set, order, size, and file offsets vary by graph. Absolute
 file offsets are not an ABI. `npunlock` follows section references and
 relocations instead.

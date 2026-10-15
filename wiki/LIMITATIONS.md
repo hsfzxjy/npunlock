@@ -69,10 +69,12 @@ topologically ordered computational nodes and validated positional ACT groups,
 with matching input arity and tensor precision. This discovery contract is
 validated only for graph compiler 8.3 and NPU3720. `patchblob` requires those
 values, a one-or-two-tile count, loader-ELF 1.2.0, and mapped-inference 7.0.4
-in the native blob's vendor compatibility metadata and version notes. Python
-also checks the graph compiler version reported by the driver for graphs it
-compiles. Missing or different blob provenance is rejected, including for raw
-explicit targets, because the record parser itself is compiler-specific.
+in the native blob's vendor compatibility metadata and version notes. The
+platform-info record must independently identify the NPU3720 architecture.
+Python also checks the graph compiler version reported by the driver for
+graphs it compiles. Missing or different blob provenance is rejected,
+including for raw explicit targets, because the record parser itself is
+compiler-specific.
 One large custom node may instead consume several consecutive groups when a
 unique exact-cover mapping is proven: target arity, element width and contract
 flags must agree, invocation indices must be consecutive, and their element
