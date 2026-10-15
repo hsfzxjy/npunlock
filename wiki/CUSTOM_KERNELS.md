@@ -358,14 +358,15 @@ when their targets uniquely and exactly cover its declared output tensor. See
 MoviTools' `mlibm.a` supplies functions such as `tanhf`. `shavecc` links the
 archive with section garbage collection so only reachable code remains.
 
-The tested MoviTools compiler and `mlibm.a` combination allows most
-conventional `libm` functions to be called by their normal C names without
-including `<math.h>`. The GELU examples call `tanhf` this way, and the
-invocation-local softmax example calls `expf`, and the fused RMS example calls
-`sqrtf`. There is no complete supported-symbol catalog, so a host platform's
-`libm` is not the contract: the function must be accepted by MoviTools,
-resolve from `mlibm.a`, and produce a kernel ELF that passes the restrictions
-below.
+The tested MoviTools compiler and `mlibm.a` combination accepts familiar
+function names without including `<math.h>`. Hardware-oracle probes currently
+cover the FP32 unary functions `sinf`, `cosf`, `logf`, `erff`, `atanf`,
+`expf`, `sqrtf`, and `tanhf`. The GELU examples use `tanhf`, the
+invocation-local softmax example uses `expf`, and the fused RMS example uses
+`sqrtf`. A host platform's `libm` is not the contract: any other archive name
+is only a candidate until MoviTools accepts its inferred prototype, the
+archive resolves it, the linked ELF passes validation, and execution matches
+a host oracle.
 
 The [observed `mlibm.a` symbol inventory](../ABI/MLIBM_SYMBOLS.md) lists the
 names that may be referenced. The archive does not determine their C
@@ -382,9 +383,20 @@ before including the header:
 #include <npunlock/npu3720_kernel.h>
 ```
 
-The macro supplies the correct symbol signatures, deterministic unused stubs,
-and the tested binary32-to-integer helper. These are NPU3720/MoviTools
+The macro supplies the observed symbol signatures, two deterministic link-only
+stubs, and the tested binary32-to-integer helper. Do not call `strtof` or
+`__truncdfsf2`: their bundled bodies return zero and exist only to close
+otherwise unused archive references. They are known to be harmless only for
+the execution-tested functions above. These are NPU3720/MoviTools
 link-compatibility definitions, not a general C runtime.
+
+Composition also matters. A probe combining `sinf`, `cosf`, `logf`, and
+`erff` in one runtime-selected kernel executed correctly with a 3,056-byte
+image. Adding `atanf` produced a 3,504-byte image that passed ELF and patch
+validation but faulted during NPU execution, even though the carrier's
+original code extent was 5,280 bytes. This is not a proven universal size
+threshold; keep complex math closures small and validate each combined kernel
+on hardware.
 
 The resulting kernel must be self-contained in `.text`. The current validator
 requires `.arg.data` to be empty, so mutable globals, retained writable library

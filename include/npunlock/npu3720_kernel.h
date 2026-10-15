@@ -89,9 +89,10 @@ ACT_ABI_ALWAYS_INLINE unsigned act_abi_dimension(const act_abi_invocation *invoc
 
 /*
  * Define the external symbols required by the observed NPU3720 mlibm.a
- * dependency closure.  strtof and __truncdfsf2 are deterministic link stubs
- * for the tested tanhf path, not general implementations.  __fixsfdi provides
- * the binary32 conversion used by that path without another compiler helper.
+ * dependency closure.  strtof and __truncdfsf2 are deterministic link stubs,
+ * not callable implementations.  __fixsfdi provides the tested binary32
+ * conversion without another compiler helper.  The stubs are known to be
+ * harmless only for the documented execution-tested math closures.
  * Define MLIBM_DEFINE_LINK_COMPAT to 1 before including this header in exactly
  * one translation unit that uses mlibm.a.
  */

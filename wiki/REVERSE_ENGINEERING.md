@@ -1074,6 +1074,38 @@ replica sets, output partitions, and the DMA route that makes one result
 host-visible. Until that relationship is modeled, invocation counts alone must
 not be used as graph-shape evidence.
 
+## 36. Math-code composition has an unresolved execution limit
+
+On 2026-10-15, eight separate FP32 unary kernels called `sinf`, `cosf`,
+`logf`, `erff`, `atanf`, `expf`, `sqrtf`, and `tanhf` from the tested
+`mlibm.a`. Each kernel executed on NPU3720 over 64 inputs from 0.125 through
+2.0 and matched a host oracle. Maximum absolute errors ranged from zero to
+`4.76837158203125e-07`.
+
+Archive inspection showed why successful linking alone is weak evidence.
+`math_lite.o`, which defines these familiar entry points, also declares
+`strtof`, `__truncdfsf2`, and `__fixsfdi` as undefined. The bundled header
+closes those references, but the first two definitions are deliberately
+zero-returning link stubs. The eight successful probes establish that their
+tested execution paths do not rely on the dummy results; they do not establish
+that every other symbol in the archive is safe.
+
+A second probe selected several of those functions at runtime in one entry.
+The first four-function closure (`sinf`, `cosf`, `logf`, and `erff`) executed
+correctly with a 3,056-byte image. Adding `atanf` produced a 3,504-byte image
+that still had empty `.arg.data`, no unresolved relocations, and a smaller
+extent than the carrier's original 5,280 bytes. ELF validation and patching
+succeeded, but execution ended with Level Zero device result `0x70000001`.
+Six-, seven-, and eight-function prefixes failed the same way; the eight-
+function image was 4,432 bytes.
+
+This disproves the assumption that structural validity plus fitting inside the
+replaced code extent is sufficient for arbitrary math composition. It does not
+establish a universal 3,056/3,504-byte threshold: retained call topology,
+instruction placement, internal stack use, or another firmware resource may
+be the actual boundary. The library therefore documents individual validated
+functions and requires target execution of each complete combined kernel.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

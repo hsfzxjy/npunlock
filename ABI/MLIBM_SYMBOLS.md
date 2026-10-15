@@ -1,6 +1,6 @@
 # MoviTools math-library symbol inventory
 
-Status: observed inventory. Last updated 2026-09-22.
+Status: observed inventory. Last updated 2026-10-15.
 
 This page lists the externally defined symbols in the `mlibm.a` shipped with
 the MoviTools package documented by this project. The inspected archive has
@@ -35,6 +35,30 @@ symbols. `T` entries are potential callable functions. `D` entries are not
 functions; retaining their storage may conflict with the current requirement
 that the linked kernel's `.arg.data` section remain empty. Sizes are hexadecimal
 and values are zero because these are relocatable archive members.
+
+## Execution-tested subset
+
+On the documented NPU3720 setup, individual FP32 unary kernels for `sinf`,
+`cosf`, `logf`, `erff`, `atanf`, `expf`, `sqrtf`, and `tanhf` matched NumPy or
+the host C-math oracle over 64 inputs from 0.125 through 2.0. Maximum absolute
+errors ranged from zero through `4.76837158203125e-07`. This validates those
+specific signatures, domains, and linked closures; it does not validate every
+special value or the similarly named double/long-double entries.
+
+The archive's `math_lite.o` has undefined references to `strtof`,
+`__truncdfsf2`, and `__fixsfdi`; `shave_fp64.o` also references
+`__truncdfsf2`. The target header can define the observed link-compatibility
+closure, but its `strtof` and `__truncdfsf2` definitions are deliberately
+non-callable zero-returning stubs. Their dummy results did not affect the
+tested outputs; that does not prove the calls are absent from every internal
+path. Do not treat them as C-runtime implementations.
+
+Linkability is not composability. A runtime-selected kernel containing `sinf`,
+`cosf`, `logf`, and `erff` executed with a 3,056-byte image. Adding `atanf`
+created a 3,504-byte image that remained structurally valid and smaller than
+the carrier's original 5,280-byte extent, but execution returned an NPU device
+error. These observations do not establish a universal function-count or
+byte-size threshold.
 
 ## Symbol dump
 

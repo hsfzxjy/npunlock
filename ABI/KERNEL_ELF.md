@@ -125,6 +125,14 @@ writable global data in `.arg.data`, making the kernel unsupported. With
 garbage collection, the validated GELU examples retain only the reachable math
 closure and still produce an empty data section.
 
+Passing these structural checks does not prove that an arbitrarily large math
+closure will execute. In one NPU3720 probe, a runtime-selected four-function
+FP32 image of 3,056 bytes executed, while adding a fifth function produced a
+3,504-byte image that passed validation but caused an NPU device error. The
+original carrier extent was 5,280 bytes in both cases, so fitting within that
+extent is not a sufficient execution criterion. This is an observed boundary,
+not a universal byte threshold.
+
 Simple arithmetic kernels do not require a runtime archive beyond this
 linker's normal inputs.
 

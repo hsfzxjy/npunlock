@@ -135,7 +135,11 @@ not establish standard graph-global RMSNorm semantics, arbitrary five-input
 operators, or other high-arity layouts.
 
 `mlibm.a` math functions work only when section garbage collection leaves a
-self-contained code image and no data dependency.
+self-contained code image and no data dependency. Eight FP32 unary functions
+are execution-tested individually, but combining several retained math paths
+can still fault even when the linked image is smaller than the carrier's old
+code extent. There is not yet a general executable-composition or code-size
+limit; validate the complete combined kernel on the target NPU.
 
 ## Precision
 

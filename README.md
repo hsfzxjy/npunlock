@@ -9,16 +9,16 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** ACT descriptor counts are not graph tensor sizes: one 32-element FP16 operation exposed four 16-element invocations because partitions were duplicated across tiles. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#35-descriptor-coverage-is-not-logical-coverage).
+> **Latest breakthrough — 2026-10-15:** Eight familiar FP32 math functions ran correctly in isolation, but one combined kernel faulted despite fitting inside the carrier's original code extent. A valid linked ELF and byte extent are therefore necessary, not sufficient, execution checks. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#36-math-code-composition-has-an-unresolved-execution-limit).
 
 ## Quick example
 
 This complete FP32 GELU example embeds the C kernel in Python, places it in an
 NPU graph, and checks the result against NumPy. The bundled
 `npunlock/npu3720_kernel.h` target header supplies the NPU3720 invocation and
-tensor-address helpers. The tested MoviTools toolchain makes most conventional
-`libm` functions available to kernels without including `<math.h>`; this
-example calls `tanhf` directly. See the
+tensor-address helpers. MoviTools' math archive exposes familiar names without
+requiring `<math.h>`; this example uses the execution-tested `tanhf` path.
+Other archive entries remain candidates until tested on hardware. See the
 [`mlibm.a` symbol inventory](ABI/MLIBM_SYMBOLS.md) for the observed candidates.
 
 ```python

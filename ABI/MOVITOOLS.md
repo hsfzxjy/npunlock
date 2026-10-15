@@ -50,12 +50,14 @@ moviLLD64.dll
 The linker also uses `mlibm.a` from the root's `lib` directory when a
 kernel references supported math functions.
 
-With the tested compiler and archive, most conventional `libm` functions can
-be referenced by their normal C names without including `<math.h>` in the
-kernel source. This is observed toolchain behavior, not a claim that every host
-`libm` symbol is present. A function is usable only when MoviTools accepts the
-call, `mlibm.a` resolves it, and the linked ELF remains within the validated
-kernel contract.
+With the tested compiler and archive, familiar math functions can be
+referenced by their normal C names without including `<math.h>` in the kernel
+source. Hardware-oracle probes currently validate the FP32 unary functions
+`sinf`, `cosf`, `logf`, `erff`, `atanf`, `expf`, `sqrtf`, and `tanhf` when
+linked individually. Other names are candidates, not supported calls. A
+function is usable only when MoviTools accepts its inferred prototype,
+`mlibm.a` resolves it, the linked ELF remains within the validated kernel
+contract, and execution matches an independent oracle.
 
 The separate [`mlibm.a` symbol inventory](MLIBM_SYMBOLS.md) contains all
 externally defined names observed in the tested archive. These are symbols
