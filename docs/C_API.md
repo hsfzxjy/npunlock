@@ -245,7 +245,9 @@ returns owned targets grouped by zero-based positional ACT operation. Release
 the result with `patchblob_discovery_result_release()`. Discovery is based on a
 narrow observed NPU3720/compiler-8.3 invocation identity and tensor contract;
 callers must correlate the group count and order with their own graph before
-patching.
+patching. The parser reads the native blob's vendor `compatibility_string` and
+requires its embedded `compiler=8.3` and `npu=3720` fields for both discovery
+and patching. The JSON patch report records that validated graph contract.
 
 The additive version 2 API describes every tensor record independently:
 

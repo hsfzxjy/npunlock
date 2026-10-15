@@ -121,6 +121,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
               "{\n  \"schema\": \"npunlock.porting.inspect.v2\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
+      fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
+                      "\"source\": \"compatibility_string\"},\n") < 0 ||
       fprintf(stream,
               "  \"act\": {\"group_count\": %zu, \"target_count\": %zu, "
               "\"targets\": [\n",

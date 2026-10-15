@@ -49,6 +49,20 @@ static npunlock_buffer read_file(const char *path) {
   return buffer;
 }
 
+static uint8_t *find_bytes(uint8_t *data, size_t data_size, const char *text) {
+  size_t text_size = strlen(text);
+  size_t index;
+  if (text_size > data_size) {
+    return NULL;
+  }
+  for (index = 0; index <= data_size - text_size; ++index) {
+    if (memcmp(data + index, text, text_size) == 0) {
+      return data + index;
+    }
+  }
+  return NULL;
+}
+
 int main(void) {
   npunlock_buffer carrier;
   npunlock_buffer two_operation_carrier;
@@ -57,6 +71,7 @@ int main(void) {
   npunlock_buffer convert_f16_to_f32;
   npunlock_buffer elf;
   npunlock_buffer expected;
+  npunlock_buffer unsupported_carrier = {0};
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
@@ -79,6 +94,22 @@ int main(void) {
   CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
         broadcast_carrier.data != NULL && convert_f32_to_f16.data != NULL &&
         convert_f16_to_f32.data != NULL && elf.data != NULL && expected.data != NULL);
+  unsupported_carrier.data = (uint8_t *)malloc(carrier.size);
+  CHECK(unsupported_carrier.data != NULL);
+  unsupported_carrier.size = carrier.size;
+  memcpy(unsupported_carrier.data, carrier.data, carrier.size);
+  {
+    uint8_t *version =
+        find_bytes(unsupported_carrier.data, unsupported_carrier.size, "compiler=8.3;npu=3720");
+    CHECK(version != NULL);
+    version[11] = '4';
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){unsupported_carrier.data, unsupported_carrier.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "supported 8.3 contract") != NULL);
+  patchblob_discovery_result_release(&discovery);
   status = patchblob_discover_targets((npunlock_view){carrier.data, carrier.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
     fprintf(stderr, "%s\n", (const char *)discovery.diagnostic.json.data);
@@ -213,6 +244,8 @@ int main(void) {
   CHECK(memcmp(result.graph_blob.data, expected.data, expected.size) == 0);
   CHECK(result.report_json.data != NULL);
   CHECK(strstr((const char *)result.report_json.data, "npunlock.patchblob.v1") != NULL);
+  CHECK(strstr((const char *)result.report_json.data,
+               "\"graph_contract\":{\"compiler\":\"8.3\",\"npu\":\"3720\"}") != NULL);
   CHECK(strstr((const char *)result.report_json.data, "\"invocation_index\":1") != NULL);
   patchblob_result_release(&result);
   status =
@@ -235,6 +268,7 @@ int main(void) {
   patchblob_result_release(&result);
   free(expected.data);
   free(elf.data);
+  free(unsupported_carrier.data);
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);

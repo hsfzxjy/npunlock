@@ -84,6 +84,7 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
                      "{\"schema\":\"%s\","
                      "\"input_graph_sha256\":\"%s\",\"shave_elf_sha256\":\"%s\","
                      "\"output_graph_sha256\":\"%s\","
+                     "\"graph_contract\":{\"compiler\":\"8.3\",\"npu\":\"3720\"},"
                      "\"append\":{\"file_offset\":%zu,\"inserted_size\":%zu,"
                      "\"image_base\":%zu,\"image_size\":%zu},"
                      "\"section_table\":{\"old_offset\":%zu,\"new_offset\":%zu},"

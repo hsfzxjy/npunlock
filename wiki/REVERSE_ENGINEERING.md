@@ -1173,6 +1173,34 @@ The result covers the host-visible partitions selected by these carriers. It
 does not independently observe every hidden tile replica, prove the same
 layout on NPU4000+, or turn the packed record into a cross-generation ABI.
 
+## 39. Native blobs identify their compiler and NPU contract
+
+On 2026-10-15, inspection of the retained unary, binary, same-precision, and
+mixed-precision carriers found a dedicated ELF section named
+`compatibility_string`. Its payload is a semicolon-delimited byte string:
+
+```text
+compiler=8.3;npu=3720;t=2;elf=1.2.0;mi=7.0.4
+```
+
+The tested blobs all reported compiler 8.3 and NPU3720. The `t` field varied
+with the graph, while the loader-ELF and mapped-inference values agreed with
+the separate version-note sections. This is stronger provenance than a file
+name, manifest supplied beside the blob, or caller assertion: it travels in
+the native graph itself.
+
+`patchblob` now requires the observed vendor section type and exactly one
+`compiler=8.3` and `npu=3720` field before interpreting any ACT record. A
+controlled `compiler=8.4` mutation is rejected as unsupported. Unknown extra
+fields remain preserved rather than being assigned semantics. Because explicit
+invocation/range patching uses the same compiler-specific record layouts, it
+is gated by the embedded contract too, not only automatic positional grouping.
+
+This does not prove that the vendor format is stable, cryptographically
+authenticated, or sufficient for newer compiler families. It does remove an
+earlier provenance gap for caller-supplied native blobs and gives future ports
+a concrete version gate to extend intentionally.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -78,6 +78,22 @@ Common sections include:
 .symtab.*                    symbol tables
 ```
 
+The observed blobs also contain a vendor `compatibility_string` section with
+section type `0x8aaaaab2`. Its payload is a NUL-terminated,
+semicolon-delimited byte string such as:
+
+```text
+compiler=8.3;npu=3720;t=2;elf=1.2.0;mi=7.0.4
+```
+
+**Confirmed:** compiler 8.3 emits this section in the retained unary, binary,
+same-precision, and conversion carriers, and the compiler and NPU fields agree
+with the versions queried from the driver at graph creation. `npunlock`
+requires exactly `compiler=8.3` and `npu=3720` before interpreting ACT records.
+Missing, duplicate, or different fields are rejected rather than treated as a
+similar-enough layout. Other fields are preserved but are not yet compatibility
+claims.
+
 The exact section set, order, size, and file offsets vary by graph. Absolute
 file offsets are not an ABI. `npunlock` follows section references and
 relocations instead.

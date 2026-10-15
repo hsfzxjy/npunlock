@@ -67,8 +67,11 @@ Such changes can break a presumed source-to-ACT relationship.
 Automatic Python selection normally requires a one-to-one match between all
 topologically ordered computational nodes and validated positional ACT groups,
 with matching input arity and tensor precision. This discovery contract is
-validated only for graph compiler 8.3; Python rejects other compiler versions
-unless the caller supplies raw explicit targets after independent validation.
+validated only for graph compiler 8.3 and NPU3720. `patchblob` requires those
+values in the native blob's vendor `compatibility_string`; Python also checks
+the graph compiler version reported by the driver for graphs it compiles.
+Missing or different blob provenance is rejected, including for raw explicit
+targets, because the record parser itself is compiler-specific.
 One large custom node may instead consume several consecutive groups when a
 unique exact-cover mapping is proven: target arity, element width and contract
 flags must agree, invocation indices must be consecutive, and their element

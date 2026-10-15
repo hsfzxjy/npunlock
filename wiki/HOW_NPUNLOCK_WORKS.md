@@ -110,11 +110,18 @@ groups compatible invocation records by their observed positional identity.
 It then validates tensor arity, element count, byte span, precision, dense
 layout, CMX placement, and output separation.
 
+Before interpreting those compiler-specific records, `patchblob` reads the
+blob's vendor `compatibility_string` section. The current implementation
+requires the embedded `compiler=8.3` and `npu=3720` fields. A caller-supplied
+native blob therefore carries its own checked producer contract; the CLI does
+not rely on a filename or a user-entered version assertion.
+
 The Python frontend normally maps the complete topological computational-node
 sequence one-to-one to the discovered ACT groups when arity and tensor
 precision also agree. This positional discovery is gated to the validated
-graph compiler 8.3. It can also combine several consecutive groups for one
-large custom node when there is exactly one complete mapping and the combined
+graph compiler 8.3 by both the driver query and the blob field. It can also
+combine several consecutive groups for one large custom node when there is
+exactly one complete mapping and the combined
 targets have matching arity, element width and contract flags, consecutive
 invocation indices, and an element count that exactly covers the declared
 output tensor. This is intentionally not a general source-node-name lookup.

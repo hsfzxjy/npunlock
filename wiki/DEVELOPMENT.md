@@ -204,8 +204,11 @@ npurun build `
 `--ir` and `--native-graph` are mutually exclusive. Native-graph mode rejects
 weights, build flags, and IR worker overrides because none apply. The caller
 blob still passes through ACT discovery and the normal fail-closed patch
-validation. Its path, size, and SHA-256 are recorded; `ir2blob` is `null`
-rather than containing invented driver or compiler provenance.
+validation. The parser requires the blob's embedded `compatibility_string` to
+identify compiler 8.3 and NPU3720; no separate version assertion is needed.
+Its path, size, and SHA-256 are recorded; `ir2blob` is `null` rather than
+containing invented driver or compiler-query provenance. The patch report
+records the contract validated from the blob itself.
 
 `--patch-position` is a zero-based discovered ACT group, not a source node
 name. Positional selection first uses the original same-precision contract and

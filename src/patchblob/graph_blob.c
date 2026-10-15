@@ -18,6 +18,7 @@
 #define SHT_SYMTAB 2u
 #define SHT_RELA 4u
 #define SHT_NOBITS 8u
+#define SHT_VPU_COMPATIBILITY 0x8aaaaab2u
 #define R_VPU_64 4u
 
 typedef struct graph_section {
@@ -45,6 +46,7 @@ typedef struct graph_layout {
   size_t invocations_index;
   size_t ranges_index;
   size_t range_relocations_index;
+  size_t compatibility_index;
 } graph_layout;
 
 typedef struct graph_relocation {
@@ -132,6 +134,75 @@ static void graph_layout_release(graph_layout *layout) {
   memset(layout, 0, sizeof(*layout));
 }
 
+static bool token_starts_with(const uint8_t *token, size_t token_size, const char *prefix) {
+  size_t prefix_size = strlen(prefix);
+  return token_size >= prefix_size && memcmp(token, prefix, prefix_size) == 0;
+}
+
+static bool token_equals(const uint8_t *token, size_t token_size, const char *expected) {
+  size_t expected_size = strlen(expected);
+  return token_size == expected_size && memcmp(token, expected, expected_size) == 0;
+}
+
+static npunlock_status validate_graph_compatibility(const graph_layout *layout,
+                                                    npunlock_diagnostic *diagnostic) {
+  const graph_section *section = &layout->sections[layout->compatibility_index];
+  const uint8_t *data;
+  size_t data_size;
+  size_t offset = 0;
+  bool compiler_found = false;
+  bool npu_found = false;
+
+  if (section->type != SHT_VPU_COMPATIBILITY || section->size == 0u) {
+    return unsupported(diagnostic, "graph compatibility_string section has an unsupported form");
+  }
+  data = layout->blob.data + section->offset;
+  data_size = section->size;
+  if (data[data_size - 1u] == 0u) {
+    --data_size;
+  }
+  if (data_size == 0u) {
+    return malformed(diagnostic, "graph compatibility_string is empty");
+  }
+  while (offset < data_size) {
+    const uint8_t *token = data + offset;
+    const uint8_t *separator = memchr(token, ';', data_size - offset);
+    size_t token_size = separator == NULL ? data_size - offset : (size_t)(separator - token);
+
+    if (token_size == 0u || memchr(token, 0, token_size) != NULL) {
+      return malformed(diagnostic, "graph compatibility_string contains a malformed field");
+    }
+    if (token_starts_with(token, token_size, "compiler=")) {
+      if (compiler_found) {
+        return malformed(diagnostic,
+                         "graph compatibility_string contains duplicate compiler fields");
+      }
+      compiler_found = true;
+      if (!token_equals(token, token_size, "compiler=8.3")) {
+        return unsupported(diagnostic, "graph compiler version is not the supported 8.3 contract");
+      }
+    } else if (token_starts_with(token, token_size, "npu=")) {
+      if (npu_found) {
+        return malformed(diagnostic, "graph compatibility_string contains duplicate npu fields");
+      }
+      npu_found = true;
+      if (!token_equals(token, token_size, "npu=3720")) {
+        return unsupported(diagnostic, "graph target is not the supported NPU3720 contract");
+      }
+    }
+    if (separator == NULL) {
+      offset = data_size;
+    } else {
+      offset += token_size + 1u;
+    }
+  }
+  if (!compiler_found || !npu_found) {
+    return unsupported(diagnostic,
+                       "graph compatibility_string does not identify compiler 8.3 and NPU3720");
+  }
+  return NPUNLOCK_STATUS_OK;
+}
+
 static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
                                    npunlock_diagnostic *diagnostic) {
   const uint8_t *bytes = blob.data;
@@ -147,6 +218,7 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
   layout->invocations_index = SIZE_MAX;
   layout->ranges_index = SIZE_MAX;
   layout->range_relocations_index = SIZE_MAX;
+  layout->compatibility_index = SIZE_MAX;
   if (blob.size < ELF64_HEADER_SIZE ||
       memcmp(bytes,
              "\x7f"
@@ -227,6 +299,7 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
     MATCH_REQUIRED(invocations_index, ".text.ActKernelInvocations")
     MATCH_REQUIRED(ranges_index, ".text.ActKernelRanges")
     MATCH_REQUIRED(range_relocations_index, ".rlt.text.ActKernelRanges")
+    MATCH_REQUIRED(compatibility_index, "compatibility_string")
 #undef MATCH_REQUIRED
   }
   if (layout->kernel_text_index == SIZE_MAX || layout->params_index == SIZE_MAX ||
@@ -234,6 +307,10 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
       layout->range_relocations_index == SIZE_MAX) {
     graph_layout_release(layout);
     return unsupported(diagnostic, "graph does not contain the required ACT carrier sections");
+  }
+  if (layout->compatibility_index == SIZE_MAX) {
+    graph_layout_release(layout);
+    return unsupported(diagnostic, "graph does not contain a compatibility_string section");
   }
   if (layout->sections[layout->kernel_text_index].type != SHT_PROGBITS ||
       layout->sections[layout->params_index].type != SHT_PROGBITS ||
@@ -249,6 +326,13 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
       layout->sections[layout->range_relocations_index].size % ELF64_RELA_SIZE != 0) {
     graph_layout_release(layout);
     return malformed(diagnostic, "ACT carrier section sizes are malformed");
+  }
+  {
+    npunlock_status status = validate_graph_compatibility(layout, diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      graph_layout_release(layout);
+      return status;
+    }
   }
   return NPUNLOCK_STATUS_OK;
 }

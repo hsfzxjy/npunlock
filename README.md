@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Runtime self-check kernels confirmed the NPU3720 0x28-byte tensor record and zero upper data-address words for host-visible FP16 and FP32 paths. Nonzero high addresses and other NPU generations remain unsupported. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#38-runtime-descriptors-confirm-the-npu3720-ptr32-contract).
+> **Latest breakthrough — 2026-10-15:** Native graph blobs carry a `compatibility_string` identifying their compiler and NPU target. `npunlock` now validates `compiler=8.3` and `npu=3720` from the blob before interpreting ACT records. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#39-native-blobs-identify-their-compiler-and-npu-contract).
 
 ## Quick example
 
