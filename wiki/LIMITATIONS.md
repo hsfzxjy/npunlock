@@ -171,6 +171,10 @@ ACT relocation sources are likewise restricted to the observed
 `.symtab.tasks`/`.symstrtab` section symbols and VPU runtime-table index
 `0xff20`. Tensor data pointers must use runtime symbol 0. Other symbol-table
 layouts and loader namespaces are not inferred from similar-looking records.
+Only the observed ACT relocation types 3, 4, and 5 are accepted. Their eight-
+or four-byte target writes must be naturally aligned and contained within the
+target section. Custom-kernel pointers use type 4 (`R_VPU_32`); wider device
+addresses are not established by the ELF64 relocation record.
 
 ## Precision
 

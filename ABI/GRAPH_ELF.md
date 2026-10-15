@@ -147,9 +147,19 @@ relocations instead.
 
 Observed ACT relocation tables use 24-byte ELF64 `SHT_RELA` entries, flags
 `0x40`, alignment 8, and names derived from their target section, such as
-`.rlt.text.KernelParams`. Relocation type 4 is used for the 64-bit ACT pointers
-that `npunlock` follows. The project supports only the exact uses described
-here.
+`.rlt.text.KernelParams`. Relocation type 4 is `R_VPU_32`: it writes
+`S + A` into a four-byte target field. It is used for the ACT code, parameter,
+and tensor-address references that `npunlock` follows. This agrees with the
+kernel ABI's use of low-32-bit addresses; the 64-bit `r_offset` and `r_addend`
+fields in an ELF64 relocation entry do not make the destination field 64 bits.
+
+The supported ACT sections also contain type 3 (`R_VPU_64_LSHIFT`) and type 5
+(`R_VPU_32_RTM`) loader relocations in invocation metadata. `npunlock` does not
+interpret those fields as custom-kernel pointers, but it validates every entry:
+type 3 must name an aligned eight-byte destination, types 4 and 5 must name
+aligned four-byte destinations, and the complete write must lie inside the
+section selected by `sh_info`. Other relocation types are outside the current
+ACT carrier contract.
 
 Two source namespaces occur in the supported compiler-8.3 blobs:
 
@@ -161,7 +171,7 @@ Two source namespaces occur in the supported compiler-8.3 blobs:
 The supported ordinary symbols are zero-valued section symbols named
 `sym_kernelTextSection`, `sym_kernelDataSection`, or
 `sym_kernelParamsSection`, and the name must agree with the referenced
-section. Tensor descriptor data pointers use runtime symbol 0,
+section. Tensor descriptor data pointers use a type-4 write from runtime symbol 0,
 `VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR`, plus a CMX offset in the relocation
 addend. Runtime symbols 2, 5, and 6 also occur in surrounding invocation
 metadata, but `npunlock` does not assign them a custom-kernel contract. Values

@@ -246,6 +246,11 @@ runtime symbol-table index `0xff20`. Tensor data pointers specifically use
 runtime symbol 0 plus a checked CMX addend. An arbitrary out-of-range ELF
 `sh_link` is not treated as a loader symbol table.
 
+The pointers followed by `patchblob` use relocation type 4, `R_VPU_32`, and
+therefore write four bytes despite the ELF64 relocation container. Every ACT
+relocation entry is checked for a supported type, natural write alignment, and
+a complete destination inside its target section before discovery or patching.
+
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
 carrier and same-precision scalar-second-input binary carrier.

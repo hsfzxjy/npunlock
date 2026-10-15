@@ -24,7 +24,9 @@
 #define SHT_NOBITS 8u
 #define SHT_VPU_PLATFORM_INFO 0x8aaaaaafu
 #define SHT_VPU_COMPATIBILITY 0x8aaaaab2u
-#define R_VPU_64 4u
+#define R_VPU_64_LSHIFT 3u
+#define R_VPU_32 4u
+#define R_VPU_32_RTM 5u
 #define VPU_RT_SYMTAB 0xff20u
 #define VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR 0u
 #define VPU_NNRD_SYM_LAST 7u
@@ -591,6 +593,8 @@ static npunlock_status resolve_relocation(const graph_layout *layout, size_t rel
   const char *expected_relocation_name;
   const char *expected_symbol_name;
   const char *symbol_name;
+  size_t write_offset;
+  size_t write_size;
 
   if (relocation_index >= layout->section_count) {
     return malformed(diagnostic, "relocation section index is invalid");
@@ -625,6 +629,22 @@ static npunlock_status resolve_relocation(const graph_layout *layout, size_t rel
   relocation->symbol = (uint32_t)(info >> 32);
   relocation->type = (uint32_t)info;
   relocation->addend = read_i64(entry + 16);
+  switch (relocation->type) {
+  case R_VPU_64_LSHIFT:
+    write_size = 8u;
+    break;
+  case R_VPU_32:
+  case R_VPU_32_RTM:
+    write_size = 4u;
+    break;
+  default:
+    return unsupported(diagnostic, "ACT relocation uses an unsupported relocation type");
+  }
+  if (!u64_to_size(relocation->target_offset, &write_offset) ||
+      relocation->target_offset % write_size != 0u ||
+      !range_in_bounds(write_offset, write_size, target->size)) {
+    return malformed(diagnostic, "ACT relocation write is outside or misaligned in its target");
+  }
   relocation->special_source = false;
   relocation->source_section_index = SIZE_MAX;
   if (relocations->link >= layout->section_count) {
@@ -702,7 +722,7 @@ static npunlock_status find_pointer_relocation(const graph_layout *layout, size_
       if (status != NPUNLOCK_STATUS_OK) {
         return status;
       }
-      if (candidate.target_offset == target_offset && candidate.type == R_VPU_64 &&
+      if (candidate.target_offset == target_offset && candidate.type == R_VPU_32 &&
           ((require_special && candidate.special_source &&
             candidate.symbol == VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR) ||
            (!require_special && !candidate.special_source &&
@@ -903,7 +923,7 @@ static npunlock_status count_data_pointer_relocations(const graph_layout *layout
         return status;
       }
       if (relocation.special_source && relocation.symbol == VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR &&
-          relocation.type == R_VPU_64 && relocation.target_offset >= base &&
+          relocation.type == R_VPU_32 && relocation.target_offset >= base &&
           relocation.target_offset < limit) {
         ++special_count;
       }
@@ -1208,7 +1228,7 @@ static npunlock_status find_range_relocation(const graph_layout *layout, uint32_
       return status;
     }
     if (candidate.target_offset == (uint64_t)range_index * ACT_RANGE_SIZE + 8u &&
-        candidate.type == R_VPU_64 && !candidate.special_source &&
+        candidate.type == R_VPU_32 && !candidate.special_source &&
         candidate.source_section_index == layout->kernel_text_index) {
       *found = candidate;
       ++matches;

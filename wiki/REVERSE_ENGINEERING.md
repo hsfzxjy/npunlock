@@ -1329,6 +1329,37 @@ This establishes a safer boundary for compiler-8.3/NPU3720 ACT carriers. It
 does not establish that `0xff20`, the symbol names, or the runtime numbering
 remain compatible with another compiler family or NPU generation.
 
+## 45. ACT pointer relocations write 32-bit fields
+
+On 2026-10-15, the relocation type used by the ACT pointer fields was checked
+against the compatible VPU ELF definitions and every current local native
+graph artifact. The implementation had called value 4 `R_VPU_64`, apparently
+because the records use the ELF64 `Rela` container. Value 4 is actually
+`R_VPU_32`: it computes `S + A` and writes a four-byte destination.
+
+This matches the record geometry. Code references in `ActKernelRange`,
+parameter references in `ActKernelInvocation`, and pointer fields in
+`KernelParams` all occupy four-byte slots. It also agrees with the separately
+tested NPU3720 entry contract, which consumes the low 32 bits of tensor
+addresses. The 64-bit relocation offset and addend describe the relocation;
+they do not determine its destination width.
+
+Across 80 retained and locally generated graph artifacts, 4,688 entries in
+the three supported ACT relocation families used only type 3
+(`R_VPU_64_LSHIFT`), type 4 (`R_VPU_32`), and type 5 (`R_VPU_32_RTM`). Every
+type-3 write was eight-byte aligned and in bounds; every type-4 or type-5 write
+was four-byte aligned and in bounds. Type 4 was the only operation used by the
+custom-kernel pointers that `patchblob` interprets.
+
+The implementation now uses the correct name and validates every entry in
+those ACT relocation tables, not only the pointer selected for patching.
+Unknown relocation types and writes that are misaligned or extend beyond the
+target section are rejected offline. Controlled unsupported-type and
+out-of-bounds mutations exercise both rejection paths.
+
+This does not make every type-3 or type-5 field part of the custom-kernel ABI,
+nor does it establish support for wider addresses or other relocation families.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

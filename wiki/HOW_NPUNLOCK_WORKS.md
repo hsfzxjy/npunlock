@@ -124,6 +124,10 @@ the observed `.symtab.tasks` and `.symstrtab` records with matching section
 symbol names. Loader-provided references must use the exact VPU runtime-table
 index `0xff20`; tensor data pointers use runtime symbol 0. This prevents an
 unknown non-section `sh_link` from being mistaken for a valid CMX address.
+The pointer relocation itself is the four-byte `R_VPU_32` operation, matching
+the low-32-bit addresses consumed by the NPU3720 kernel ABI. Every ACT
+relocation write, including surrounding loader metadata that `npunlock` does
+not otherwise interpret, must remain aligned and inside its target section.
 
 The Python frontend normally maps the complete topological computational-node
 sequence one-to-one to the discovered ACT groups when arity and tensor

@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** ACT relocations use separate section-symbol and VPU-runtime namespaces; tensor addresses specifically use runtime symbol 0. `npunlock` now validates that boundary instead of accepting any non-section link as loader-managed. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#44-act-relocation-sources-have-two-distinct-namespaces).
+> **Latest breakthrough — 2026-10-15:** ACT pointer relocation type 4 is a four-byte `R_VPU_32` write, despite its ELF64 container. `npunlock` now validates the type, alignment, and destination bounds of every ACT relocation before patching. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#45-act-pointer-relocations-write-32-bit-fields).
 
 ## Quick example
 
