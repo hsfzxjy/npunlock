@@ -297,10 +297,12 @@ print(prepared.explain())
 ```
 
 `prepared.groups` contains immutable `ActGroup` values. Each group reports its
-index, input count, FP16/FP32 dtype when uniform, total element and byte span,
-stable per-invocation input/output element counts, contract flags, and
-invocation/range indices. The per-invocation count properties return `None`
-when targets vary, in which case inspect `group.targets` individually.
+index, input count, FP16/FP32 dtype when uniform, aggregate descriptor element
+and byte coverage, stable per-invocation input/output element counts, contract
+flags, and invocation/range indices. `group.element_count` and
+`group.span_bytes` are not graph-level tensor sizes: tile replicas may duplicate
+the same logical work. The per-invocation count properties return `None` when
+targets vary, in which case inspect `group.targets` individually.
 `prepared.mappings` records whether each custom node has an automatic mapping
 or needs an explicit caller choice.
 
@@ -321,8 +323,14 @@ program = prepared.build(
 
 A binding may use one `ActGroup`, its integer index, or an ordered sequence of
 groups for a compiler-partitioned custom operation. Plan creation checks input
-arity, exact-cover requirements for multi-group operations, duplicate group
-assignment, and completeness before compiling the C kernels.
+arity, tensor precision, exact-cover requirements for multi-group operations,
+duplicate group assignment, and completeness before compiling the C kernels.
+
+Discovered positional mapping is limited to graph compiler 8.3. A different
+compiler version is rejected before discovery because the native identity bytes
+and grouping rules have not been validated there. Raw `_patch_targets` bypass
+positional discovery for callers who have independently validated another
+layout; they are deliberately an advanced, caller-owned contract.
 
 The binding key is a symbolic `Tensor` from the caller's graph, not an IR node
 name recovered from the native blob. Native blobs do not expose a proven

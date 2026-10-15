@@ -65,12 +65,22 @@ operation on the DPU, fuse it, optimize it away, or insert conversion groups.
 Such changes can break a presumed source-to-ACT relationship.
 
 Automatic Python selection normally requires a one-to-one match between all
-topologically ordered computational nodes and validated positional ACT groups.
+topologically ordered computational nodes and validated positional ACT groups,
+with matching input arity and tensor precision. This discovery contract is
+validated only for graph compiler 8.3; Python rejects other compiler versions
+unless the caller supplies raw explicit targets after independent validation.
 One large custom node may instead consume several consecutive groups when a
 unique exact-cover mapping is proven: target arity, element width and contract
 flags must agree, invocation indices must be consecutive, and their element
 counts must sum to the declared output size. It is not a general mapping from
 source node names to native ranges.
+
+An `ActGroup`'s aggregate element count is descriptor coverage, not a logical
+graph tensor size. One logical 32-element FP16 carrier exposed four 16-element
+invocations: two partitions duplicated across two tiles. Summing them gives 64,
+while treating every equal count as a replica would give 16. The current
+metadata cannot distinguish those cases without schedule/DMA routing analysis,
+so single-group positional mapping does not claim an element-count proof.
 
 Advanced explicit invocation/range targets remain available only for layouts
 the caller has independently validated. DPU-only graphs have no patchable ACT

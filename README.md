@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** A runtime-indexed, invocation-local function table now dispatches among three same-file helpers without kernel data or unresolved relocations. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#34-invocation-local-function-table).
+> **Latest breakthrough — 2026-10-15:** ACT descriptor counts are not graph tensor sizes: one 32-element FP16 operation exposed four 16-element invocations because partitions were duplicated across tiles. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#35-descriptor-coverage-is-not-logical-coverage).
 
 ## Quick example
 

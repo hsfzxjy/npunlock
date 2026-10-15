@@ -91,6 +91,7 @@ _EXECUTION_NUMPY_DTYPES = {
     "i32": np.dtype("int32"),
     "i64": np.dtype("int64"),
 }
+_VALIDATED_POSITIONAL_COMPILER_VERSION = (8, 3)
 
 
 def configure(*, movi_dll_dir: str | Path | None) -> None:
@@ -235,16 +236,18 @@ class ActGroup:
 
     @property
     def element_count(self) -> int:
+        """Return aggregate descriptor coverage, not a graph-level tensor size."""
+
         if self.targets and all(isinstance(target, PatchTargetV2) for target in self.targets):
-            values = {target.output.element_count for target in self.targets if isinstance(target, PatchTargetV2)}
-            return next(iter(values)) if len(values) == 1 else sum(values)
+            return sum(target.output.element_count for target in self.targets if isinstance(target, PatchTargetV2))
         return sum(target.element_count for target in self.targets)
 
     @property
     def span_bytes(self) -> int:
+        """Return aggregate descriptor span, which may include tile replicas."""
+
         if self.targets and all(isinstance(target, PatchTargetV2) for target in self.targets):
-            values = {target.output.span_bytes for target in self.targets if isinstance(target, PatchTargetV2)}
-            return next(iter(values)) if len(values) == 1 else sum(values)
+            return sum(target.output.span_bytes for target in self.targets if isinstance(target, PatchTargetV2))
         return sum(target.span_bytes for target in self.targets)
 
     @property
@@ -329,7 +332,7 @@ def _act_group_summary(group: ActGroup) -> str:
     output_elements = group.per_invocation_output_element_count
     return (
         f"group[{group.index}](inputs={group.input_count}, input_dtypes={inputs}, "
-        f"output_dtype={group.output_dtype or 'unknown'}, elements={group.element_count}, "
+        f"output_dtype={group.output_dtype or 'unknown'}, descriptor_elements={group.element_count}, "
         f"invocation_elements=({input_elements})->"
         f"{output_elements if output_elements is not None else 'varies'}, "
         f"input_1_scalar={group.input_1_scalar}, invocations={group.invocation_indices})"
@@ -913,6 +916,50 @@ def compile_kernel(
     return result
 
 
+def _legacy_target_dtype(target: PatchTarget) -> str | None:
+    fp16 = bool(target.contract_flags & 0x04)
+    fp32 = bool(target.contract_flags & 0x20)
+    if fp16 == fp32:
+        return None
+    return "f16" if fp16 else "f32"
+
+
+def _custom_targets_mismatch(
+    node: Node,
+    targets: tuple[PatchTargetContract, ...],
+    *,
+    require_partition_cover: bool,
+) -> str | None:
+    if len(node.outputs) != 1 or not targets:
+        return "custom mapping requires one output and at least one ACT target"
+    expected_inputs = tuple(value.dtype for value in node.inputs)
+    expected_output = node.outputs[0].dtype
+    if all(isinstance(target, PatchTarget) for target in targets):
+        legacy = tuple(target for target in targets if isinstance(target, PatchTarget))
+        dtypes = {_legacy_target_dtype(target) for target in legacy}
+        input_counts = {target.input_count for target in legacy}
+        if input_counts != {len(expected_inputs)}:
+            return "ACT group does not match its input arity"
+        if len(dtypes) != 1 or None in dtypes:
+            return "ACT target precision flags are inconsistent or unsupported"
+        dtype = next(iter(dtypes))
+        if expected_inputs != (dtype,) * len(expected_inputs) or expected_output != dtype:
+            return "ACT tensor precisions do not match the custom node"
+        counts = tuple(target.element_count for target in legacy)
+    elif all(isinstance(target, PatchTargetV2) for target in targets):
+        versioned = tuple(target for target in targets if isinstance(target, PatchTargetV2))
+        for target in versioned:
+            input_dtypes = tuple(tensor.dtype for tensor in target.tensors if tensor.role == "input")
+            if input_dtypes != expected_inputs or target.output.dtype != expected_output:
+                return "ACT tensor precisions do not match the custom node"
+        counts = tuple(target.output.element_count for target in versioned)
+    else:
+        return "ACT targets mix incompatible contract versions"
+    if require_partition_cover and sum(counts) != prod(node.outputs[0].shape):
+        return "ACT targets do not match the custom node's logical output coverage"
+    return None
+
+
 def _combined_custom_targets(
     node: Node,
     groups: tuple[tuple[PatchTarget, ...], ...],
@@ -945,7 +992,7 @@ def _combined_custom_targets(
         return None
     if len({(target.invocation_index, target.range_index) for target in targets}) != len(targets):
         return None
-    if sum(target.element_count for target in targets) != prod(output.shape):
+    if _custom_targets_mismatch(node, targets, require_partition_cover=True) is not None:
         return None
     return targets
 
@@ -963,11 +1010,12 @@ def _automatic_group_indices(
         selected = tuple((node_groups[node],) for node in custom_nodes)
         for node, indices in zip(custom_nodes, selected):
             targets = discovered_groups[indices[0]]
-            if any(target.input_count != len(node.inputs) for target in targets):
+            mismatch = _custom_targets_mismatch(node, targets, require_partition_cover=False)
+            if mismatch is not None:
                 return (
                     None,
                     f"discovered ACT group {indices[0]} for custom node "
-                    f"{node.name or '<unnamed>'!r} does not match its input arity",
+                    f"{node.name or '<unnamed>'!r} is incompatible: {mismatch}",
                 )
         return selected, "one-to-one positional mapping"
 
@@ -997,7 +1045,10 @@ def _automatic_group_indices(
                 targets = groups[0]
                 if not targets:
                     continue
-                if node in custom_nodes and any(target.input_count != len(node.inputs) for target in targets):
+                if (
+                    node in custom_nodes
+                    and _custom_targets_mismatch(node, targets, require_partition_cover=False) is not None
+                ):
                     continue
             else:
                 targets = _combined_custom_targets(node, groups)
@@ -1021,6 +1072,24 @@ def _automatic_group_indices(
 
 
 PatchTargetContract = PatchTarget | PatchTargetV2
+
+
+def _require_validated_positional_compiler(
+    serialized: SerializedIR,
+    embedded_targets: tuple[tuple[PatchTargetContract, ...], ...] | None,
+    compiler_version: tuple[int, int],
+) -> None:
+    if (
+        serialized.custom_nodes
+        and embedded_targets is None
+        and compiler_version != _VALIDATED_POSITIONAL_COMPILER_VERSION
+    ):
+        expected = ".".join(str(value) for value in _VALIDATED_POSITIONAL_COMPILER_VERSION)
+        actual = ".".join(str(value) for value in compiler_version)
+        raise ValueError(
+            f"positional ACT discovery is validated only for graph compiler {expected}, got {actual}; "
+            "use raw explicit _patch_targets only after independently validating this compiler's layout"
+        )
 
 
 def _legacy_targets_from_v2(
@@ -1216,8 +1285,9 @@ class BuildPlan:
                 input_text = ",".join(input_dtypes) if input_dtypes is not None else "unknown"
                 lines.append(
                     f"    group[{index}]: inputs={group.input_count} input_dtypes={input_text} "
-                    f"output_dtype={group.output_dtype or 'unknown'} elements={group.element_count} "
-                    f"span={group.span_bytes} invocations={group.invocation_indices} "
+                    f"output_dtype={group.output_dtype or 'unknown'} "
+                    f"descriptor_elements={group.element_count} descriptor_span={group.span_bytes} "
+                    f"invocations={group.invocation_indices} "
                     f"ranges={group.range_indices}"
                 )
         return "\n".join(lines)
@@ -1462,7 +1532,7 @@ class PreparedGraph:
             output_elements = group.per_invocation_output_element_count
             lines.append(
                 f"  [{group.index}] inputs={group.input_count} dtype={dtype} "
-                f"elements={group.element_count} span={group.span_bytes} "
+                f"descriptor_elements={group.element_count} descriptor_span={group.span_bytes} "
                 f"per-invocation=({input_elements})->"
                 f"{output_elements if output_elements is not None else 'varies'} "
                 f"targets={len(group.targets)} flags={flags}"
@@ -1558,24 +1628,13 @@ class PreparedGraph:
                 groups = tuple(self.groups[index].targets for index in indices)
                 if len(groups) == 1:
                     targets = groups[0]
-                    if any(target.input_count != len(node.inputs) for target in targets):
+                    mismatch = _custom_targets_mismatch(node, targets, require_partition_cover=False)
+                    if mismatch is not None:
                         raise ValueError(
                             f"ACT group {indices[0]} does not match custom node "
-                            f"{node.name or '<unnamed>'!r} input arity"
+                            f"{node.name or '<unnamed>'!r}: {mismatch}"
                         )
                     if targets and all(isinstance(target, PatchTargetV2) for target in targets):
-                        input_dtypes = {
-                            tuple(tensor.dtype for tensor in target.tensors if tensor.role == "input")
-                            for target in targets
-                        }
-                        output_dtypes = {target.output.dtype for target in targets}
-                        expected_inputs = tuple(value.dtype for value in node.inputs)
-                        expected_output = node.outputs[0].dtype
-                        if input_dtypes != {expected_inputs} or output_dtypes != {expected_output}:
-                            raise ValueError(
-                                f"ACT group {indices[0]} tensor precisions do not match custom node "
-                                f"{node.name or '<unnamed>'!r}"
-                            )
                         legacy_targets = _legacy_targets_from_v2(targets)
                         if legacy_targets is not None:
                             targets = legacy_targets
@@ -1747,6 +1806,7 @@ def prepare(
         timeout_ms=timeout_ms,
         worker=ir_worker,
     )
+    _require_validated_positional_compiler(serialized, embedded_targets, ir_result.compiler_version)
     groups, automatic_indices, mappings = _discover_prepared_contract(
         graph,
         serialized,
@@ -1918,6 +1978,7 @@ def load_prepared(
         raise ValueError("prepared bundle build_flags do not preserve the caller graph contract")
     provenance = _prepared_provenance(manifest["provenance"], carrier)
     saved_indices = _prepared_bindings(manifest["bindings"], serialized.custom_nodes)
+    _require_validated_positional_compiler(serialized, embedded_targets, provenance.compiler_version)
 
     native = libraries or _default_native_libraries(native_dir)
     current = native.query_ir_provenance(timeout_ms=timeout_ms, worker=ir_worker)

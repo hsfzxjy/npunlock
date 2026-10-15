@@ -142,6 +142,22 @@ Automatic grouping must distinguish replicas from partitions: summing their
 element counts would double-count the logical tensor, while patching only the
 currently visible replica would depend on compiler routing.
 
+The same warning also applies to ordinary same-precision groups, not only the
+conversion example above. A logical 32-element FP16 unary carrier exposed one
+group containing four 16-element invocations. Runtime validation showed that
+the group represented two 16-element partitions duplicated across two tiles,
+so its aggregate descriptor count was 64. Patching the complete group produced
+the correct 32-element result. Neither a sum nor a set of equal invocation
+counts can identify logical output coverage without the scheduling and DMA
+routing relationship.
+
+```text
+invocation 0  tile 0  input +0x000000  output +0x000040
+invocation 1  tile 1  input +0x200000  output +0x200040
+invocation 2  tile 0  input +0x000020  output +0x000060
+invocation 3  tile 1  input +0x200020  output +0x200060
+```
+
 ## Positional operation groups
 
 The compiler often emits several consecutive invocations for one logical ACT
@@ -160,7 +176,8 @@ true:
 1. the computational-node sequence maps uniquely to the positional ACT groups
    in topological order;
 2. each ordinary computational node consumes one group;
-3. a custom node normally consumes one group with matching input arity; and
+3. a custom node normally consumes one group with matching input arity and
+   tensor precision; and
 4. when a large custom node consumes several consecutive groups, every target
    has matching arity, element width and contract flags, invocation indices are
    consecutive, and the summed element count exactly covers its declared
@@ -169,6 +186,11 @@ true:
 Graphs containing DPU operations, fused nodes, inserted conversions, or other
 ambiguous mappings need an explicit validated target selection. A source node
 name is not stored as a reliable range selector in the native blob.
+
+The positional identity slices above are validated only for graph compiler
+8.3. The Python frontend refuses discovered positional mapping from another
+compiler version. Raw invocation/range targets remain available when the
+caller has independently validated a different compiler layout.
 
 ## ACT range records
 

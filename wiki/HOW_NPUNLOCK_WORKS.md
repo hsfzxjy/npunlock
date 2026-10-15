@@ -111,14 +111,22 @@ It then validates tensor arity, element count, byte span, precision, dense
 layout, CMX placement, and output separation.
 
 The Python frontend normally maps the complete topological computational-node
-sequence one-to-one to the discovered ACT groups. It can also combine several
-consecutive groups for one large custom node when there is exactly one complete
-mapping and the combined targets have matching arity, element width and
-contract flags, consecutive invocation indices, and an element count that
-exactly covers the declared output tensor. This is intentionally not a general
-source-node-name lookup. Fused, optimized-away, inserted-conversion,
-DPU-containing, or otherwise ambiguous graphs require explicit validated
-targets or are rejected.
+sequence one-to-one to the discovered ACT groups when arity and tensor
+precision also agree. This positional discovery is gated to the validated
+graph compiler 8.3. It can also combine several consecutive groups for one
+large custom node when there is exactly one complete mapping and the combined
+targets have matching arity, element width and contract flags, consecutive
+invocation indices, and an element count that exactly covers the declared
+output tensor. This is intentionally not a general source-node-name lookup.
+Fused, optimized-away, inserted-conversion, DPU-containing, or otherwise
+ambiguous graphs require explicit validated targets or are rejected.
+
+Counts inside one group describe invocation descriptors, not necessarily the
+logical graph tensor. One 32-element FP16 group contained four 16-element
+invocations because two partitions were duplicated across two tiles. For this
+reason, the frontend does not validate a one-group mapping by summing its
+invocation counts. Multi-group exact-cover mapping is a separate, narrower
+contract over consecutive groups that were observed as partitions.
 
 The version 2 contract records each invocation tensor separately—role,
 precision, element count, byte span, and observed layout flags. It is currently

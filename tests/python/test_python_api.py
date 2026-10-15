@@ -41,6 +41,17 @@ class SymbolicTests(unittest.TestCase):
                 npu.PatchTarget(5, 5, 1, 16, 32, 0x1F),
             ),
         )
+        conversion_tensors = (
+            npu.PatchTensorContract("input", 0, "f32", 16, 64, 0x07),
+            npu.PatchTensorContract("output", 0, "f16", 16, 32, 0x0F),
+        )
+        conversion = npu.ActGroup(
+            4,
+            (
+                npu.PatchTargetV2(6, 6, conversion_tensors, 1),
+                npu.PatchTargetV2(7, 7, conversion_tensors, 1),
+            ),
+        )
 
         self.assertEqual(dense.per_invocation_input_element_counts, (8, 8))
         self.assertEqual(dense.per_invocation_output_element_count, 8)
@@ -49,6 +60,9 @@ class SymbolicTests(unittest.TestCase):
         self.assertEqual(five_input.per_invocation_input_element_counts, (8, 8, 8, 8, 8))
         self.assertIsNone(varying.per_invocation_input_element_counts)
         self.assertIsNone(varying.per_invocation_output_element_count)
+        self.assertEqual(conversion.element_count, 32)
+        self.assertEqual(conversion.span_bytes, 64)
+        self.assertEqual(conversion.per_invocation_output_element_count, 16)
 
     def test_dynamic_unknown_operator_and_attributes(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
@@ -637,7 +651,7 @@ class FakeNative:
         self.compile_ir_count = 0
         self.shave_calls: list[tuple[bytes, dict[str, object]]] = []
         self.patch_calls: list[tuple[bytes, bytes, tuple[npu.PatchTarget, ...]]] = []
-        self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 8, 16),),)
+        self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 32, 64),),)
         self.infer_dtype = "f16"
         self.sessions: list[FakeInferenceSession] = []
 
@@ -869,6 +883,7 @@ class CompilationFlowTests(unittest.TestCase):
             _dtype=x.dtype,
         )
         fake = FakeNative()
+        fake.discovery_groups = ((npu.PatchTarget(0, 0, 1, 32, 64),),)
         program = npu.compile(
             npu.Graph([x], [y]),
             native_dir="unused",
@@ -877,8 +892,72 @@ class CompilationFlowTests(unittest.TestCase):
             libraries=fake,  # type: ignore[arg-type]
         )
         self.assertEqual(fake.discovery_blob, b"native")
-        self.assertEqual(fake.patch_args[2], (npu.PatchTarget(0, 0, 1, 8, 16),))
+        self.assertEqual(fake.patch_args[2], (npu.PatchTarget(0, 0, 1, 32, 64),))
         self.assertEqual(program.graph_blob, b"patched")
+
+    def test_positional_mapping_rejects_dtype_mismatch(self) -> None:
+        f32 = npu.input("f32", shape=(1, 32), dtype="f32")
+        converted = npu.custom(f32, source=b"kernel", carrier="Convert", _dtype="f16", _name="converted")
+        dtype_fake = FakeNative()
+        dtype_fake.discovery_groups = ((npu.PatchTarget(0, 0, 1, 32, 64, 0x1F),),)
+        dtype_prepared = npu.prepare(
+            npu.Graph([f32], [converted]),
+            native_dir="unused",
+            libraries=dtype_fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(dtype_prepared.mappings[0].status, "explicit-required")
+        self.assertIn("tensor precisions", dtype_prepared.mappings[0].reason)
+        with self.assertRaisesRegex(ValueError, "tensor precisions"):
+            dtype_prepared.plan(bindings={converted: dtype_prepared.groups[0]})
+
+    def test_one_group_may_duplicate_partition_coverage_across_tiles(self) -> None:
+        f16 = npu.input("f16", shape=(1, 32), dtype="f16")
+        output = npu.custom(f16, source=b"kernel", carrier="Abs", _name="output")
+        targets = tuple(npu.PatchTarget(index, index, 1, 16, 32, 0x1F) for index in range(4))
+        fake = FakeNative()
+        fake.discovery_groups = (targets,)
+        prepared = npu.prepare(
+            npu.Graph([f16], [output]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(prepared.mappings[0].status, "automatic")
+        self.assertEqual(prepared.plan()._target_groups, (targets,))
+
+    def test_positional_discovery_requires_validated_compiler_version(self) -> None:
+        class UnvalidatedCompilerNative(FakeNative):
+            def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
+                result = super().compile_ir(xml, weights, **kwargs)
+                return npu.IrCompileResult(
+                    result.graph_blob,
+                    result.driver_index,
+                    result.device_index,
+                    result.driver_version,
+                    result.vendor_id,
+                    result.device_id,
+                    result.graph_extension_version,
+                    (8, 4),
+                )
+
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
+        with self.assertRaisesRegex(ValueError, "validated only for graph compiler 8.3"):
+            npu.prepare(
+                npu.Graph([x], [y]),
+                native_dir="unused",
+                libraries=UnvalidatedCompilerNative(),  # type: ignore[arg-type]
+            )
+
+        target = npu.PatchTarget(0, 0, 1, 32, 64)
+        explicit = npu.custom(x, source=b"kernel", carrier="Abs", _name="explicit", _patch_targets=[target])
+        prepared = npu.prepare(
+            npu.Graph([x], [explicit]),
+            native_dir="unused",
+            libraries=UnvalidatedCompilerNative(),  # type: ignore[arg-type]
+        )
+        self.assertEqual(prepared.mappings[0].status, "raw-explicit")
 
     def test_large_custom_op_accepts_exact_cover_partition_groups(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f32")
@@ -1487,8 +1566,8 @@ class CompilationFlowTests(unittest.TestCase):
             _shape=x.shape,
             _dtype=x.dtype,
         )
-        ordinary_group = (npu.PatchTarget(0, 0, 1, 16, 32),)
-        custom_group = (npu.PatchTarget(1, 1, 1, 16, 32),)
+        ordinary_group = (npu.PatchTarget(0, 0, 1, 32, 64),)
+        custom_group = (npu.PatchTarget(1, 1, 1, 32, 64),)
         fake = FakeNative()
         fake.discovery_groups = (ordinary_group, custom_group)
         npu.compile(
@@ -1515,10 +1594,10 @@ class CompilationFlowTests(unittest.TestCase):
             _dtype="f16",
         )
         output = npu.Sqrt(mixed, _shape=shape, _dtype="f16")
-        unary_zero = (npu.PatchTarget(0, 0, 1, 16, 32),)
-        unary_one = (npu.PatchTarget(1, 1, 1, 16, 32),)
-        binary = (npu.PatchTarget(2, 2, 2, 8, 16),)
-        unary_three = (npu.PatchTarget(3, 3, 1, 8, 16),)
+        unary_zero = (npu.PatchTarget(0, 0, 1, 32, 64),)
+        unary_one = (npu.PatchTarget(1, 1, 1, 32, 64),)
+        binary = (npu.PatchTarget(2, 2, 2, 32, 64),)
+        unary_three = (npu.PatchTarget(3, 3, 1, 32, 64),)
         fake = FakeNative()
         fake.discovery_groups = (unary_zero, unary_one, binary, unary_three)
         npu.compile(
@@ -1566,8 +1645,8 @@ class CompilationFlowTests(unittest.TestCase):
             _dtype=x.dtype,
             _name="second",
         )
-        group_zero = (npu.PatchTarget(0, 0, 1, 16, 32),)
-        group_one = (npu.PatchTarget(1, 1, 1, 16, 32),)
+        group_zero = (npu.PatchTarget(0, 0, 1, 32, 64),)
+        group_one = (npu.PatchTarget(1, 1, 1, 32, 64),)
         fake = FakeNative()
         fake.discovery_groups = (group_zero, group_one)
         program = npu.compile(

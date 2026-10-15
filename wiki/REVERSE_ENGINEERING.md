@@ -1040,6 +1040,40 @@ runtime table dispatch, not global or statically initialized pointer tables,
 tensor-sourced targets, external callbacks, recursion, or arbitrary indirect
 call graphs.
 
+## 35. Descriptor coverage is not logical coverage
+
+On 2026-10-15, an attempted mapping hardening assumed that a custom node's
+logical output size should equal either the sum of one ACT group's invocation
+counts or every invocation count when the group contains replicas. A real
+32-element FP16 unary carrier immediately disproved both choices: its single
+group contained four 16-element invocations, for aggregate descriptor coverage
+of 64 elements.
+
+```text
+invocation 0  tile 0  input +0x000000  output +0x000040
+invocation 1  tile 1  input +0x200000  output +0x200040
+invocation 2  tile 0  input +0x000020  output +0x000060
+invocation 3  tile 1  input +0x200020  output +0x200060
+```
+
+The custom kernel still produced the exact 32-element host result through both
+copied and shared buffers. Together with the recorded tile fields and earlier
+routing experiments, the group represents two 16-element partitions duplicated
+across two tiles. Summing counts double-counts the logical tensor; treating all
+equal counts as full replicas under-counts it.
+
+The frontend now labels group totals as descriptor coverage rather than logical
+tensor size. It validates arity and FP16/FP32 precision for automatic and
+prepared bindings, but does not invent a single-group output-coverage proof.
+Positional discovery is also gated to the compiler-8.3 layout from which its
+identity bytes were derived. Multi-group exact-cover selection remains a
+separate validated partition contract.
+
+This finding exposes the next missing ABI: a stable representation of tile
+replica sets, output partitions, and the DMA route that makes one result
+host-visible. Until that relationship is modeled, invocation counts alone must
+not be used as graph-shape evidence.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
