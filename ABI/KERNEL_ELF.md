@@ -241,6 +241,8 @@ Confirmed FP16 kernels include:
   `(8,1,1,1)` invocation layout;
 - runtime selection between two same-file helpers through one bounded local
   function pointer and dispatcher;
+- runtime indexing of a three-entry function table initialized explicitly in
+  invocation-local storage;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 
@@ -260,6 +262,15 @@ It selected a same-file target through a volatile local function pointer and
 executed both choices correctly. Its final ELF had no relocations or undefined
 symbols. This validates one bounded indirect-call shape, not general function
 pointer storage, external call targets, callbacks, or arbitrary call graphs.
+
+A follow-up retained three transform symbols, a table selector, and a separate
+dispatcher. An explicitly assigned `volatile` invocation-local table supported
+runtime indexing and exact execution through copied and shared buffers. The
+1,468-byte ELF contained a 688-byte executable `.text`, empty `.arg.data`, and
+no relocations or undefined symbols. In contrast, file-scope and locally
+initialized constant pointer tables both produced nonempty `.arg.data` with
+the tested toolchain and were rejected. This validates the invocation-local
+runtime-initialization pattern, not static or global pointer-table storage.
 
 The nested-window kernel produced three local helper symbols of 260, 70, and
 35 bytes plus a 20-byte global `window_weights` object in `.text`. MoviTools

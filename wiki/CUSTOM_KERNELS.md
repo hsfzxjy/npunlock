@@ -224,9 +224,18 @@ distinct ELF symbols; the final image had no relocations or undefined runtime
 helpers, and copied/shared results matched exactly.
 
 See the [function-dispatch example](../examples/example_function_dispatch.py).
-This does not validate global function-pointer tables, pointers loaded from
-tensor data, external targets, callbacks, recursion, or arbitrary indirect
-call graphs.
+The [function-table example](../examples/example_function_table.py) extends
+this to three same-file targets selected by a runtime table index. The table is
+an explicitly initialized `volatile` invocation-local array. That distinction
+matters: the tested compiler placed both a file-scope constant table and a
+local constant initializer in nonempty `.arg.data`, which `shavecc` correctly
+rejected. Runtime assignment kept every target address in the executable image
+and invocation-local storage; the linked ELF had no relocations or undefined
+symbols.
+
+This does not validate global or statically initialized function-pointer
+tables, pointers loaded from tensor data, external targets, callbacks,
+recursion, or arbitrary indirect call graphs.
 
 ## Invocation-local reductions
 
@@ -476,6 +485,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Fused five-input invocation-local RMS normalization](../examples/example_fused_rmsnorm.py)
 - [Dimension-aware local transform](../examples/example_dimension_aware.py)
 - [Runtime dispatch through a bounded same-file function pointer](../examples/example_function_dispatch.py)
+- [Runtime-indexed invocation-local function table](../examples/example_function_table.py)
 - [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
 - [Five-tap window kernel with nested helpers and an embedded coefficient table](../examples/example_window_kernel.py)
 - [Invocation-local softmax with max/sum reductions and `expf`](../examples/example_invocation_softmax.py)

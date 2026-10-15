@@ -1016,6 +1016,30 @@ targets. It does not establish global function-pointer tables, pointers read
 from tensor data, external targets, callbacks, recursion, or arbitrary
 indirect call graphs.
 
+## 34. Invocation-local function table
+
+On 2026-10-15, a custom FP16 entry explicitly assigned three same-file
+transform addresses into a `volatile` invocation-local table, indexed that
+table with `i % 3`, and passed the selected target to a separate dispatcher.
+All three targets ran within every 16-element ACT invocation. Copied and
+explicitly shared execution exactly matched the chunk-aware NumPy oracle.
+
+The 1,468-byte linked ELF had SHA-256
+`b0f5be395eaf2e01d78c3db2c598dedba9b7f50993ecf306af896d6dfc8e684c`.
+Its 688-byte executable `.text` retained three transform symbols, a selector,
+and a dispatcher; `.arg.data` was empty and no relocations or undefined
+symbols remained. The runnable proof is
+[`example_function_table.py`](../examples/example_function_table.py).
+
+The initialization strategy is part of the observed boundary. A file-scope
+constant pointer table produced nonempty `.arg.data`; moving the same constant
+initializer into the entry did not help because the compiler hoisted it to the
+same section. An explicitly assigned volatile local array kept the table in
+invocation-local storage and passed validation. This establishes bounded
+runtime table dispatch, not global or statically initialized pointer tables,
+tensor-sourced targets, external callbacks, recursion, or arbitrary indirect
+call graphs.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

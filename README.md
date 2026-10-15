@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Runtime-selected same-file function pointers now execute inside a validated custom kernel without relocations or helper-runtime dependencies. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#33-bounded-indirect-helper-dispatch).
+> **Latest breakthrough — 2026-10-15:** A runtime-indexed, invocation-local function table now dispatches among three same-file helpers without kernel data or unresolved relocations. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#34-invocation-local-function-table).
 
 ## Quick example
 
@@ -193,7 +193,7 @@ reference.
 - nonlinear math such as GELU, `tanhf`, `expf`, `sqrtf`, and invocation-local softmax
 - bounded custom control flow, nested helpers, invocation-local windows/reductions, data-dependent loops, and local permutation
 - validated dimension-driven indexing for one observed rank-4 invocation layout
-- bounded runtime dispatch through a same-file function pointer
+- bounded runtime dispatch through same-file function pointers and an invocation-local table
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools
 - self-describing program bundles that load without C source or MoviTools
