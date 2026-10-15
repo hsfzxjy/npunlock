@@ -333,15 +333,16 @@ unary operation:  input at +0x00, output at +0x28
 binary operation: input A at +0x00, input B at +0x28, output at +0x50
 ```
 
-An FP16 span is `element_count * 2`; an FP32 span is
+An FP16 span is `element_count * 2`; an FP32 or I32 span is
 `element_count * 4`. The output span must not alias an input span. The original
 `patchblob_target` ABI requires all inputs and the output to describe one
 precision and normally one byte span, with one explicit scalar-second-input
 exception. The additive `patchblob_target_v2` ABI instead records each
 tensor's role, precision, element count, span, and observed flags. Version 2
-currently accepts only the same established layouts plus equal-element unary
-FP32-to-FP16 and FP16-to-FP32 conversion. It is not a general mixed-dtype or
-broadcasting ABI.
+currently accepts the same established layouts, equal-element unary
+FP32-to-FP16 and FP16-to-FP32 conversion, and the observed same-precision
+unary I32 layout. It is not a general mixed-dtype, integer, or broadcasting
+ABI.
 
 ## Validated examples
 
@@ -378,6 +379,22 @@ absolute error `2.38419e-07`.
 This establishes one unary FP32 carrier configuration, not general FP32 graph
 support.
 
+### Same-precision unary I32
+
+A static I32 `[1,32]` `Abs` carrier produced one ACT group containing four
+invocations. Each invocation described a dense static CMX input and disjoint
+output at the unary `+0x00`/`+0x28` positions. Both records used element-type
+value 9, a 32-bit first stride, 16 elements, and a 64-byte span.
+
+A custom kernel read and wrote signed `int` values and computed `3*x + 7`.
+All 32 results matched the host oracle exactly. The public version 2 contract
+represents this precision and the Python frontend maps the unambiguous group
+automatically. The legacy precision-bit contract remains FP16/FP32-only.
+
+This establishes this same-precision unary carrier on NPU3720/compiler 8.3.
+It does not establish binary I32 carriers, mixed integer operations, other
+integer widths, other graph shapes, or signed-overflow behavior.
+
 ### Experimental mixed-precision conversion
 
 A connected static `[1,32]` graph produced a unary conversion record with an
@@ -396,8 +413,8 @@ The two directions establish this unary descriptor convention. By themselves,
 they do not establish arbitrary mixed types or mixed-dtype binary operations.
 The matching conversion ranges were later shown to be executable tile-local
 replicas, not output partitions; there is still no safe automatic mapping for
-that compiler-generated group. The public patch target cannot represent either
-contract yet and therefore continues to reject them.
+that compiler-generated group. The version 2 public patch target represents
+the records, while Python requires explicit prepared-group binding.
 
 ### Experimental mixed-dtype two-input invocation
 
@@ -426,7 +443,8 @@ inputs, broadcasting, other shapes, or other operators. The original carrier
 implementation did not match a `GatherElements` host oracle in this
 configuration, so this is custom-entry ABI evidence rather than a claim that
 the carrier operator itself works. The public patch target intentionally
-rejects the I32 descriptor.
+rejects this mixed two-input I32 descriptor even though it accepts the separate
+same-precision unary I32 contract above.
 
 ### Experimental scalar-broadcast input
 
@@ -516,8 +534,8 @@ Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
-  and scalar-second-input FP32 cases above (the mixed conversion is
-  experimental ABI evidence only);
+  unary I32, and scalar-second-input FP32 cases above (mixed FP16/FP32
+  conversion remains limited to its explicit version 2 contract);
 - general broadcasting or unequal binary input shapes beyond the experimental
   one-element scalar case above;
 - arbitrary compiler or graph-format versions;

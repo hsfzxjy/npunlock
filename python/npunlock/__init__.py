@@ -624,7 +624,7 @@ class Program:
         for tensor, name in zip(input_contracts, expected_names):
             expected_dtype = numpy_dtypes.get(tensor.dtype)
             if expected_dtype is None:
-                raise ValueError("graphinfer currently supports only static FP16/FP32 tensors")
+                raise ValueError(f"graphinfer does not support tensor dtype {tensor.dtype!r}")
             array = np.asarray(inputs[name])
             if array.dtype != expected_dtype or tuple(array.shape) != tensor.shape:
                 raise ValueError(f"input {name!r} requires shape {tensor.shape!r} and dtype {expected_dtype}")
@@ -1000,7 +1000,7 @@ def _combined_custom_targets(
 def _automatic_group_indices(
     graph: Graph,
     custom_nodes: tuple[Node, ...],
-    discovered_groups: tuple[tuple[PatchTarget, ...], ...],
+    discovered_groups: tuple[tuple[PatchTargetContract, ...], ...],
 ) -> tuple[tuple[tuple[int, ...], ...] | None, str]:
     computational_nodes = tuple(node for node in graph.nodes if node.op not in {"Parameter", "Const"})
 
@@ -1051,7 +1051,12 @@ def _automatic_group_indices(
                 ):
                     continue
             else:
-                targets = _combined_custom_targets(node, groups)
+                if not all(isinstance(target, PatchTarget) for group in groups for target in group):
+                    continue
+                legacy_groups = tuple(
+                    tuple(target for target in group if isinstance(target, PatchTarget)) for group in groups
+                )
+                targets = _combined_custom_targets(node, legacy_groups)
                 if targets is None:
                     continue
             if node in custom_nodes:
@@ -1443,16 +1448,16 @@ class PreparedGraph:
             isinstance(input_count, bool) or not isinstance(input_count, int) or input_count <= 0
         ):
             raise ValueError("input_count must be a positive integer or None")
-        if dtype is not None and dtype not in {"f16", "f32"}:
-            raise ValueError("dtype must be 'f16', 'f32', or None")
+        if dtype is not None and dtype not in {"f16", "f32", "i32"}:
+            raise ValueError("dtype must be 'f16', 'f32', 'i32', or None")
         if input_dtypes is not None and (
             not isinstance(input_dtypes, tuple)
             or not input_dtypes
-            or any(value not in {"f16", "f32"} for value in input_dtypes)
+            or any(value not in {"f16", "f32", "i32"} for value in input_dtypes)
         ):
-            raise ValueError("input_dtypes must be a non-empty tuple of 'f16'/'f32' values or None")
-        if output_dtype is not None and output_dtype not in {"f16", "f32"}:
-            raise ValueError("output_dtype must be 'f16', 'f32', or None")
+            raise ValueError("input_dtypes must be a non-empty tuple of 'f16'/'f32'/'i32' values or None")
+        if output_dtype is not None and output_dtype not in {"f16", "f32", "i32"}:
+            raise ValueError("output_dtype must be 'f16', 'f32', 'i32', or None")
         if element_count is not None and (
             isinstance(element_count, bool) or not isinstance(element_count, int) or element_count <= 0
         ):
@@ -1760,10 +1765,13 @@ def _discover_prepared_contract(
                     raise
                 discovered_v2 = native.discover_patch_targets_v2(graph_blob)
                 groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered_v2))
-                reason = (
-                    "per-tensor version 2 discovery found a mixed-precision ACT contract; "
-                    "explicit group binding is required"
-                )
+                if any(target.target_flags != 0 for group in discovered_v2 for target in group):
+                    reason = (
+                        "per-tensor version 2 discovery found a mixed-precision ACT contract; "
+                        "explicit group binding is required"
+                    )
+                else:
+                    automatic_indices, reason = _automatic_group_indices(graph, serialized.custom_nodes, discovered_v2)
             else:
                 groups = tuple(ActGroup(index, targets) for index, targets in enumerate(discovered))
                 automatic_indices, reason = _automatic_group_indices(graph, serialized.custom_nodes, discovered)

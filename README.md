@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** ACT pointer relocation type 4 is a four-byte `R_VPU_32` write, despite its ELF64 container. `npunlock` now validates the type, alignment, and destination bounds of every ACT relocation before patching. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#45-act-pointer-relocations-write-32-bit-fields).
+> **Latest breakthrough — 2026-10-15:** A same-precision unary I32 ACT carrier can run custom signed-integer C exactly on NPU3720. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#46-unary-i32-custom-kernel-execution).
 
 ## Quick example
 
@@ -86,6 +86,8 @@ prepared-carrier reload, and saved-program reload in one path.
 The [I32 structural example](examples/example_i32_structural.py) needs no
 MoviTools and demonstrates ordinary multi-input/multi-output `Concat`,
 `Transpose`, and `Convert` execution.
+The [I32 custom-kernel example](examples/example_i32_custom.py) compiles a
+signed-integer affine loop and checks every result against NumPy.
 The [U8 reshape example](examples/example_u8_reshape.py) likewise needs no
 MoviTools and returns both reshaped U8 data and its FP32 conversion.
 The [I8 axis-transform example](examples/example_i8_axes.py) covers signed-byte
@@ -183,6 +185,7 @@ reference.
 - static dense FP16 unary and two-input custom kernels, including one validated descriptor-level row-broadcast carrier
 - one static dense five-input FP16 carrier, including a fused local RMS/affine/gate kernel
 - verified unary and scalar-input binary FP32 paths
+- a verified same-precision unary I32 custom-kernel path
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
@@ -204,7 +207,8 @@ reference.
 Support is experimental and currently limited to Windows x64, Meteor Lake /
 NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
 Connected FP32/FP16 conversion is limited to the observed unary, equal-element
-contract and requires explicit prepared-group binding. Other NPU generations
+contract and requires explicit prepared-group binding. I32 custom kernels are
+limited to the observed same-precision unary carrier. Other NPU generations
 have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 

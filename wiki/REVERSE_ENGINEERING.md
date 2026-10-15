@@ -1360,6 +1360,36 @@ out-of-bounds mutations exercise both rejection paths.
 This does not make every type-3 or type-5 field part of the custom-kernel ABI,
 nor does it establish support for wider addresses or other relocation families.
 
+## 46. Unary I32 custom-kernel execution
+
+On 2026-10-15, graph compiler 8.3 produced a static I32 `[1,32]` `Abs`
+carrier with one ACT group and four invocations. Each invocation contained the
+ordinary unary input/output descriptor sequence at offsets `+0x00` and
+`+0x28`. Both records reported raw element type 9, a 32-bit first stride, 16
+elements, a 64-byte span, static dense CMX placement, and disjoint output.
+
+The legacy patch contract deliberately remained FP16/FP32-only. The additive
+version 2 contract gained an I32 precision value and accepts it only for a
+same-precision unary target. Automatic Python mapping uses the version 2 group
+when the complete graph-to-ACT position and tensor contract are unambiguous;
+mixed FP16/FP32 conversion groups still require explicit binding.
+
+A linked custom entry used signed `int` pointers and computed `3*x + 7` for
+each invocation-local element. The patched graph executed successfully, and
+all 32 signed outputs matched an independent NumPy oracle exactly. The input
+included negative, zero, positive, and non-power-of-two values. The retained
+carrier is 41,072 bytes with SHA-256
+`05f52a8162c10bfe27f82327be3d349bde25446f6d5f38383a6b8a29d37c4bab`.
+The 924-byte kernel ELF has SHA-256
+`1573d6273a1868a2e8f887337077593e03946e32fd5741bd6262cb10ca1e7509`;
+the resulting 42,224-byte patched graph has SHA-256
+`52c58e02adf93b394571283d4234aa0c0c6ff36688a8a71ee7e5412d95852d12`.
+
+This establishes signed I32 custom execution for this same-precision unary
+carrier on NPU3720/compiler 8.3. It does not establish binary or mixed-I32
+carriers, other integer widths, other shapes, general integer operators,
+signed-overflow behavior, or portability to another compiler or NPU.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

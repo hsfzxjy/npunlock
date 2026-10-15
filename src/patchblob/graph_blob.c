@@ -774,7 +774,8 @@ static npunlock_status invocation_parameter_bases(const graph_layout *layout, ui
 enum npunlock_dtype_kind {
   NPUNLOCK_DTYPE_F32 = 1,
   NPUNLOCK_DTYPE_F16 = 2,
-  NPUNLOCK_DTYPE_MAX,
+  NPUNLOCK_DTYPE_I32 = 9,
+  NPUNLOCK_DTYPE_MAX = 10,
 };
 
 struct npunlock_dtype_info {
@@ -785,6 +786,7 @@ struct npunlock_dtype_info {
 static const struct npunlock_dtype_info dtype_table[NPUNLOCK_DTYPE_MAX] = {
     [NPUNLOCK_DTYPE_F32] = {.stride_bits = 32, .size_bytes = 4},
     [NPUNLOCK_DTYPE_F16] = {.stride_bits = 16, .size_bytes = 2},
+    [NPUNLOCK_DTYPE_I32] = {.stride_bits = 32, .size_bytes = 4},
 };
 
 static npunlock_status validate_memref(const graph_layout *layout, uint64_t record_offset,
@@ -810,7 +812,7 @@ static npunlock_status validate_memref(const graph_layout *layout, uint64_t reco
   uint32_t type_kind = read_u32(record + 0x18);
   if (read_u32(record + 8) != 1u || type_kind >= NPUNLOCK_DTYPE_MAX ||
       dtype_table[type_kind].stride_bits == 0 || read_u32(record + 0x24) != 2u) {
-    return unsupported(diagnostic, "selected invocation is not static FP16/FP32 CMX");
+    return unsupported(diagnostic, "selected invocation is not static FP16/FP32/I32 CMX");
   }
   expected_stride = dtype_table[type_kind].stride_bits;
   rank = read_u32(record + 0x0c);
@@ -1058,8 +1060,16 @@ static npunlock_status validate_target(const graph_layout *layout, const uint64_
 }
 
 static uint32_t public_precision_v2(uint32_t dtype_kind) {
-  return dtype_kind == NPUNLOCK_DTYPE_F16 ? PATCHBLOB_TENSOR_PRECISION_FP16_V2
-                                          : PATCHBLOB_TENSOR_PRECISION_FP32_V2;
+  if (dtype_kind == NPUNLOCK_DTYPE_F16) {
+    return PATCHBLOB_TENSOR_PRECISION_FP16_V2;
+  }
+  if (dtype_kind == NPUNLOCK_DTYPE_F32) {
+    return PATCHBLOB_TENSOR_PRECISION_FP32_V2;
+  }
+  if (dtype_kind == NPUNLOCK_DTYPE_I32) {
+    return PATCHBLOB_TENSOR_PRECISION_I32_V2;
+  }
+  return 0u;
 }
 
 static uint32_t dtype_from_public_precision_v2(uint32_t precision) {
@@ -1068,6 +1078,9 @@ static uint32_t dtype_from_public_precision_v2(uint32_t precision) {
   }
   if (precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2) {
     return NPUNLOCK_DTYPE_F32;
+  }
+  if (precision == PATCHBLOB_TENSOR_PRECISION_I32_V2) {
+    return NPUNLOCK_DTYPE_I32;
   }
   return 0;
 }
@@ -1089,6 +1102,7 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
   size_t input_count;
   size_t index;
   bool mixed_precision = false;
+  bool fp16_fp32_conversion;
   const uint32_t input_flags =
       PATCHBLOB_TENSOR_STATIC_V2 | PATCHBLOB_TENSOR_DENSE_V2 | PATCHBLOB_TENSOR_CMX_V2;
   const uint32_t output_flags = input_flags | PATCHBLOB_TENSOR_DISJOINT_FROM_INPUTS_V2;
@@ -1123,9 +1137,13 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
     }
   }
   if (mixed_precision) {
+    fp16_fp32_conversion = (target->tensors[0].precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2 &&
+                            output->precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2) ||
+                           (target->tensors[0].precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2 &&
+                            output->precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2);
     if (target->target_flags != PATCHBLOB_TARGET_UNARY_CONVERSION_V2 || input_count != 1u ||
         target->tensors[0].precision == output->precision ||
-        target->tensors[0].element_count != output->element_count) {
+        target->tensors[0].element_count != output->element_count || !fp16_fp32_conversion) {
       return unsupported(
           diagnostic,
           "mixed precision is limited to the observed unary FP16/FP32 conversion contract");
@@ -1142,6 +1160,10 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
                                input->span_bytes != output->span_bytes)) {
         return unsupported(diagnostic, "version 2 input tensor shape is unsupported");
       }
+    }
+    if (output->precision == PATCHBLOB_TENSOR_PRECISION_I32_V2 && input_count != 1u) {
+      return unsupported(diagnostic,
+                         "I32 custom kernels are limited to the observed unary contract");
     }
   }
 

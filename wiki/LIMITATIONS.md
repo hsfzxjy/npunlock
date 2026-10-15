@@ -16,6 +16,7 @@ output does not match that contract.
 | graph compiler | current path validated with version 8.3 |
 | primary custom tensors | static, dense FP16 |
 | FP32 | validated unary accuracy-mode carrier, one same-precision scalar-input binary carrier, and explicit unary FP16/FP32 conversion |
+| I32 | one same-precision unary `Abs` carrier with 16-element invocation descriptors |
 | binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; one FP32 scalar-input carrier |
 | higher custom arity | one static dense FP16 five-input `FakeQuantize` carrier with equal per-invocation spans |
 | kernel image | one linked executable image, shareable by selected ranges |
@@ -46,8 +47,9 @@ There is no general support for:
 The Python serializer knows more IR dtype names than native execution supports.
 Ordinary graph execution is validated for FP16, FP32, U8, I8, U16, I16, U32,
 and I32, while I64 is limited to the Gather-index role. Custom ACT-kernel
-contracts remain limited to the FP16/FP32 cases below. Serialization capability
-must not be mistaken for either execution or custom-kernel support.
+contracts remain limited to the FP16/FP32 cases below and one unary I32 case.
+Serialization capability must not be mistaken for either execution or
+custom-kernel support.
 
 ## Invocation-local memory
 
@@ -182,9 +184,12 @@ Static dense FP16 is the established general MVP path. FP32 support is limited
 to the documented unary carrier and one scalar-second-input binary carrier,
 both with precision-conversion suppression and accuracy-mode graph compilation.
 
-I32 has been validated only for ordinary graph inputs and outputs, including
-Abs, Concat, Transpose, and FP32-to-I32 Convert graphs. It is not a supported
-custom ACT-kernel precision.
+I32 ordinary graph inputs and outputs are validated for Abs, Concat,
+Transpose, and FP32-to-I32 Convert graphs. Custom execution is additionally
+validated for one static `[1,32]` same-precision unary `Abs` carrier: four
+invocations each described 16 signed 32-bit elements, and a custom affine
+kernel matched all 32 outputs. Binary I32 carriers, mixed integer contracts,
+other shapes, and integer-overflow semantics remain unsupported.
 
 U8 has been validated only for ordinary graph inputs and outputs, including a
 constant-pattern Reshape, U8-to-FP32 Convert, and Gather with I32 indices. It
@@ -217,9 +222,10 @@ Gather graph. An I64 Split compiled and ran, but values outside signed 32-bit
 range were silently narrowed and one extreme shared run returned a device
 error. General I64 graph data and outputs are therefore unsupported.
 
-Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32 conversion,
-FP32 binary kernels beyond the scalar-second-input carrier, and implicit dtype
-conversion are unsupported.
+Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32
+conversion, FP32 binary kernels beyond the scalar-second-input carrier, I32
+custom kernels beyond the unary carrier above, and implicit dtype conversion
+are unsupported.
 
 One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those

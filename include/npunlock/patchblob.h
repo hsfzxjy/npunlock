@@ -42,7 +42,8 @@ typedef enum patchblob_tensor_role_v2 {
 
 typedef enum patchblob_tensor_precision_v2 {
   PATCHBLOB_TENSOR_PRECISION_FP16_V2 = 1u,
-  PATCHBLOB_TENSOR_PRECISION_FP32_V2 = 2u
+  PATCHBLOB_TENSOR_PRECISION_FP32_V2 = 2u,
+  PATCHBLOB_TENSOR_PRECISION_I32_V2 = 3u
 } patchblob_tensor_precision_v2;
 
 typedef enum patchblob_tensor_flags_v2 {

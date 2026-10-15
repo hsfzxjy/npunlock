@@ -172,6 +172,7 @@ int main(void) {
   npunlock_buffer broadcast_carrier;
   npunlock_buffer convert_f32_to_f16;
   npunlock_buffer convert_f16_to_f32;
+  npunlock_buffer i32_carrier;
   npunlock_buffer elf;
   npunlock_buffer expected;
   npunlock_buffer unsupported_header = {0};
@@ -196,11 +197,13 @@ int main(void) {
   broadcast_carrier = read_file(FIXTURE_ROOT "maximum-broadcast-1x32-f16.blob");
   convert_f32_to_f16 = read_file(FIXTURE_ROOT "convert-f32-to-f16-1x16.blob");
   convert_f16_to_f32 = read_file(FIXTURE_ROOT "convert-f16-to-f32-1x16.blob");
+  i32_carrier = read_file(FIXTURE_ROOT "abs-i32-1x32.blob");
   elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
   expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
   CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
         broadcast_carrier.data != NULL && convert_f32_to_f16.data != NULL &&
-        convert_f16_to_f32.data != NULL && elf.data != NULL && expected.data != NULL);
+        convert_f16_to_f32.data != NULL && i32_carrier.data != NULL && elf.data != NULL &&
+        expected.data != NULL);
   unsupported_header.data = (uint8_t *)malloc(carrier.size);
   CHECK(unsupported_header.data != NULL);
   unsupported_header.size = carrier.size;
@@ -418,6 +421,35 @@ int main(void) {
     CHECK(discovery.targets[index].target.expected_span_bytes == 16);
   }
   patchblob_discovery_result_release(&discovery);
+  status =
+      patchblob_discover_targets((npunlock_view){i32_carrier.data, i32_carrier.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  patchblob_discovery_result_release(&discovery);
+  status = patchblob_discover_targets_v2((npunlock_view){i32_carrier.data, i32_carrier.size},
+                                         &discovery_v2);
+  if (status != NPUNLOCK_STATUS_OK && discovery_v2.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery_v2.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery_v2.group_count == 1);
+  CHECK(discovery_v2.target_count == 4);
+  for (index = 0; index < discovery_v2.target_count; ++index) {
+    const patchblob_target_v2 *target = &discovery_v2.targets[index].target;
+    CHECK(discovery_v2.targets[index].group_index == 0);
+    CHECK(target->invocation_index == index);
+    CHECK(target->range_index == index);
+    CHECK(target->target_flags == 0);
+    CHECK(target->tensor_count == 2);
+    CHECK(target->tensors[0].role == PATCHBLOB_TENSOR_ROLE_INPUT_V2);
+    CHECK(target->tensors[0].precision == PATCHBLOB_TENSOR_PRECISION_I32_V2);
+    CHECK(target->tensors[0].element_count == 16);
+    CHECK(target->tensors[0].span_bytes == 64);
+    CHECK(target->tensors[1].role == PATCHBLOB_TENSOR_ROLE_OUTPUT_V2);
+    CHECK(target->tensors[1].precision == PATCHBLOB_TENSOR_PRECISION_I32_V2);
+    CHECK(target->tensors[1].element_count == 16);
+    CHECK(target->tensors[1].span_bytes == 64);
+  }
+  patchblob_discovery_result_v2_release(&discovery_v2);
   status = patchblob_discover_targets(
       (npunlock_view){convert_f32_to_f16.data, convert_f32_to_f16.size}, &discovery);
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
@@ -569,6 +601,7 @@ int main(void) {
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);
+  free(i32_carrier.data);
   free(two_operation_carrier.data);
   free(carrier.data);
   return 0;

@@ -34,6 +34,7 @@ _Static_assert(sizeof(graphinfer_session_infer_result) == 48,
 _Static_assert(PATCHBLOB_CONTRACT_FP32 == (1u << 5), "FP32 contract flag ABI changed");
 _Static_assert(PATCHBLOB_CONTRACT_INPUT_1_SCALAR == (1u << 6),
                "scalar-input contract flag ABI changed");
+_Static_assert(PATCHBLOB_TENSOR_PRECISION_I32_V2 == 3u, "I32 tensor precision ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&

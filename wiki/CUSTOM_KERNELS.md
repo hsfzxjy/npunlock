@@ -120,6 +120,13 @@ frontend adds the required precision-preservation metadata and compiler flag
 automatically for an FP32 custom node. This does not establish general FP32
 carriers or multi-input support.
 
+I32 custom execution includes one same-precision unary `Abs` carrier on graph
+compiler 8.3. Its four invocations each expose 16 signed 32-bit input and
+output elements. A custom `3*x + 7` kernel matched all 32 graph outputs exactly.
+Use `int` pointers with the same NPU3720 address helpers. This does not establish
+I32 binary carriers, mixed integer contracts, overflow behavior, or other
+integer precisions.
+
 Although the symbolic IR serializer accepts additional data-type names, that
 does not make them valid custom-kernel or `Program.run()` contracts.
 
@@ -512,6 +519,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
+- [Unary I32 affine kernel](../examples/example_i32_custom.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)

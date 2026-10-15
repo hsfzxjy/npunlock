@@ -149,11 +149,11 @@ invocation counts. Multi-group exact-cover mapping is a separate, narrower
 contract over consecutive groups that were observed as partitions.
 
 The version 2 contract records each invocation tensor separately—role,
-precision, element count, byte span, and observed layout flags. It is currently
-used only for equal-element unary FP32-to-FP16 and FP16-to-FP32 conversion
-groups. Their two full-tensor tile replicas are patched together and are not
-summed as output partitions. Python exposes these groups for explicit binding;
-automatic source mapping remains disabled for them.
+precision, element count, byte span, and observed layout flags. It supports
+equal-element unary FP32-to-FP16 and FP16-to-FP32 conversion groups, plus the
+same-precision unary I32 carrier. Conversion groups require explicit binding;
+the I32 group can use the normal unambiguous positional mapping. Replicated
+invocations are patched together and are not assumed to be output partitions.
 
 ## 5. Substitute the executable image
 
@@ -197,10 +197,10 @@ host reference.
 
 ## Confirmed versus inferred behavior
 
-Confirmed behavior includes the complete unary FP16 path, a narrow
-precision-preserved unary FP32 path, and a static dense FP16 binary carrier
-with independently bound host inputs. The exact layouts used by these cases
-are execution-tested.
+Confirmed behavior includes the complete unary FP16 path, narrow
+precision-preserved unary FP32 and same-precision unary I32 paths, and a static
+dense FP16 binary carrier with independently bound host inputs. The exact
+layouts used by these cases are execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic

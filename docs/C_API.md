@@ -279,7 +279,7 @@ The additive version 2 API describes every tensor record independently:
 
 ```text
 patchblob_tensor_contract_v2
-  role + tensor index + FP16/FP32 precision + element count + byte span + flags
+  role + tensor index + FP16/FP32/I32 precision + element count + byte span + flags
 
 patchblob_target_v2
   ABI version + invocation/range selectors + fixed tensor-contract array
@@ -297,6 +297,10 @@ replica group; selecting only one tile replica is rejected. Version 2 does not
 enable arbitrary mixed types, broadcasting, element-count conversion, or
 multiple outputs. The original API remains unchanged and continues to reject
 unequal input/output precision.
+
+Version 2 also supports the observed same-precision unary I32 contract. It
+requires one input and one output with matching element counts and four-byte
+spans. This does not enable binary I32 or other integer custom-kernel types.
 
 Do not use source-level graph node names as patch selectors. Unsupported or
 ambiguous graph structures fail closed.
@@ -356,6 +360,6 @@ waits. Each caller chooses copied or shared tensors and sets a finite timeout.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
-unary FP32 accuracy-mode carrier and explicit unary FP16/FP32 conversion.
-Other devices, dtypes, layouts, dynamic shapes, and arbitrary source-node
-mapping are not implied.
+unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 conversion, and one
+same-precision unary I32 carrier. Other devices, dtypes, layouts, dynamic
+shapes, and arbitrary source-node mapping are not implied.
