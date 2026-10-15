@@ -151,9 +151,10 @@ contract over consecutive groups that were observed as partitions.
 The version 2 contract records each invocation tensor separately—role,
 precision, element count, byte span, and observed layout flags. It supports
 equal-element unary FP32-to-FP16 and FP16-to-FP32 conversion groups, plus the
-same-precision unary I32 carrier. Conversion groups require explicit binding;
-the I32 group can use the normal unambiguous positional mapping. Replicated
-invocations are patched together and are not assumed to be output partitions.
+same-precision unary I32 and I8 carriers. Conversion groups require explicit
+binding; the integer groups can use the normal unambiguous positional mapping.
+Replicated invocations are patched together and are not assumed to be output
+partitions.
 
 ## 5. Substitute the executable image
 
@@ -198,9 +199,9 @@ host reference.
 ## Confirmed versus inferred behavior
 
 Confirmed behavior includes the complete unary FP16 path, narrow
-precision-preserved unary FP32 and same-precision unary I32 paths, and a static
-dense FP16 binary carrier with independently bound host inputs. The exact
-layouts used by these cases are execution-tested.
+precision-preserved unary FP32 and same-precision unary I32/I8 paths, and a
+static dense FP16 binary carrier with independently bound host inputs. The
+exact layouts used by these cases are execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic

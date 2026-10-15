@@ -297,7 +297,7 @@ print(prepared.explain())
 ```
 
 `prepared.groups` contains immutable `ActGroup` values. Each group reports its
-index, input count, FP16/FP32/I32 dtype when uniform, aggregate descriptor
+index, input count, FP16/FP32/I32/I8 dtype when uniform, aggregate descriptor
 element and byte coverage, stable per-invocation input/output element counts,
 contract flags, and invocation/range indices. `group.element_count` and
 `group.span_bytes` are not graph-level tensor sizes: tile replicas may duplicate
@@ -470,9 +470,10 @@ a lossless contract projection, not a new ABI assumption; `patchblob` performs
 the normal version 1 validation again. Mixed-precision conversion groups remain
 version 2. The plan explanation shows which version will actually be patched.
 
-The same-precision unary I32 carrier always remains version 2 and can use
-automatic positional mapping when it is the unique compatible group. See
-[`example_i32_custom.py`](../examples/example_i32_custom.py).
+The same-precision unary I32 and I8 carriers always remain version 2 and can
+use automatic positional mapping when each is the unique compatible group. See
+[`example_i32_custom.py`](../examples/example_i32_custom.py) and
+[`example_i8_custom.py`](../examples/example_i8_custom.py).
 
 For a single set of kernel-build settings, pass them to `prepared.build()` in
 the same way as `npu.compile()`:
@@ -630,9 +631,9 @@ Input names must match exactly. Shape and dtype must match the symbolic graph;
 noncontiguous arrays are copied to contiguous storage. The current execution
 boundary supports static FP16, FP32, U8, I8, U16, I16, U32, and I32 graph inputs
 and outputs with at most five dimensions. U8, I8, U16, I16, and U32 remain
-ordinary graph-execution features. I32 additionally has one documented
-same-precision unary custom-kernel carrier; this does not imply broader integer
-custom support.
+ordinary graph-execution features. I32 and I8 additionally have one documented
+same-precision unary custom-kernel carrier each; this does not imply broader
+integer custom support.
 
 The supported dtype list describes tensor transport, not every operator/dtype
 combination. In particular, U8 data with I32 indices has passed `Gather`, while

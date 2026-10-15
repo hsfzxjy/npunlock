@@ -1456,32 +1456,36 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.patch_args[2], targets)
         self.assertEqual(program.graph_blob, b"patched")
 
-    def test_i32_custom_group_uses_version_two_contract_automatically(self) -> None:
-        class I32Native(FakeNative):
+    def test_integer_custom_groups_use_version_two_contract_automatically(self) -> None:
+        class IntegerNative(FakeNative):
             def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
-                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"I32 requires version 2")
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"integer requires version 2")
 
-        tensors = (
-            npu.PatchTensorContract("input", 0, "i32", 16, 64, 0x07),
-            npu.PatchTensorContract("output", 0, "i32", 16, 64, 0x0F),
-        )
-        targets = tuple(npu.PatchTargetV2(index, index, tensors) for index in range(4))
-        fake = I32Native()
-        fake.discovery_groups_v2 = (targets,)
-        x = npu.input("x", shape=(1, 32), dtype="i32")
-        y = npu.custom(x, source=b"integer kernel", carrier="Abs", _name="scaled")
+        for dtype, span in (("i32", 64), ("i8", 16)):
+            with self.subTest(dtype=dtype):
+                tensors = (
+                    npu.PatchTensorContract("input", 0, dtype, 16, span, 0x07),
+                    npu.PatchTensorContract("output", 0, dtype, 16, span, 0x0F),
+                )
+                targets = tuple(npu.PatchTargetV2(index, index, tensors) for index in range(4))
+                fake = IntegerNative()
+                fake.discovery_groups_v2 = (targets,)
+                x = npu.input("x", shape=(1, 32), dtype=dtype)
+                y = npu.custom(x, source=b"integer kernel", carrier="Abs", _name="scaled")
 
-        prepared = npu.prepare(
-            npu.Graph([x], [y], name="i32_custom"), native_dir="unused", libraries=fake  # type: ignore[arg-type]
-        )
+                prepared = npu.prepare(
+                    npu.Graph([x], [y], name=f"{dtype}_custom"),
+                    native_dir="unused",
+                    libraries=fake,  # type: ignore[arg-type]
+                )
 
-        self.assertEqual(prepared.mappings[0].status, "automatic")
-        self.assertEqual(prepared.mappings[0].group_indices, (0,))
-        self.assertEqual(prepared.find_group(dtype="i32").targets, targets)
-        self.assertEqual(prepared.find_group(input_dtypes=("i32",), output_dtype="i32").targets, targets)
-        program = prepared.build(movi_dll_dir="movi")
-        self.assertEqual(fake.patch_args[2], targets)
-        self.assertEqual(program.graph_blob, b"patched")
+                self.assertEqual(prepared.mappings[0].status, "automatic")
+                self.assertEqual(prepared.mappings[0].group_indices, (0,))
+                self.assertEqual(prepared.find_group(dtype=dtype).targets, targets)
+                self.assertEqual(prepared.find_group(input_dtypes=(dtype,), output_dtype=dtype).targets, targets)
+                program = prepared.build(movi_dll_dir="movi")
+                self.assertEqual(fake.patch_args[2], targets)
+                self.assertEqual(program.graph_blob, b"patched")
 
     def test_mixed_precision_plan_uses_v1_for_losslessly_representable_group(self) -> None:
         class MixedNative(FakeNative):

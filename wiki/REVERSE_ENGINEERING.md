@@ -659,7 +659,7 @@ networks, every U8 operation, or dynamic shapes.
 On 2026-10-12, graph compiler 8.3 accepted static signed-I8 graph arguments on
 the tested NPU3720. Level Zero reported precision `0x07` (`INT8`), and the
 bounded execution path sized it as one byte per element. This is ordinary graph
-I/O only; the custom ACT contract remains FP16/FP32.
+I/O evidence only; I8 custom execution was established later in section 47.
 
 One graph took a `[1,2,1,3]` I8 input, applied positive-axis `Squeeze`, restored
 the original shape with `Unsqueeze`, and returned a parallel FP32 conversion of
@@ -1389,6 +1389,35 @@ This establishes signed I32 custom execution for this same-precision unary
 carrier on NPU3720/compiler 8.3. It does not establish binary or mixed-I32
 carriers, other integer widths, other shapes, general integer operators,
 signed-overflow behavior, or portability to another compiler or NPU.
+
+## 47. Unary I8 custom-kernel execution
+
+On 2026-10-15, graph compiler 8.3 also produced a static I8 `[1,32]` `Abs`
+carrier with one ACT group and four invocations. The unary input/output records
+used raw element type 11, an 8-bit first stride, 16 elements, a 16-byte span,
+static dense CMX placement, and disjoint output. The compiler-produced graph
+matched I8 `Abs` for all 32 baseline values before patching.
+
+Version 2 gained a distinct I8 precision value and accepts it only for the
+same-precision unary contract. The legacy float flags remain unchanged. The
+Python frontend discovers and automatically maps the complete group when its
+graph position and tensor contract are unambiguous.
+
+A linked custom entry used `signed char` pointers and computed `2*x + 3`. Its
+32-value input domain was selected so every mathematical result remained
+between -128 and 127, avoiding any saturation or overflow assumption. All NPU
+outputs matched the independently widened NumPy calculation exactly.
+
+The retained 41,072-byte carrier has SHA-256
+`ee0e0cb1eb439d7293e4d85eb91bdac220714ff8ca2e3ddd0cc05c0252a0b295`.
+The 924-byte kernel ELF has SHA-256
+`aba93a23fc40e4d35c967c65767107d7572fdd6d1f5d0d07dd21efb48fc3b5d7`;
+the resulting 42,224-byte patched graph has SHA-256
+`fdf35629ba0de40affcadb74c86674676063c635bef8ab3d17f57436aa735b74`.
+
+This establishes one signed-I8 custom path, not binary or mixed-I8 carriers,
+U8 custom execution, saturation, quantization semantics, overflow behavior,
+other shapes, or portability to another compiler or NPU.
 
 ## What remains deliberately unresolved
 

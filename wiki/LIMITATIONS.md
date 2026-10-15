@@ -17,6 +17,7 @@ output does not match that contract.
 | primary custom tensors | static, dense FP16 |
 | FP32 | validated unary accuracy-mode carrier, one same-precision scalar-input binary carrier, and explicit unary FP16/FP32 conversion |
 | I32 | one same-precision unary `Abs` carrier with 16-element invocation descriptors |
+| I8 | one same-precision unary `Abs` carrier with 16-element invocation descriptors |
 | binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; one FP32 scalar-input carrier |
 | higher custom arity | one static dense FP16 five-input `FakeQuantize` carrier with equal per-invocation spans |
 | kernel image | one linked executable image, shareable by selected ranges |
@@ -47,9 +48,9 @@ There is no general support for:
 The Python serializer knows more IR dtype names than native execution supports.
 Ordinary graph execution is validated for FP16, FP32, U8, I8, U16, I16, U32,
 and I32, while I64 is limited to the Gather-index role. Custom ACT-kernel
-contracts remain limited to the FP16/FP32 cases below and one unary I32 case.
-Serialization capability must not be mistaken for either execution or
-custom-kernel support.
+contracts remain limited to the FP16/FP32 cases below and one unary carrier
+each for I32 and I8. Serialization capability must not be mistaken for either
+execution or custom-kernel support.
 
 ## Invocation-local memory
 
@@ -198,10 +199,14 @@ multi-axis positive-step Slice. Constant-mode Pad is validated with nonnegative
 static pads and a scalar U8 fill value. U8 is not a supported custom
 ACT-kernel precision.
 
-I8 has been validated only for ordinary graph inputs and outputs, including
-positive-axis Squeeze/Unsqueeze and I8-to-FP32 Convert. Graph compiler 8.3
-rejected one equivalent negative-axis form, so negative axes are not in the
-verified execution contract. I8 is not a supported custom ACT-kernel precision.
+I8 ordinary graph inputs and outputs are validated for positive-axis
+Squeeze/Unsqueeze and I8-to-FP32 Convert. Graph compiler 8.3 rejected one
+equivalent negative-axis form, so negative axes are not in the verified
+execution contract. Custom execution is additionally validated for one static
+`[1,32]` same-precision unary `Abs` carrier: four invocations each described
+16 signed bytes, and a bounded affine kernel matched all 32 outputs. Binary I8,
+U8 custom kernels, saturation, quantization semantics, and other shapes remain
+unsupported.
 
 I16 has been validated for ordinary graph input/output through an equal static
 three-way Split with a scalar constant axis. Graph compiler 8.3 rejected the
@@ -224,8 +229,8 @@ error. General I64 graph data and outputs are therefore unsupported.
 
 Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32
 conversion, FP32 binary kernels beyond the scalar-second-input carrier, I32
-custom kernels beyond the unary carrier above, and implicit dtype conversion
-are unsupported.
+or I8 custom kernels beyond the unary carriers above, and implicit dtype
+conversion are unsupported.
 
 One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those

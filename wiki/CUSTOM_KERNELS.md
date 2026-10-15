@@ -127,6 +127,12 @@ Use `int` pointers with the same NPU3720 address helpers. This does not establis
 I32 binary carriers, mixed integer contracts, overflow behavior, or other
 integer precisions.
 
+I8 custom execution likewise includes one same-precision unary `Abs` carrier.
+Its four invocations each expose 16 signed-byte input and output elements. A
+bounded `2*x + 3` kernel using `signed char` pointers matched all 32 outputs.
+This does not establish saturation, quantization semantics, binary I8, U8, or
+other shapes.
+
 Although the symbolic IR serializer accepts additional data-type names, that
 does not make them valid custom-kernel or `Program.run()` contracts.
 
@@ -520,6 +526,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Unary I32 affine kernel](../examples/example_i32_custom.py)
+- [Unary I8 affine kernel](../examples/example_i8_custom.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)

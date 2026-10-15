@@ -44,6 +44,22 @@ static void digest_hex(const uint8_t digest[32], char text[65]) {
   text[64] = 0;
 }
 
+static const char *tensor_precision_name_v2(uint32_t precision) {
+  if (precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2) {
+    return "fp16";
+  }
+  if (precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2) {
+    return "fp32";
+  }
+  if (precision == PATCHBLOB_TENSOR_PRECISION_I32_V2) {
+    return "i32";
+  }
+  if (precision == PATCHBLOB_TENSOR_PRECISION_I8_V2) {
+    return "i8";
+  }
+  return "unknown";
+}
+
 static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shave_elf,
                                     npunlock_view output_blob,
                                     const npunlock_patch_summary *summary, npunlock_buffer *report,
@@ -122,9 +138,7 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
       for (tensor_index = 0; tensor_index < detail->tensor_count_v2; ++tensor_index) {
         const patchblob_tensor_contract_v2 *tensor = &detail->tensors_v2[tensor_index];
         const char *role = tensor->role == PATCHBLOB_TENSOR_ROLE_INPUT_V2 ? "input" : "output";
-        const char *precision = tensor->precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2   ? "fp16"
-                                : tensor->precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2 ? "fp32"
-                                                                                          : "i32";
+        const char *precision = tensor_precision_name_v2(tensor->precision);
         if (!report_append(&writer,
                            "%s{\"role\":\"%s\",\"tensor_index\":%u,\"precision\":\"%s\","
                            "\"element_count\":%" PRIu64 ",\"span_bytes\":%" PRIu64

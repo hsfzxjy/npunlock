@@ -333,16 +333,16 @@ unary operation:  input at +0x00, output at +0x28
 binary operation: input A at +0x00, input B at +0x28, output at +0x50
 ```
 
-An FP16 span is `element_count * 2`; an FP32 or I32 span is
-`element_count * 4`. The output span must not alias an input span. The original
-`patchblob_target` ABI requires all inputs and the output to describe one
-precision and normally one byte span, with one explicit scalar-second-input
-exception. The additive `patchblob_target_v2` ABI instead records each
-tensor's role, precision, element count, span, and observed flags. Version 2
-currently accepts the same established layouts, equal-element unary
+An I8 span is `element_count`; an FP16 span is `element_count * 2`; and an
+FP32 or I32 span is `element_count * 4`. The output span must not alias an
+input span. The original `patchblob_target` ABI requires all inputs and the
+output to describe one precision and normally one byte span, with one explicit
+scalar-second-input exception. The additive `patchblob_target_v2` ABI instead
+records each tensor's role, precision, element count, span, and observed flags.
+Version 2 currently accepts the same established layouts, equal-element unary
 FP32-to-FP16 and FP16-to-FP32 conversion, and the observed same-precision
-unary I32 layout. It is not a general mixed-dtype, integer, or broadcasting
-ABI.
+unary I32 and I8 layouts. It is not a general mixed-dtype, integer, or
+broadcasting ABI.
 
 ## Validated examples
 
@@ -394,6 +394,22 @@ automatically. The legacy precision-bit contract remains FP16/FP32-only.
 This establishes this same-precision unary carrier on NPU3720/compiler 8.3.
 It does not establish binary I32 carriers, mixed integer operations, other
 integer widths, other graph shapes, or signed-overflow behavior.
+
+### Same-precision unary I8
+
+A static I8 `[1,32]` `Abs` carrier has the same one-group/four-invocation
+structure. Each input and output descriptor used element-type value 11, an
+8-bit first stride, 16 elements, and a 16-byte span. The remaining static,
+dense, CMX, and disjoint-output fields matched the supported unary structure.
+
+A custom kernel read and wrote `signed char` values and computed `2*x + 3`
+over an input domain chosen to remain within I8 range. All 32 results matched
+the host oracle exactly. Version 2 represents I8 and Python maps this
+unambiguous group automatically; the legacy precision flags remain unchanged.
+
+This establishes one same-precision unary I8 carrier. It does not establish
+binary I8, U8 custom kernels, saturation or quantization semantics, overflow
+behavior, or other shapes.
 
 ### Experimental mixed-precision conversion
 
@@ -534,7 +550,7 @@ Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
-  unary I32, and scalar-second-input FP32 cases above (mixed FP16/FP32
+  unary I32/I8, and scalar-second-input FP32 cases above (mixed FP16/FP32
   conversion remains limited to its explicit version 2 contract);
 - general broadcasting or unequal binary input shapes beyond the experimental
   one-element scalar case above;
