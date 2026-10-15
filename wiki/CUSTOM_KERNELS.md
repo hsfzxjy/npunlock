@@ -198,8 +198,8 @@ matched an exact NumPy oracle. See the complete
 This result validates bounded control flow, one internal helper, and that
 specific 128-byte source-level local array. It does not establish a general
 stack limit or calling convention. Keep helper definitions in the same source
-buffer, bound every local allocation, and treat recursion, function pointers,
-cross-invocation access, and large stack objects as unsupported.
+buffer, bound every local allocation, and treat recursion, cross-invocation
+access, and large stack objects as unsupported.
 
 A second validated kernel extends that result to a three-helper nested call
 chain, a local context structure, a source-level
@@ -215,6 +215,18 @@ entire table into instructions. The default linker places the object inside
 the final `.text` image. On the tested toolchain that combined section is
 marked writable and executable, so “constant” describes the C contract rather
 than an ELF memory-protection guarantee.
+
+One bounded runtime function-pointer pattern is also validated. An entry
+selects between two same-file non-inlined transforms from each input value,
+stores the selection in a volatile local function pointer, and passes it to a
+separate non-inlined dispatcher. Both targets and the dispatcher remained
+distinct ELF symbols; the final image had no relocations or undefined runtime
+helpers, and copied/shared results matched exactly.
+
+See the [function-dispatch example](../examples/example_function_dispatch.py).
+This does not validate global function-pointer tables, pointers loaded from
+tensor data, external targets, callbacks, recursion, or arbitrary indirect
+call graphs.
 
 ## Invocation-local reductions
 
@@ -463,6 +475,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
 - [Fused five-input invocation-local RMS normalization](../examples/example_fused_rmsnorm.py)
 - [Dimension-aware local transform](../examples/example_dimension_aware.py)
+- [Runtime dispatch through a bounded same-file function pointer](../examples/example_function_dispatch.py)
 - [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
 - [Five-tap window kernel with nested helpers and an embedded coefficient table](../examples/example_window_kernel.py)
 - [Invocation-local softmax with max/sum reductions and `expf`](../examples/example_invocation_softmax.py)

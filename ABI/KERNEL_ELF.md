@@ -239,6 +239,8 @@ Confirmed FP16 kernels include:
   and invocation-local output permutation;
 - rank/dimension validation and dimension-derived indexing for one observed
   `(8,1,1,1)` invocation layout;
+- runtime selection between two same-file helpers through one bounded local
+  function pointer and dispatcher;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 
@@ -250,8 +252,14 @@ A structured kernel with a distinct 50-byte local helper symbol, branching,
 invocation-local neighbor reads, and `volatile float scratch[32]` has executed
 successfully. Its final ELF had no relocations or undefined symbols. This
 establishes one same-file call and bounded source-level local storage; larger
-stack use, recursion, function pointers, the general callee-save convention,
-and arbitrary runtime-library behavior remain outside the supported contract.
+stack use, recursion, the general callee-save convention, and arbitrary
+runtime-library behavior remain outside the supported contract.
+
+A later kernel retained two local transform symbols and a separate dispatcher.
+It selected a same-file target through a volatile local function pointer and
+executed both choices correctly. Its final ELF had no relocations or undefined
+symbols. This validates one bounded indirect-call shape, not general function
+pointer storage, external call targets, callbacks, or arbitrary call graphs.
 
 The nested-window kernel produced three local helper symbols of 260, 70, and
 35 bytes plus a 20-byte global `window_weights` object in `.text`. MoviTools

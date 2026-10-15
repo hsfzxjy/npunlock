@@ -995,6 +995,27 @@ dimensions. It does not establish a general mapping from graph axes to ACT
 axes, or the same layout for other shapes, carriers, compiler versions, or NPU
 generations.
 
+## 33. Bounded indirect helper dispatch
+
+On 2026-10-15, a custom FP16 entry selected between two same-file non-inlined
+transforms from each invocation value. It stored the selected address in a
+volatile local function pointer and passed that pointer into a separate
+non-inlined dispatcher. Negative and nonnegative inputs exercised both targets
+within the same logical tensor.
+
+The linked ELF retained 44- and 48-byte transform symbols plus a 38-byte
+dispatcher. It was 1,344 bytes with SHA-256
+`960d85077df29fc35338f229d71c4242673c5789f388a7ea4a1b96e9732181db`;
+its executable `.text` image was 608 bytes, `.arg.data` was empty, and no
+relocations or undefined symbols remained. Copied and explicitly shared
+execution exactly matched the chunk-aware NumPy oracle. The runnable proof is
+[`example_function_dispatch.py`](../examples/example_function_dispatch.py).
+
+This validates one bounded indirect-call shape with fully linked same-file
+targets. It does not establish global function-pointer tables, pointers read
+from tensor data, external targets, callbacks, recursion, or arbitrary
+indirect call graphs.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

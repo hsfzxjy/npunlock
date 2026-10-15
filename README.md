@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Custom kernels can validate and use invocation dimensions directly; one logical `(4,8)` tensor arrived as four rank-4 `(8,1,1,1)` entries. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#32-graph-shape-and-invocation-shape-are-distinct).
+> **Latest breakthrough — 2026-10-15:** Runtime-selected same-file function pointers now execute inside a validated custom kernel without relocations or helper-runtime dependencies. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#33-bounded-indirect-helper-dispatch).
 
 ## Quick example
 
@@ -193,6 +193,7 @@ reference.
 - nonlinear math such as GELU, `tanhf`, `expf`, `sqrtf`, and invocation-local softmax
 - bounded custom control flow, nested helpers, invocation-local windows/reductions, data-dependent loops, and local permutation
 - validated dimension-driven indexing for one observed rank-4 invocation layout
+- bounded runtime dispatch through a same-file function pointer
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools
 - self-describing program bundles that load without C source or MoviTools

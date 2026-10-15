@@ -113,6 +113,11 @@ shape. One logical `(4,8)` tensor was observed as four rank-4 `(8,1,1,1)`
 entries. Other shapes, carriers, compiler versions, or axis mappings must be
 inspected and validated independently.
 
+Function pointers are validated only for runtime selection between two
+same-file helpers passed to one local dispatcher. Global pointer tables,
+targets from tensor data, external functions, callbacks, recursion, and
+arbitrary indirect call graphs remain unsupported.
+
 One five-input carrier runs a fused residual/RMS/affine/gate kernel with
 `sqrtf`, but its reduction is local to each eight-element invocation. It does
 not establish standard graph-global RMSNorm semantics, arbitrary five-input
