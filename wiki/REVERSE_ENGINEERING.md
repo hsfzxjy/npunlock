@@ -931,6 +931,26 @@ The runnable proofs are
 These results do not establish recursion, arbitrary call graphs or stack
 sizes, cross-invocation neighborhoods, or graph-global reductions.
 
+## 30. Data-dependent loops and local permutation
+
+On 2026-10-15, a custom FP16 entry loaded each ACT invocation into a bounded
+FP32 scratch array and ran insertion sort. Its inner `while` loop had a
+data-dependent trip count, shifted values through indirectly indexed scratch
+positions, and emitted a permutation rather than an elementwise mapping.
+
+The logical 64-element tensor was exposed as 32-element invocation chunks.
+Copied and explicitly shared execution both exactly matched two independent
+NumPy sorts over those boundaries. The linked 1,244-byte ELF had SHA-256
+`811bce380fb541159cd6fe090085e48c55b1436dfe1ee980ae7f699503601a42`;
+its executable `.text` image was 608 bytes, `.arg.data` was empty, and no
+relocations or undefined symbols remained. The runnable proof is
+[`example_invocation_sort.py`](../examples/example_invocation_sort.py).
+
+This establishes bounded data-dependent local loops, indirect scratch access,
+and local value permutation. It does not establish graph-global sorting,
+cross-invocation movement, index outputs, dynamic allocation, or safe
+unbounded loop runtimes.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

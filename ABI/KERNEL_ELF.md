@@ -227,6 +227,8 @@ Confirmed FP16 kernels include:
 - a source-level 256-byte volatile local scratch array;
 - three-pass invocation-local maximum/sum reductions around `mlibm.a`'s
   `expf` implementation;
+- insertion sort with a data-dependent inner loop, indirect local indexing,
+  and invocation-local output permutation;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 
@@ -254,6 +256,12 @@ matched a chunk-aware host oracle. Its ELF file was 53,796 bytes because it
 retained non-loadable debug sections, while the single executable `.text`
 segment installed into the graph was 976 bytes. The file size is therefore not
 the injected code-image size.
+
+An invocation-local insertion-sort kernel produced a 608-byte executable
+`.text` image. It used a source-level 256-byte FP32 scratch array and a
+data-dependent `while` loop to shift indirectly indexed values. Copied and
+shared execution exactly matched chunk-wise host sorting. This proves bounded
+local permutation, not cross-invocation movement or general dynamic storage.
 
 ## How the code image is installed
 

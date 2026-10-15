@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-14:** Validated custom kernels now include nested helper call chains and invocation-local reductions, including a three-pass `expf` softmax kernel. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#29-structured-kernels-and-invocation-local-reductions).
+> **Latest breakthrough — 2026-10-15:** Data-dependent loops and local output permutation now run inside validated custom kernels, demonstrated by exact invocation-local insertion sort. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#30-data-dependent-loops-and-local-permutation).
 
 ## Quick example
 
@@ -191,7 +191,7 @@ reference.
 - caller-provided I64 index inputs for validated `Gather` graphs
 - inferred contracts for `Concat`, `Split`, `VariadicSplit`, constant-mode `Pad`, positive-step `Slice`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
 - nonlinear math such as GELU, `tanhf`, `expf`, and invocation-local softmax
-- bounded custom control flow, nested same-file helpers, invocation-local windows, embedded coefficients, and local scratch storage
+- bounded custom control flow, nested helpers, invocation-local windows/reductions, data-dependent loops, and local permutation
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools
 - self-describing program bundles that load without C source or MoviTools

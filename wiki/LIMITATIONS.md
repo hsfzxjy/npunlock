@@ -103,6 +103,11 @@ invocation. A logical tensor may span several invocations, so this supports
 chunk-local normalization but does not establish graph-global reduction,
 cross-invocation communication, or general axis semantics.
 
+Data-dependent loops and indirect scratch indexing are validated by one
+insertion-sort kernel, again within each invocation independently. There is no
+graph-global sort contract, cross-invocation permutation, index output, dynamic
+allocation, or guarantee for unbounded loop runtimes.
+
 `mlibm.a` math functions work only when section garbage collection leaves a
 self-contained code image and no data dependency.
 

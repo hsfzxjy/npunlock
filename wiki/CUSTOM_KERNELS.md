@@ -225,6 +225,20 @@ Linking `expf` produced a 53,796-byte ELF because retained non-loadable debug
 sections dominate the file. The executable `.text` load image was 976 bytes.
 `patchblob` installs the validated load image, not the complete ELF container.
 
+## Data-dependent loops and local permutation
+
+Loop trip counts may depend on invocation data in a bounded kernel. A
+validated insertion-sort entry copies one FP16 invocation into FP32 scratch,
+uses an inner `while` loop to shift values through indirectly indexed scratch
+positions, and writes the sorted values back. For the tested logical
+64-element tensor, copied and shared execution exactly matched two independent
+32-element NumPy sorts.
+
+See the [invocation-local sort example](../examples/example_invocation_sort.py).
+The example establishes data-dependent local control flow and value
+permutation. It does not establish graph-global sorting, cross-invocation
+movement, index outputs, unbounded loops, or dynamic allocation.
+
 ## Carrier selection
 
 Python custom nodes name a carrier explicitly:
@@ -426,6 +440,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
 - [Five-tap window kernel with nested helpers and an embedded coefficient table](../examples/example_window_kernel.py)
 - [Invocation-local softmax with max/sum reductions and `expf`](../examples/example_invocation_softmax.py)
+- [Invocation-local insertion sort with a data-dependent inner loop](../examples/example_invocation_sort.py)
 - [Mixed-precision graph with FP32 unary and FP16 binary custom branches](../examples/example_mixed_precision_multi_custom.py)
 - [Branched DPU/ACT network with three custom kernels](../examples/example_branched_network.py)
 - [Connected mixed-precision custom/DPU composition](../examples/example_connected_mixed_precision.py)
