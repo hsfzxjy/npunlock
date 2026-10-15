@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Eight familiar FP32 math functions ran correctly in isolation, but one combined kernel faulted despite fitting inside the carrier's original code extent. A valid linked ELF and byte extent are therefore necessary, not sufficient, execution checks. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#36-math-code-composition-has-an-unresolved-execution-limit).
+> **Latest breakthrough — 2026-10-15:** A 7,168-byte invocation-local array ran repeatedly, while 7,184 bytes alternated between correct and silently corrupted output and 8,192 bytes faulted. Kernel stack use therefore needs a conservative bound and a semantic oracle, not just successful execution. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#37-local-stack-overflow-can-silently-corrupt-one-output-partition).
 
 ## Quick example
 

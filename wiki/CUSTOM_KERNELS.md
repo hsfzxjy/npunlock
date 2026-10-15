@@ -209,6 +209,18 @@ coefficient table. Its clamped neighborhood is deliberately local to each
 chunk-aware host calculation exactly. See the
 [window-kernel example](../examples/example_window_kernel.py).
 
+A dedicated single-entry probe later wrote and hashed every byte of a
+`volatile unsigned char` array. The exact tested body repeatedly produced
+correct output through 7,168 source-level bytes. At 7,184 bytes, one run was
+correct and four silently corrupted the second 16-element half of a 32-element
+result. At 7,200 bytes, observed outcomes included correct output, corruption,
+and a device error; at 8,192 bytes, the NPU returned a device error. This is an
+unstable boundary for that compiler, carrier, and body—not a public stack
+allowance. Frame overhead, helper calls, compiler changes, and scheduling may
+reduce the available space. Keep local objects much smaller and validate
+results against a semantic oracle; successful inference alone cannot detect
+this overflow.
+
 The example declares the coefficients `const volatile`: `const` prevents the
 kernel from modifying them, while `volatile` keeps MoviTools from folding the
 entire table into instructions. The default linker places the object inside

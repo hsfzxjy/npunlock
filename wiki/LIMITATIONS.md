@@ -108,6 +108,14 @@ context structure, a source-level 256-byte scratch array, and a retained
 a writable/executable `.text` section, not a separately protected read-only
 segment. Recursion and arbitrary call graphs remain unsupported.
 
+One minimal probe repeatedly wrote and read a 7,168-byte volatile local array,
+but 7,184-byte runs alternated between correct output and silent half-output
+corruption. A 7,200-byte body also produced corruption and a device error, and
+8,192 bytes caused a device error. This is not a stable stack-capacity
+contract: frame overhead, kernel structure, and scheduling also matter. Keep
+production scratch conservative and compare complete outputs with a host
+oracle.
+
 Maximum and sum reductions plus `expf` have been validated only inside one ACT
 invocation. A logical tensor may span several invocations, so this supports
 chunk-local normalization but does not establish graph-global reduction,

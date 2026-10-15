@@ -261,9 +261,22 @@ behavior within each chunk.
 A structured kernel with a distinct 50-byte local helper symbol, branching,
 invocation-local neighbor reads, and `volatile float scratch[32]` has executed
 successfully. Its final ELF had no relocations or undefined symbols. This
-establishes one same-file call and bounded source-level local storage; larger
-stack use, recursion, the general callee-save convention, and arbitrary
-runtime-library behavior remain outside the supported contract.
+establishes one same-file call and bounded source-level local storage;
+recursion, the general callee-save convention, and arbitrary runtime-library
+behavior remain outside the supported contract.
+
+A later minimal probe isolated local storage from code-image size. It wrote
+and hashed every byte of a volatile byte array while the executable image
+remained 416 bytes for every tested array size. A 7,200-byte array returned
+the exact 32-element FP16 result in an early run, but later runs silently
+corrupted half the output or returned Level Zero device result `0x70000001`.
+A 7,168-byte body succeeded in four observed runs. At 7,184 bytes, one of five
+runs was exact and four silently corrupted the second 16-element half. An
+8,192-byte array returned the device error. These sizes expose an unstable
+stack/frame boundary; they are not a general capacity promise because frame
+overhead, calls, compiler output, prior execution state, and carrier scheduling
+may change it. The retained ELF had no `.debug_frame`, `.eh_frame`, or target
+stack-size note from which `patchblob` could enforce a frame bound.
 
 A later kernel retained two local transform symbols and a separate dispatcher.
 It selected a same-file target through a volatile local function pointer and

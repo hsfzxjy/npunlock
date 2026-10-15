@@ -1106,6 +1106,47 @@ instruction placement, internal stack use, or another firmware resource may
 be the actual boundary. The library therefore documents individual validated
 functions and requires target execution of each complete combined kernel.
 
+## 37. Local stack overflow can silently corrupt one output partition
+
+On 2026-10-15, a minimal FP16 entry declared a source-sized volatile byte
+array, wrote every byte, read every byte through a rolling hash, and encoded
+the hash into its output. The compiler emitted the same 416-byte executable
+image while the array increased from 512 through 8,192 bytes, separating the
+local-storage experiment from code-image growth.
+
+Arrays of 512, 1,024, 2,048, 4,096, 5,120, 6,144, and 7,168 bytes first
+produced the exact 32-element host result. Repeats kept 6,144 exact for three
+runs and 7,168 exact for three more runs. The next tested size, 7,184 bytes,
+was exact once and silently wrong four times. In each wrong result, exactly the
+second 16-element half differed from the host oracle, with the wrong hash value
+varying between runs.
+
+The initially exact 7,200-byte result was not reproducible after the larger
+probes: later identical-ELF runs produced half-output corruption and one device
+error. Tested sizes from 7,201 through 7,680 otherwise produced half-output
+corruption. The tested 8,192-, 16,384-, and 32,768-byte sizes returned device
+result `0x70000001`.
+
+The retained 1,052-byte ELF contained only the empty `.arg.data`, 416-byte
+`.text`, comment, symbol, and string-table sections. It had no relocation,
+`.debug_frame`, `.eh_frame`, or target stack-size note. The accepted artifact
+therefore supplies no direct frame requirement for the current validator to
+compare with a hardware limit.
+
+The carrier exposed four 16-element invocation records for the two logical
+partitions duplicated across two tiles. The half-output failure is consistent
+with a tile- or route-dependent local-memory collision, but the experiment
+does not identify the overwritten structure or prove a physical stack size.
+The unstable 7,168/7,184 region may include compiler frame alignment, scalar
+overhead, scheduling state, or persistent effects from prior failing work.
+
+This establishes two practical constraints. First, successful ELF validation
+cannot bound invocation-local storage because the frame requirement is not
+currently represented in the accepted ELF metadata. Second, successful graph
+execution is not a semantic check: local overflow can return normally with
+plausible but wrong tensor data. Production kernels should keep scratch well
+below this observed boundary and use a host oracle for the complete result.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
