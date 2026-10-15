@@ -18,7 +18,7 @@ included.
 | `maximum-broadcast-1x32-f16.blob` | `1c1bd31fb53d9338feca495739015d09bf82aae37486b36c2dcaed4d67ed90df` | Project-generated NPU3720 FP16 carrier compiled with graph compiler 8.3 from `[1,32]` data and a host-provided `[1,1]` second input; verifies the observed scalar-input contract. |
 | `convert-f32-to-f16-1x16.blob` | `34909f79aeaaeaa746a0796bc7f1b379e7a7e25a3c97da5ad9e9e67e18af882e` | Project-generated NPU3720 graph compiler 8.3 artifact with an FP32 graph input, FP16 Exp compute, and FP16 output; verifies the leading unary FP32-to-FP16 conversion contract. |
 | `convert-f16-to-f32-1x16.blob` | `f8d59dde9adbc5bfc0efc503c3b286714ec5805b4bbcc34f0dad5b0acedb7256` | Project-generated NPU3720 graph compiler 8.3 artifact with an FP16 graph input, FP16 Exp compute, and FP32 output; verifies the trailing unary FP16-to-FP32 conversion contract. |
-| `add1-shared-1x16.blob` | `2010915f2d21e07d2afee613ffe8f38a9ce6e39523ab98e0762c1bd40e04d95f` | Golden graph produced by applying the confirmed two-range patch to the carrier; also used by the opt-in execution test. |
+| `add1-shared-1x16.blob` | `23b0467b55bd69fa3587afc0387e4ba171ec46eb3ec41b79633e6831cc417850` | Golden graph produced by applying the confirmed two-range patch while preserving ELF section alignment; also used by the opt-in execution test. The custom ACT entry adds one to the carrier's internal DPU-produced input, not directly to the host graph input. |
 
 The native graph blobs are narrow evidence fixtures for the observed NPU3720
 ABI. Their presence does not imply support for arbitrary graph compiler or

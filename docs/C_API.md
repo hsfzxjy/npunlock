@@ -234,6 +234,12 @@ identity: ET_REL value 1, machine/version/entry/flags zero, no program headers,
 and 64-byte ELF and section headers. Similar-looking host or future NPU ELF
 containers are not accepted by section name alone.
 
+The parser also requires the observed section table at offset `0x40`, its null
+and section-name records, disjoint file-backed section extents, power-of-two
+alignment fields, aligned file offsets, and the established metadata of the
+required ACT sections. Patching rounds the inserted extent upward when needed
+so every shifted section keeps satisfying its declared alignment.
+
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
 carrier and same-precision scalar-second-input binary carrier.

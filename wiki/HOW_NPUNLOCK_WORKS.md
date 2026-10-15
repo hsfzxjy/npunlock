@@ -149,7 +149,8 @@ automatic source mapping remains disabled for them.
 
 `patchblob` extracts `.text` from the validated SHAVE ELF, appends it to the
 graph's kernel-code section, and retargets only the selected ACT ranges. It
-updates affected ELF file offsets and produces a preservation report.
+rounds the inserted extent so shifted sections remain aligned, updates their
+ELF file offsets, and produces a preservation report.
 
 The surrounding compiler-generated graph remains intact:
 

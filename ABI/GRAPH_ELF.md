@@ -54,6 +54,7 @@ not describe a normal host CPU:
 | ELF version fields | 0 |
 | entry point | 0 |
 | program headers | none |
+| section-header offset | `0x40` |
 | section-header size | 64 bytes |
 
 A parser therefore cannot apply ordinary x86-64 ELF identity checks. It must
@@ -65,6 +66,16 @@ value 0, zero ELF version fields, zero flags, a 64-byte ELF header, and zero
 program-header offset/count/entry size. A familiar section name is not enough
 to make an ELF with a different type, machine, entry point, or header layout a
 supported native graph.
+
+The supported section table is also deliberately narrow. Section zero is the
+observed null record (all semantic fields zero, alignment 4); section-name
+table index 1 names `.strtab`; and file-backed sections must be disjoint. Every
+nonzero section alignment must be a power of two, and each file offset must
+satisfy it. The required ACT sections retain their observed flags, alignment,
+link, info, and entry-size fields—for example, `KernelText` has alignment
+1024, while parameters, ranges, and invocations have alignment 64. These checks
+prevent familiar names in a malformed section table from reaching the
+vendor-record parser.
 
 Common sections include:
 
@@ -430,16 +441,19 @@ The supported mutation is deliberately narrow:
 2. Validate the standalone kernel ELF and extract only its executable `.text`
    image.
 3. Append that image to `.text.KernelText` at an aligned offset.
-4. Rebase section file offsets affected by the insertion.
+4. Round the inserted extent so rebased sections retain their declared ELF
+   alignment, then update their file offsets.
 5. Update the selected range extents and their `KernelText` relocation
    addends.
 6. Verify that invocation records, parameters, tensor metadata, runtime
    configuration, DMA/barrier/DPU scheduling data, and unrelated relocations
    did not change.
 
-The tested construction uses 0x400-byte image alignment and 0x80 bytes of tail
-padding. These are conservative working values, not proven hardware minima.
-Several selected ranges may point to the same appended image.
+The tested construction uses 0x400-byte image alignment and at least 0x80 bytes
+of zero tail padding. Additional zero padding may be added to preserve the
+alignment of every shifted section. These are conservative working values,
+not proven hardware minima. Several selected ranges may point to the same
+appended image.
 
 Passing ELF validation is not enough to prove that arbitrary code follows the
 ACT entry convention. `npunlock` therefore also requires a compatible carrier

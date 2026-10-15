@@ -18,7 +18,7 @@ SPEC.loader.exec_module(porting_probe)
 
 
 class PortingProbeTests(unittest.TestCase):
-    def test_create_and_verify_fp16_add1_bundle(self) -> None:
+    def test_create_and_verify_fp16_custom_graph_bundle(self) -> None:
         BUILD.mkdir(exist_ok=True)
         graph = ROOT / "tests" / "fixtures" / "npu3720" / "add1-shared-1x16.blob"
         test_root = BUILD / "test-porting-probe"
@@ -39,7 +39,7 @@ class PortingProbeTests(unittest.TestCase):
             self.assertEqual(report["element_count"], 16)
             self.assertEqual(
                 report["graph_sha256"],
-                "2010915f2d21e07d2afee613ffe8f38a9ce6e39523ab98e0762c1bd40e04d95f",
+                "23b0467b55bd69fa3587afc0387e4ba171ec46eb3ec41b79633e6831cc417850",
             )
 
             expected = bundle / porting_probe.EXPECTED_FILE

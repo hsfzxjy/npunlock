@@ -12,7 +12,7 @@ from npunlock.doctor import collect_diagnostics
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/fixtures/npu3720/add1-shared-1x16.blob"
-FIXTURE_SHA256 = "2010915f2d21e07d2afee613ffe8f38a9ce6e39523ab98e0762c1bd40e04d95f"
+FIXTURE_SHA256 = "23b0467b55bd69fa3587afc0387e4ba171ec46eb3ec41b79633e6831cc417850"
 
 
 def main() -> None:

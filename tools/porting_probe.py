@@ -45,6 +45,17 @@ def _fp16_bytes(values: Sequence[float]) -> bytes:
     return struct.pack(f"<{len(values)}e", *values)
 
 
+def _fp16(value: float) -> float:
+    return struct.unpack("<e", struct.pack("<e", value))[0]
+
+
+def _expected_values(values: Sequence[float]) -> tuple[float, ...]:
+    count = len(values)
+    return tuple(
+        _fp16(_fp16(_fp16(value) + _fp16(-0.5 + index / (count - 1))) + 1.0) for index, value in enumerate(values)
+    )
+
+
 def _file_record(name: str, data: bytes) -> dict[str, object]:
     return {"file": name, "size": len(data), "sha256": _sha256(data)}
 
@@ -64,7 +75,7 @@ def create_bundle(
     output_dir.mkdir(parents=True, exist_ok=False)
 
     input_data = _fp16_bytes(INPUT_VALUES)
-    expected_data = _fp16_bytes(tuple(value + 1.0 for value in INPUT_VALUES))
+    expected_data = _fp16_bytes(_expected_values(INPUT_VALUES))
     graph_record = _file_record(GRAPH_FILE, graph)
     input_record = {
         **_file_record(INPUT_FILE, input_data),
@@ -80,7 +91,7 @@ def create_bundle(
     }
     manifest = {
         "schema": BUNDLE_SCHEMA,
-        "purpose": "Test loading and exact FP16 add-one execution of one prepatched native graph.",
+        "purpose": "Test exact execution of one retained FP16 custom-kernel graph.",
         "producer": {
             "platform": producer_platform,
             "device": device,
@@ -91,7 +102,7 @@ def create_bundle(
         "inputs": [input_record],
         "expected_outputs": [output_record],
         "oracle": {
-            "name": "fp16_add1_exact",
+            "name": "fp16_carrier_bias_then_custom_add1_exact",
             "input_argument_index": 0,
             "output_argument_index": 1,
         },
@@ -162,15 +173,17 @@ def verify_bundle(bundle_dir: Path) -> dict[str, object]:
         raise ValueError("probe tensor contract is not the fixed 1x16 FP16 contract")
     oracle = _object(manifest.get("oracle"), "oracle")
     if oracle != {
-        "name": "fp16_add1_exact",
+        "name": "fp16_carrier_bias_then_custom_add1_exact",
         "input_argument_index": 0,
         "output_argument_index": 1,
     }:
         raise ValueError("unsupported probe oracle")
     actual_inputs = struct.unpack(f"<{len(INPUT_VALUES)}e", input_data)
-    oracle_output = _fp16_bytes(tuple(value + 1.0 for value in actual_inputs))
+    if tuple(actual_inputs) != tuple(_fp16(value) for value in INPUT_VALUES):
+        raise ValueError("input does not match the fixed probe tensor")
+    oracle_output = _fp16_bytes(_expected_values(actual_inputs))
     if expected_data != oracle_output:
-        raise ValueError("expected output does not match the exact FP16 add-one oracle")
+        raise ValueError("expected output does not match the fixed FP16 graph oracle")
 
     expected_files = {MANIFEST_FILE, GRAPH_FILE, INPUT_FILE, EXPECTED_FILE}
     actual_entries = {path.name for path in bundle_dir.iterdir()}
@@ -181,14 +194,14 @@ def verify_bundle(bundle_dir: Path) -> dict[str, object]:
         "bundle": str(bundle_dir),
         "graph_sha256": _sha256(graph),
         "element_count": len(INPUT_VALUES),
-        "oracle": "fp16_add1_exact",
+        "oracle": "fp16_carrier_bias_then_custom_add1_exact",
     }
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    create = subparsers.add_parser("create", help="create a deterministic FP16 add-one bundle")
+    create = subparsers.add_parser("create", help="create the deterministic FP16 graph bundle")
     create.add_argument("--graph", type=Path, required=True)
     create.add_argument("--output-dir", type=Path, required=True)
     create.add_argument("--producer-platform", required=True)

@@ -63,6 +63,100 @@ static uint8_t *find_bytes(uint8_t *data, size_t data_size, const uint8_t *expec
   return NULL;
 }
 
+static uint16_t read_u16(const uint8_t *bytes) {
+  return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8));
+}
+
+static uint32_t read_u32(const uint8_t *bytes) {
+  return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) | ((uint32_t)bytes[2] << 16) |
+         ((uint32_t)bytes[3] << 24);
+}
+
+static uint64_t read_u64(const uint8_t *bytes) {
+  return (uint64_t)read_u32(bytes) | ((uint64_t)read_u32(bytes + 4) << 32);
+}
+
+static void write_u64(uint8_t *bytes, uint64_t value) {
+  bytes[0] = (uint8_t)value;
+  bytes[1] = (uint8_t)(value >> 8);
+  bytes[2] = (uint8_t)(value >> 16);
+  bytes[3] = (uint8_t)(value >> 24);
+  bytes[4] = (uint8_t)(value >> 32);
+  bytes[5] = (uint8_t)(value >> 40);
+  bytes[6] = (uint8_t)(value >> 48);
+  bytes[7] = (uint8_t)(value >> 56);
+}
+
+static uint8_t *find_section_header(uint8_t *data, size_t size, const char *expected_name) {
+  size_t section_table;
+  size_t section_count;
+  size_t string_index;
+  size_t string_header;
+  size_t string_offset;
+  size_t string_size;
+  size_t index;
+  if (size < 64u || read_u64(data + 0x28u) > SIZE_MAX) {
+    return NULL;
+  }
+  section_table = (size_t)read_u64(data + 0x28u);
+  section_count = read_u16(data + 0x3cu);
+  string_index = read_u16(data + 0x3eu);
+  if (section_count == 0u || section_count > size / 64u || string_index >= section_count ||
+      section_table > size - 64u * section_count) {
+    return NULL;
+  }
+  string_header = section_table + 64u * string_index;
+  if (read_u64(data + string_header + 0x18u) > SIZE_MAX ||
+      read_u64(data + string_header + 0x20u) > SIZE_MAX) {
+    return NULL;
+  }
+  string_offset = (size_t)read_u64(data + string_header + 0x18u);
+  string_size = (size_t)read_u64(data + string_header + 0x20u);
+  if (string_offset > size || string_size > size - string_offset) {
+    return NULL;
+  }
+  for (index = 0; index < section_count; ++index) {
+    uint8_t *header = data + section_table + 64u * index;
+    uint32_t name_offset = read_u32(header);
+    const char *name;
+    if (name_offset >= string_size) {
+      return NULL;
+    }
+    name = (const char *)(data + string_offset + name_offset);
+    if (memchr(name, 0, string_size - name_offset) == NULL) {
+      return NULL;
+    }
+    if (strcmp(name, expected_name) == 0) {
+      return header;
+    }
+  }
+  return NULL;
+}
+
+static int sections_are_aligned(const uint8_t *data, size_t size) {
+  size_t section_table;
+  size_t section_count;
+  size_t index;
+  if (size < 64u || read_u64(data + 0x28u) > SIZE_MAX) {
+    return 0;
+  }
+  section_table = (size_t)read_u64(data + 0x28u);
+  section_count = read_u16(data + 0x3cu);
+  if (section_count == 0u || section_count > size / 64u ||
+      section_table > size - 64u * section_count) {
+    return 0;
+  }
+  for (index = 0; index < section_count; ++index) {
+    const uint8_t *header = data + section_table + 64u * index;
+    uint64_t offset = read_u64(header + 0x18u);
+    uint64_t alignment = read_u64(header + 0x30u);
+    if (alignment > 1u && offset % alignment != 0u) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 int main(void) {
   npunlock_buffer carrier;
   npunlock_buffer two_operation_carrier;
@@ -75,6 +169,7 @@ int main(void) {
   npunlock_buffer unsupported_carrier = {0};
   npunlock_buffer unsupported_tiles = {0};
   npunlock_buffer unsupported_platform = {0};
+  npunlock_buffer malformed_sections = {0};
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
@@ -161,6 +256,37 @@ int main(void) {
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
   CHECK(discovery.diagnostic.json.data != NULL);
   CHECK(strstr((const char *)discovery.diagnostic.json.data, "supported NPU3720 contract") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  malformed_sections.data = (uint8_t *)malloc(carrier.size);
+  CHECK(malformed_sections.data != NULL);
+  malformed_sections.size = carrier.size;
+  memcpy(malformed_sections.data, carrier.data, carrier.size);
+  {
+    uint8_t *params =
+        find_section_header(malformed_sections.data, malformed_sections.size, ".text.KernelParams");
+    CHECK(params != NULL);
+    write_u64(params + 0x18u, read_u64(params + 0x18u) + 1u);
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){malformed_sections.data, malformed_sections.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_MALFORMED_INPUT);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "alignment") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  memcpy(malformed_sections.data, carrier.data, carrier.size);
+  {
+    uint8_t *params =
+        find_section_header(malformed_sections.data, malformed_sections.size, ".text.KernelParams");
+    uint8_t *ranges = find_section_header(malformed_sections.data, malformed_sections.size,
+                                          ".text.ActKernelRanges");
+    CHECK(params != NULL && ranges != NULL);
+    write_u64(params + 0x18u, read_u64(ranges + 0x18u));
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){malformed_sections.data, malformed_sections.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_MALFORMED_INPUT);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "overlap") != NULL);
   patchblob_discovery_result_release(&discovery);
   status = patchblob_discover_targets((npunlock_view){carrier.data, carrier.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
@@ -294,6 +420,7 @@ int main(void) {
   CHECK(status == NPUNLOCK_STATUS_OK);
   CHECK(result.graph_blob.size == expected.size);
   CHECK(memcmp(result.graph_blob.data, expected.data, expected.size) == 0);
+  CHECK(sections_are_aligned(result.graph_blob.data, result.graph_blob.size));
   CHECK(result.report_json.data != NULL);
   CHECK(strstr((const char *)result.report_json.data, "npunlock.patchblob.v1") != NULL);
   CHECK(strstr((const char *)result.report_json.data,
@@ -324,6 +451,7 @@ int main(void) {
   free(unsupported_carrier.data);
   free(unsupported_tiles.data);
   free(unsupported_platform.data);
+  free(malformed_sections.data);
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);

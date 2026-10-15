@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** NPU3720 native graphs use a deliberately nonstandard, section-only ELF identity. `npunlock` now validates the complete container header before trusting familiar ACT section names. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#42-native-graph-identity-is-deliberately-nonstandard-elf).
+> **Latest breakthrough — 2026-10-15:** Appending custom code must preserve the native graph's ELF section alignment. `npunlock` now rounds inserted storage correctly and rejects misaligned or overlapping section layouts before patching. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#43-appended-code-must-preserve-the-native-elf-section-layout).
 
 ## Quick example
 

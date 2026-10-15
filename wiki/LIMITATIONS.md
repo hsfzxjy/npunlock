@@ -161,6 +161,13 @@ can still fault even when the linked image is smaller than the carrier's old
 code extent. There is not yet a general executable-composition or code-size
 limit; validate the complete combined kernel on the target NPU.
 
+Native graph parsing accepts only the observed compiler-8.3/NPU3720 ELF
+container and section-table form. Required sections must retain their observed
+metadata, file-backed sections may not overlap, and their file offsets must
+satisfy the declared power-of-two alignments. Older `npunlock`-generated blobs
+that shifted sections without preserving those alignments can still be raw
+driver artifacts, but are not accepted for further discovery or patching.
+
 ## Precision
 
 Static dense FP16 is the established general MVP path. FP32 support is limited

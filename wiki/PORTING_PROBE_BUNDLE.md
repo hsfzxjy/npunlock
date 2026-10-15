@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) · [Porting roadmap](PORTING.md)
 
-The first execution probe is a fixed static dense FP16 add-one graph. Keeping
+The first execution probe is a fixed static dense FP16 custom-kernel graph. Keeping
 the graph, input, expected output, and provenance together prevents a test on a
 new operating system or NPU from silently changing several variables at once.
 
@@ -30,7 +30,7 @@ The destination must not already exist. The helper creates exactly four files:
 | `manifest.json` | Schema, producer provenance, tensor selectors, hashes, and oracle contract |
 | `graph.blob` | Complete prepatched native graph |
 | `input-0.bin` | Deterministic `1x16` little-endian FP16 input tensor |
-| `expected-output-0.bin` | Exact FP16 result of adding `1.0` to every input element |
+| `expected-output-0.bin` | Exact FP16 output of the retained carrier and custom kernel |
 
 The tensor selectors are argument index `0` for the input and argument index
 `1` for the output. The first bundle intentionally supports only this exact
@@ -52,8 +52,12 @@ python3 tools/porting_probe.py verify build/add1-probe
 elsewhere when running strict bundle verification, or verify before generating
 the inspection report.
 
-The verifier uses Python's IEEE-754 binary16 support and compares the expected
-output bytes exactly. It does not load Level Zero and works without an NPU.
+The carrier first adds the compiler-generated FP16 bias
+`bias[i] = -0.5 + i/15`; the custom ACT entry then adds `1.0`. The verifier
+reproduces both FP16 rounding steps and compares the expected output bytes
+exactly. This distinction matters because the custom kernel receives the
+carrier's internal tensor, not the original host input. The verifier does not
+load Level Zero and works without an NPU.
 
 ## Attempt execution on Linux
 
@@ -97,8 +101,8 @@ be archived for transport after verification.
 - Graph creation success proves driver acceptance, not execution.
 - Execution completion proves neither correct SHAVE instructions nor a stable
   invocation ABI.
-- Only an exact match with `expected-output-0.bin` establishes this one add-one
-  experiment on the reported platform.
+- Only an exact match with `expected-output-0.bin` establishes this one
+  carrier-plus-custom-kernel experiment on the reported platform.
 
 The bundle helper itself never loads the driver. Linux execution is performed
 only by the separate experimental `npunlock-linux-probe` utility.

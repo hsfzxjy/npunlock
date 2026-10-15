@@ -1268,6 +1268,39 @@ sections and compatibility records remain unchanged. This does not establish
 how a newer NPU container identifies itself; it prevents a familiar section
 layout from bypassing the currently supported container boundary.
 
+## 43. Appended code must preserve the native ELF section layout
+
+On 2026-10-15, the section geometry beneath the ACT parser was audited across
+the retained and locally generated graph artifacts. Every driver-produced
+carrier used a section table at file offset `0x40`, the same observed null
+record, section-name table index 1 naming `.strtab`, disjoint file-backed
+sections, power-of-two alignment fields, and file offsets satisfying those
+alignments. Required ACT section flags, alignments, links, info fields, and
+entry sizes were stable across the inspected compiler-8.3 carriers.
+
+The audit found a project defect: the old append operation grew `KernelText`
+by exactly the image-alignment gap, code size, and requested tail padding. If
+that growth was not a multiple of a later section's alignment, all following
+offsets were shifted by the wrong modulus. Forty-one local patched artifacts
+had this form, while the corresponding compiler-produced carriers were
+aligned. The current NPU loader tolerated the tested old artifact, but loader
+tolerance is not a sound ELF-writing contract.
+
+`patchblob` now rounds the inserted extent to the greatest declared alignment
+of every shifted section (and the section table if applicable). The selected
+image offset and bytes remain unchanged; only extra zero tail padding is
+introduced. The corrected retained graph grew from 43,696 to 43,728 bytes,
+with SHA-256
+`23b0467b55bd69fa3587afc0387e4ba171ec46eb3ec41b79633e6831cc417850`.
+Copied NPU execution was bit-identical to the previous blob and matched the
+existing 16-element graph oracle.
+
+The parser now validates the same section-table invariants before interpreting
+vendor records. Controlled one-byte misalignment and overlapping-section
+mutations are rejected offline. This establishes the narrow compiler-8.3 ELF
+geometry used by this project; it does not claim that another native compiler
+or NPU generation uses the same section metadata.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -8,14 +8,17 @@
 
 #define ELF64_HEADER_SIZE 64u
 #define ELF64_SECTION_SIZE 64u
+#define ELF64_SECTION_ALIGNMENT 8u
 #define ELF64_SYMBOL_SIZE 24u
 #define ELF64_RELA_SIZE 24u
 #define ACT_INVOCATION_SIZE 0x40u
 #define ACT_RANGE_SIZE 0x18u
 #define MEMREF_SIZE 0x28u
 #define GRAPH_CODE_ADDRESS 0x1d000000u
+#define SHT_NULL 0u
 #define SHT_PROGBITS 1u
 #define SHT_SYMTAB 2u
+#define SHT_STRTAB 3u
 #define SHT_RELA 4u
 #define SHT_NOTE 7u
 #define SHT_NOBITS 8u
@@ -127,6 +130,18 @@ static bool align_up(size_t value, size_t alignment, size_t *result) {
   return true;
 }
 
+static bool is_power_of_two(size_t value) { return value != 0u && (value & (value - 1u)) == 0u; }
+
+static bool ranges_overlap(size_t left_offset, size_t left_size, size_t right_offset,
+                           size_t right_size) {
+  size_t left_end;
+  size_t right_end;
+  return left_size != 0u && right_size != 0u &&
+         npunlock_checked_add_size(left_offset, left_size, &left_end) &&
+         npunlock_checked_add_size(right_offset, right_size, &right_end) &&
+         left_offset < right_end && right_offset < left_end;
+}
+
 static npunlock_status malformed(npunlock_diagnostic *diagnostic, const char *message) {
   return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_MALFORMED_INPUT,
                                  "patchblob.parse_graph", message);
@@ -164,7 +179,9 @@ static npunlock_status validate_graph_compatibility(graph_layout *layout,
   bool loader_elf_found = false;
   bool mapped_inference_found = false;
 
-  if (section->type != SHT_VPU_COMPATIBILITY || section->size == 0u) {
+  if (section->type != SHT_VPU_COMPATIBILITY || section->flags != 0u || section->address != 0u ||
+      section->link != 0u || section->info != 0u || section->alignment != 1u ||
+      section->entry_size != 1u || section->size == 0u) {
     return unsupported(diagnostic, "graph compatibility_string section has an unsupported form");
   }
   data = layout->blob.data + section->offset;
@@ -252,7 +269,9 @@ static npunlock_status validate_version_note(const graph_layout *layout, size_t 
   const uint8_t *note;
   size_t index;
 
-  if (section->type != SHT_NOTE || section->size != NPU_VERSION_NOTE_SIZE) {
+  if (section->type != SHT_NOTE || section->flags != 0u || section->address != 0u ||
+      section->link != 0u || section->info != 0u || section->alignment != 4u ||
+      section->entry_size != 1u || section->size != NPU_VERSION_NOTE_SIZE) {
     return unsupported(diagnostic, message);
   }
   note = layout->blob.data + section->offset;
@@ -287,8 +306,9 @@ static npunlock_status validate_platform_info(const graph_layout *layout,
   const graph_section *section = &layout->sections[layout->platform_info_index];
   const uint8_t *data;
 
-  if (section->type != SHT_VPU_PLATFORM_INFO || section->size != NPU_PLATFORM_INFO_SIZE ||
-      section->alignment != 8u) {
+  if (section->type != SHT_VPU_PLATFORM_INFO || section->flags != 0u || section->address != 0u ||
+      section->link != 0u || section->info != 0u || section->size != NPU_PLATFORM_INFO_SIZE ||
+      section->alignment != 8u || section->entry_size != 1u) {
     return unsupported(diagnostic, "graph platform-info section has an unsupported form");
   }
   data = layout->blob.data + section->offset;
@@ -342,7 +362,8 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
   layout->section_count = read_u16(bytes + 0x3c);
   layout->section_name_index = read_u16(bytes + 0x3e);
   if (!u64_to_size(section_table_u64, &layout->section_table_offset) ||
-      layout->section_count == 0 || layout->section_name_index >= layout->section_count ||
+      layout->section_table_offset != ELF64_HEADER_SIZE || layout->section_count == 0 ||
+      layout->section_name_index >= layout->section_count ||
       !npunlock_checked_mul_size(layout->section_count, ELF64_SECTION_SIZE, &table_size) ||
       !range_in_bounds(layout->section_table_offset, table_size, blob.size)) {
     return malformed(diagnostic, "graph section table is outside the input blob");
@@ -366,15 +387,58 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
         !u64_to_size(read_u64(header + 0x20), &section->size) ||
         !u64_to_size(read_u64(header + 0x30), &section->alignment) ||
         !u64_to_size(read_u64(header + 0x38), &section->entry_size) ||
+        (section->alignment != 0u && !is_power_of_two(section->alignment)) ||
+        (section->alignment > 1u && section->offset % section->alignment != 0u) ||
         (section->type != SHT_NOBITS &&
          !range_in_bounds(section->offset, section->size, blob.size))) {
       graph_layout_release(layout);
-      return malformed(diagnostic, "graph section extent is outside the input blob");
+      return malformed(diagnostic, "graph section extent or alignment is malformed");
+    }
+  }
+  {
+    const graph_section *null_section = &layout->sections[0];
+    const uint8_t *null_header = bytes + null_section->header_offset;
+    size_t left;
+    size_t right;
+    if (read_u32(null_header) != 0u || null_section->type != SHT_NULL ||
+        null_section->flags != 0u || null_section->address != 0u || null_section->offset != 0u ||
+        null_section->size != 0u || null_section->link != 0u || null_section->info != 0u ||
+        null_section->alignment != 4u || null_section->entry_size != 0u) {
+      graph_layout_release(layout);
+      return unsupported(diagnostic, "graph null section is not the supported native form");
+    }
+    for (left = 1u; left < layout->section_count; ++left) {
+      const graph_section *left_section = &layout->sections[left];
+      if (left_section->type == SHT_NOBITS || left_section->size == 0u) {
+        continue;
+      }
+      if (ranges_overlap(layout->section_table_offset, table_size, left_section->offset,
+                         left_section->size)) {
+        graph_layout_release(layout);
+        return malformed(diagnostic, "graph section overlaps the section table");
+      }
+      for (right = left + 1u; right < layout->section_count; ++right) {
+        const graph_section *right_section = &layout->sections[right];
+        if (right_section->type != SHT_NOBITS &&
+            ranges_overlap(left_section->offset, left_section->size, right_section->offset,
+                           right_section->size)) {
+          graph_layout_release(layout);
+          return malformed(diagnostic, "graph file-backed sections overlap");
+        }
+      }
     }
   }
   string_offset = layout->sections[layout->section_name_index].offset;
   string_size = layout->sections[layout->section_name_index].size;
-  if (layout->sections[layout->section_name_index].type != 3u || string_size == 0) {
+  if (layout->section_name_index != 1u ||
+      layout->sections[layout->section_name_index].type != SHT_STRTAB ||
+      layout->sections[layout->section_name_index].flags != 0u ||
+      layout->sections[layout->section_name_index].address != 0u ||
+      layout->sections[layout->section_name_index].link != 0u ||
+      layout->sections[layout->section_name_index].info != 0u ||
+      layout->sections[layout->section_name_index].alignment != 4u ||
+      layout->sections[layout->section_name_index].entry_size != 0u || string_size == 0u ||
+      bytes[string_offset] != 0u) {
     graph_layout_release(layout);
     return malformed(diagnostic, "graph section-name string table is malformed");
   }
@@ -412,6 +476,10 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
     MATCH_REQUIRED(platform_info_index, ".meta.PlatformInfo")
 #undef MATCH_REQUIRED
   }
+  if (strcmp(layout->sections[layout->section_name_index].name, ".strtab") != 0) {
+    graph_layout_release(layout);
+    return unsupported(diagnostic, "graph section-name table is not the supported native form");
+  }
   if (layout->kernel_text_index == SIZE_MAX || layout->params_index == SIZE_MAX ||
       layout->invocations_index == SIZE_MAX || layout->ranges_index == SIZE_MAX ||
       layout->range_relocations_index == SIZE_MAX) {
@@ -438,6 +506,36 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
       layout->sections[layout->range_relocations_index].type != SHT_RELA) {
     graph_layout_release(layout);
     return unsupported(diagnostic, "required ACT carrier sections have unsupported types");
+  }
+  if (layout->sections[layout->kernel_text_index].flags != 0x40000000u ||
+      layout->sections[layout->kernel_text_index].address != 0u ||
+      layout->sections[layout->kernel_text_index].link != 0u ||
+      layout->sections[layout->kernel_text_index].info != 0u ||
+      layout->sections[layout->kernel_text_index].alignment != 1024u ||
+      layout->sections[layout->kernel_text_index].entry_size != 1u ||
+      layout->sections[layout->params_index].flags != 0x40000000u ||
+      layout->sections[layout->params_index].address != 0u ||
+      layout->sections[layout->params_index].link != 0u ||
+      layout->sections[layout->params_index].info != 0u ||
+      layout->sections[layout->params_index].alignment != 64u ||
+      layout->sections[layout->params_index].entry_size != 1u ||
+      layout->sections[layout->invocations_index].flags != 0x20000004u ||
+      layout->sections[layout->invocations_index].address != 0u ||
+      layout->sections[layout->invocations_index].link != 0u ||
+      layout->sections[layout->invocations_index].info != 0u ||
+      layout->sections[layout->invocations_index].alignment != 64u ||
+      layout->sections[layout->invocations_index].entry_size != 1u ||
+      layout->sections[layout->ranges_index].flags != 0x20000004u ||
+      layout->sections[layout->ranges_index].address != 0u ||
+      layout->sections[layout->ranges_index].link != 0u ||
+      layout->sections[layout->ranges_index].info != 0u ||
+      layout->sections[layout->ranges_index].alignment != 64u ||
+      layout->sections[layout->ranges_index].entry_size != 1u ||
+      layout->sections[layout->range_relocations_index].flags != 0x40u ||
+      layout->sections[layout->range_relocations_index].address != 0u ||
+      layout->sections[layout->range_relocations_index].alignment != 8u) {
+    graph_layout_release(layout);
+    return unsupported(diagnostic, "required ACT carrier sections have unsupported metadata");
   }
   if (layout->sections[layout->invocations_index].size % ACT_INVOCATION_SIZE != 0 ||
       layout->sections[layout->ranges_index].size % ACT_RANGE_SIZE != 0 ||
@@ -1509,7 +1607,9 @@ static npunlock_status patch_graph_blob_impl(npunlock_view graph_blob, npunlock_
   size_t image_base;
   size_t image_end;
   size_t new_text_size;
+  size_t minimum_inserted_size;
   size_t inserted_size;
+  size_t shift_alignment = 1u;
   size_t output_size;
   uint8_t *patched = NULL;
   size_t index;
@@ -1611,6 +1711,10 @@ static npunlock_status patch_graph_blob_impl(npunlock_view graph_blob, npunlock_
       status = malformed(diagnostic, "KernelText insertion point crosses another graph section");
       goto fail;
     }
+    if (section->offset >= summary->insertion_file_offset && section->offset != 0u &&
+        section->alignment > shift_alignment) {
+      shift_alignment = section->alignment;
+    }
   }
   {
     size_t section_table_size;
@@ -1623,6 +1727,10 @@ static npunlock_status patch_graph_blob_impl(npunlock_view graph_blob, npunlock_
       status = malformed(diagnostic, "KernelText insertion point crosses the section table");
       goto fail;
     }
+    if (layout.section_table_offset >= summary->insertion_file_offset &&
+        ELF64_SECTION_ALIGNMENT > shift_alignment) {
+      shift_alignment = ELF64_SECTION_ALIGNMENT;
+    }
   }
   if (!align_up(text->size, image_alignment, &image_base) ||
       !npunlock_checked_add_size(image_base, image.size, &image_end) ||
@@ -1632,7 +1740,13 @@ static npunlock_status patch_graph_blob_impl(npunlock_view graph_blob, npunlock_
                                      "appended code image size overflows");
     goto fail;
   }
-  inserted_size = new_text_size - text->size;
+  minimum_inserted_size = new_text_size - text->size;
+  if (!align_up(minimum_inserted_size, shift_alignment, &inserted_size) ||
+      !npunlock_checked_add_size(text->size, inserted_size, &new_text_size)) {
+    status = npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OVERFLOW, "patchblob.patch",
+                                     "appended code image size overflows");
+    goto fail;
+  }
   if (!npunlock_checked_add_size(graph_blob.size, inserted_size, &output_size)) {
     status = npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OVERFLOW, "patchblob.patch",
                                      "patched graph size overflows");
