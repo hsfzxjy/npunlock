@@ -60,6 +60,12 @@ A parser therefore cannot apply ordinary x86-64 ELF identity checks. It must
 validate the observed NPU container fields and then bounds-check every section
 and relocation it uses.
 
+`npunlock` requires this exact section-only identity, including System V ABI
+value 0, zero ELF version fields, zero flags, a 64-byte ELF header, and zero
+program-header offset/count/entry size. A familiar section name is not enough
+to make an ELF with a different type, machine, entry point, or header layout a
+supported native graph.
+
 Common sections include:
 
 ```text

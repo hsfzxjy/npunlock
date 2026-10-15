@@ -229,6 +229,11 @@ span, and required observed contract flags. The library extracts executable
 bytes from the validated SHAVE ELF, applies only the confirmed append/rebase
 mutation, and returns a new blob plus a JSON preservation report.
 
+Graph parsing first requires the exact observed section-only NPU ELF64
+identity: ET_REL value 1, machine/version/entry/flags zero, no program headers,
+and 64-byte ELF and section headers. Similar-looking host or future NPU ELF
+containers are not accepted by section name alone.
+
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
 carrier and same-precision scalar-second-input binary carrier.

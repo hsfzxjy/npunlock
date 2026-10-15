@@ -1248,6 +1248,26 @@ to 4 is rejected before ACT discovery. This is an independent consistency
 check, not a claim that the remaining descriptor words are a general platform
 ABI or that NPU4000 uses an otherwise compatible graph layout.
 
+## 42. Native graph identity is deliberately nonstandard ELF
+
+On 2026-10-15, the parser's initial ELF check was compared with the identity
+already observed in every supported graph. It checked the magic, 64-bit class,
+little-endian encoding, program-header count, and section-record size, but did
+not reject a different ELF type, machine, version, entry point, flags, or
+header geometry before examining vendor sections.
+
+The supported native container consistently uses ET_REL value 1, machine 0,
+System V ABI value 0, zero ELF version fields, entry point 0, flags 0, no
+program-header table, and 64-byte ELF and section headers. Those values are not
+ordinary x86-64 identity and must be treated as part of the observed NPU
+container contract rather than ignored generic ELF metadata.
+
+`patchblob` now validates that complete identity before reading the section
+table. A controlled ET_REL-to-ET_EXEC mutation is rejected even though all ACT
+sections and compatibility records remain unchanged. This does not establish
+how a newer NPU container identifies itself; it prevents a familiar section
+layout from bypassing the currently supported container boundary.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

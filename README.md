@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Native graphs contain a structured platform record whose architecture value independently identifies NPU3720. `npunlock` now cross-checks it with the compatibility string before interpreting ACT records. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#41-platform-metadata-independently-identifies-npu3720).
+> **Latest breakthrough — 2026-10-15:** NPU3720 native graphs use a deliberately nonstandard, section-only ELF identity. `npunlock` now validates the complete container header before trusting familiar ACT section names. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#42-native-graph-identity-is-deliberately-nonstandard-elf).
 
 ## Quick example
 

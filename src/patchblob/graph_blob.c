@@ -327,9 +327,16 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
       bytes[4] != 2 || bytes[5] != 1) {
     return malformed(diagnostic, "graph blob is not a supported ELF64 little-endian image");
   }
-  if (read_u16(bytes + 0x38) != 0 || read_u16(bytes + 0x3a) != ELF64_SECTION_SIZE) {
+  if (bytes[6] != 0u || bytes[7] != 0u || bytes[8] != 0u || read_u16(bytes + 0x10) != 1u ||
+      read_u16(bytes + 0x12) != 0u || read_u32(bytes + 0x14) != 0u ||
+      read_u64(bytes + 0x18) != 0u || read_u32(bytes + 0x30) != 0u) {
+    return unsupported(diagnostic, "graph ELF identity is not the supported NPU native contract");
+  }
+  if (read_u64(bytes + 0x20) != 0u || read_u16(bytes + 0x34) != ELF64_HEADER_SIZE ||
+      read_u16(bytes + 0x36) != 0u || read_u16(bytes + 0x38) != 0u ||
+      read_u16(bytes + 0x3a) != ELF64_SECTION_SIZE) {
     return unsupported(diagnostic,
-                       "graph blobs with program headers or nonstandard sections are unsupported");
+                       "graph ELF header layout is not the supported section-only contract");
   }
   section_table_u64 = read_u64(bytes + 0x28);
   layout->section_count = read_u16(bytes + 0x3c);

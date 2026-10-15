@@ -71,6 +71,7 @@ int main(void) {
   npunlock_buffer convert_f16_to_f32;
   npunlock_buffer elf;
   npunlock_buffer expected;
+  npunlock_buffer unsupported_header = {0};
   npunlock_buffer unsupported_carrier = {0};
   npunlock_buffer unsupported_tiles = {0};
   npunlock_buffer unsupported_platform = {0};
@@ -96,6 +97,17 @@ int main(void) {
   CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
         broadcast_carrier.data != NULL && convert_f32_to_f16.data != NULL &&
         convert_f16_to_f32.data != NULL && elf.data != NULL && expected.data != NULL);
+  unsupported_header.data = (uint8_t *)malloc(carrier.size);
+  CHECK(unsupported_header.data != NULL);
+  unsupported_header.size = carrier.size;
+  memcpy(unsupported_header.data, carrier.data, carrier.size);
+  unsupported_header.data[0x10] = 2u;
+  status = patchblob_discover_targets(
+      (npunlock_view){unsupported_header.data, unsupported_header.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "ELF identity") != NULL);
+  patchblob_discovery_result_release(&discovery);
   unsupported_carrier.data = (uint8_t *)malloc(carrier.size);
   CHECK(unsupported_carrier.data != NULL);
   unsupported_carrier.size = carrier.size;
@@ -308,6 +320,7 @@ int main(void) {
   patchblob_result_release(&result);
   free(expected.data);
   free(elf.data);
+  free(unsupported_header.data);
   free(unsupported_carrier.data);
   free(unsupported_tiles.data);
   free(unsupported_platform.data);

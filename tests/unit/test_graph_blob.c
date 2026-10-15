@@ -41,7 +41,9 @@ static void make_graph_without_act(uint8_t graph[201]) {
          4);
   graph[4] = 2;
   graph[5] = 1;
+  write_u16(graph + 0x10, 1);
   write_u64(graph + 0x28, 64);
+  write_u16(graph + 0x34, 64);
   write_u16(graph + 0x3a, 64);
   write_u16(graph + 0x3c, 2);
   write_u16(graph + 0x3e, 1);
