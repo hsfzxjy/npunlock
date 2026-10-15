@@ -84,15 +84,18 @@ static npunlock_status build_report(npunlock_view graph_blob, npunlock_view shav
                      "{\"schema\":\"%s\","
                      "\"input_graph_sha256\":\"%s\",\"shave_elf_sha256\":\"%s\","
                      "\"output_graph_sha256\":\"%s\","
-                     "\"graph_contract\":{\"compiler\":\"8.3\",\"npu\":\"3720\"},"
+                     "\"graph_contract\":{\"compiler\":\"8.3\",\"npu\":\"3720\","
+                     "\"tiles\":%u,\"loader_elf\":\"1.2.0\","
+                     "\"mapped_inference\":\"7.0.4\"},"
                      "\"append\":{\"file_offset\":%zu,\"inserted_size\":%zu,"
                      "\"image_base\":%zu,\"image_size\":%zu},"
                      "\"section_table\":{\"old_offset\":%zu,\"new_offset\":%zu},"
                      "\"validation\":{\"section_contents_preserved\":true,"
                      "\"mutation_set_preserved\":true},\"targets\":[",
-                     schema, graph_hash, elf_hash, output_hash, summary->insertion_file_offset,
-                     summary->inserted_size, summary->image_base, summary->image_size,
-                     summary->old_section_table_offset, summary->new_section_table_offset)) {
+                     schema, graph_hash, elf_hash, output_hash, summary->tile_count,
+                     summary->insertion_file_offset, summary->inserted_size, summary->image_base,
+                     summary->image_size, summary->old_section_table_offset,
+                     summary->new_section_table_offset)) {
     free(writer.data);
     return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR, "patchblob.report",
                                    "patch report buffer was too small");

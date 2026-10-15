@@ -246,8 +246,11 @@ the result with `patchblob_discovery_result_release()`. Discovery is based on a
 narrow observed NPU3720/compiler-8.3 invocation identity and tensor contract;
 callers must correlate the group count and order with their own graph before
 patching. The parser reads the native blob's vendor `compatibility_string` and
-requires its embedded `compiler=8.3` and `npu=3720` fields for both discovery
-and patching. The JSON patch report records that validated graph contract.
+requires its embedded `compiler=8.3`, `npu=3720`, `t=1|2`, `elf=1.2.0`, and
+`mi=7.0.4` fields for both discovery and patching. The loader and
+mapped-inference values are cross-checked against their dedicated ELF notes;
+every ACT invocation tile index must be below `t`. The JSON patch report
+records that validated graph contract.
 
 The additive version 2 API describes every tensor record independently:
 

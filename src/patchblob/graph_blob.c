@@ -17,9 +17,11 @@
 #define SHT_PROGBITS 1u
 #define SHT_SYMTAB 2u
 #define SHT_RELA 4u
+#define SHT_NOTE 7u
 #define SHT_NOBITS 8u
 #define SHT_VPU_COMPATIBILITY 0x8aaaaab2u
 #define R_VPU_64 4u
+#define NPU_VERSION_NOTE_SIZE 0x20u
 
 typedef struct graph_section {
   uint32_t type;
@@ -47,6 +49,9 @@ typedef struct graph_layout {
   size_t ranges_index;
   size_t range_relocations_index;
   size_t compatibility_index;
+  size_t loader_abi_version_index;
+  size_t mapped_inference_version_index;
+  uint32_t tile_count;
 } graph_layout;
 
 typedef struct graph_relocation {
@@ -144,7 +149,7 @@ static bool token_equals(const uint8_t *token, size_t token_size, const char *ex
   return token_size == expected_size && memcmp(token, expected, expected_size) == 0;
 }
 
-static npunlock_status validate_graph_compatibility(const graph_layout *layout,
+static npunlock_status validate_graph_compatibility(graph_layout *layout,
                                                     npunlock_diagnostic *diagnostic) {
   const graph_section *section = &layout->sections[layout->compatibility_index];
   const uint8_t *data;
@@ -152,6 +157,9 @@ static npunlock_status validate_graph_compatibility(const graph_layout *layout,
   size_t offset = 0;
   bool compiler_found = false;
   bool npu_found = false;
+  bool tiles_found = false;
+  bool loader_elf_found = false;
+  bool mapped_inference_found = false;
 
   if (section->type != SHT_VPU_COMPATIBILITY || section->size == 0u) {
     return unsupported(diagnostic, "graph compatibility_string section has an unsupported form");
@@ -189,6 +197,35 @@ static npunlock_status validate_graph_compatibility(const graph_layout *layout,
       if (!token_equals(token, token_size, "npu=3720")) {
         return unsupported(diagnostic, "graph target is not the supported NPU3720 contract");
       }
+    } else if (token_starts_with(token, token_size, "t=")) {
+      if (tiles_found) {
+        return malformed(diagnostic, "graph compatibility_string contains duplicate t fields");
+      }
+      tiles_found = true;
+      if (token_equals(token, token_size, "t=1")) {
+        layout->tile_count = 1u;
+      } else if (token_equals(token, token_size, "t=2")) {
+        layout->tile_count = 2u;
+      } else {
+        return unsupported(diagnostic,
+                           "graph tile count is outside the supported one- or two-tile contract");
+      }
+    } else if (token_starts_with(token, token_size, "elf=")) {
+      if (loader_elf_found) {
+        return malformed(diagnostic, "graph compatibility_string contains duplicate elf fields");
+      }
+      loader_elf_found = true;
+      if (!token_equals(token, token_size, "elf=1.2.0")) {
+        return unsupported(diagnostic, "graph loader ELF version is not the supported 1.2.0");
+      }
+    } else if (token_starts_with(token, token_size, "mi=")) {
+      if (mapped_inference_found) {
+        return malformed(diagnostic, "graph compatibility_string contains duplicate mi fields");
+      }
+      mapped_inference_found = true;
+      if (!token_equals(token, token_size, "mi=7.0.4")) {
+        return unsupported(diagnostic, "graph mapped-inference version is not the supported 7.0.4");
+      }
     }
     if (separator == NULL) {
       offset = data_size;
@@ -196,9 +233,48 @@ static npunlock_status validate_graph_compatibility(const graph_layout *layout,
       offset += token_size + 1u;
     }
   }
-  if (!compiler_found || !npu_found) {
+  if (!compiler_found || !npu_found || !tiles_found || !loader_elf_found ||
+      !mapped_inference_found) {
     return unsupported(diagnostic,
-                       "graph compatibility_string does not identify compiler 8.3 and NPU3720");
+                       "graph compatibility_string lacks a required compatibility field");
+  }
+  return NPUNLOCK_STATUS_OK;
+}
+
+static npunlock_status validate_version_note(const graph_layout *layout, size_t section_index,
+                                             const char owner[4], uint32_t note_type,
+                                             const uint32_t expected[4], const char *message,
+                                             npunlock_diagnostic *diagnostic) {
+  const graph_section *section = &layout->sections[section_index];
+  const uint8_t *note;
+  size_t index;
+
+  if (section->type != SHT_NOTE || section->size != NPU_VERSION_NOTE_SIZE) {
+    return unsupported(diagnostic, message);
+  }
+  note = layout->blob.data + section->offset;
+  if (read_u32(note) != 4u || read_u32(note + 4u) != 16u || read_u32(note + 8u) != note_type ||
+      memcmp(note + 12u, owner, 4u) != 0) {
+    return unsupported(diagnostic, message);
+  }
+  for (index = 0; index < 4u; ++index) {
+    if (read_u32(note + 16u + index * 4u) != expected[index]) {
+      return unsupported(diagnostic, message);
+    }
+  }
+  return NPUNLOCK_STATUS_OK;
+}
+
+static npunlock_status validate_act_tile_indices(const graph_layout *layout,
+                                                 npunlock_diagnostic *diagnostic) {
+  const graph_section *invocations = &layout->sections[layout->invocations_index];
+  size_t index;
+  for (index = 0; index < invocations->size / ACT_INVOCATION_SIZE; ++index) {
+    const uint8_t *record = layout->blob.data + invocations->offset + index * ACT_INVOCATION_SIZE;
+    if (read_u32(record + 0x34u) >= layout->tile_count) {
+      return unsupported(diagnostic,
+                         "ACT invocation tile index exceeds the graph compatibility contract");
+    }
   }
   return NPUNLOCK_STATUS_OK;
 }
@@ -219,6 +295,8 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
   layout->ranges_index = SIZE_MAX;
   layout->range_relocations_index = SIZE_MAX;
   layout->compatibility_index = SIZE_MAX;
+  layout->loader_abi_version_index = SIZE_MAX;
+  layout->mapped_inference_version_index = SIZE_MAX;
   if (blob.size < ELF64_HEADER_SIZE ||
       memcmp(bytes,
              "\x7f"
@@ -300,6 +378,8 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
     MATCH_REQUIRED(ranges_index, ".text.ActKernelRanges")
     MATCH_REQUIRED(range_relocations_index, ".rlt.text.ActKernelRanges")
     MATCH_REQUIRED(compatibility_index, "compatibility_string")
+    MATCH_REQUIRED(loader_abi_version_index, ".note.LoaderABIVersion")
+    MATCH_REQUIRED(mapped_inference_version_index, ".note.MappedInferenceVersion")
 #undef MATCH_REQUIRED
   }
   if (layout->kernel_text_index == SIZE_MAX || layout->params_index == SIZE_MAX ||
@@ -311,6 +391,11 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
   if (layout->compatibility_index == SIZE_MAX) {
     graph_layout_release(layout);
     return unsupported(diagnostic, "graph does not contain a compatibility_string section");
+  }
+  if (layout->loader_abi_version_index == SIZE_MAX ||
+      layout->mapped_inference_version_index == SIZE_MAX) {
+    graph_layout_release(layout);
+    return unsupported(diagnostic, "graph does not contain the required version-note sections");
   }
   if (layout->sections[layout->kernel_text_index].type != SHT_PROGBITS ||
       layout->sections[layout->params_index].type != SHT_PROGBITS ||
@@ -328,7 +413,22 @@ static npunlock_status parse_graph(npunlock_view blob, graph_layout *layout,
     return malformed(diagnostic, "ACT carrier section sizes are malformed");
   }
   {
+    static const uint32_t loader_abi_version[4] = {0u, 1u, 2u, 0u};
+    static const uint32_t mapped_inference_version[4] = {0u, 7u, 0u, 4u};
     npunlock_status status = validate_graph_compatibility(layout, diagnostic);
+    if (status == NPUNLOCK_STATUS_OK) {
+      status = validate_version_note(
+          layout, layout->loader_abi_version_index, "GNU", 1u, loader_abi_version,
+          "graph loader ABI note is not the supported 1.2.0 contract", diagnostic);
+    }
+    if (status == NPUNLOCK_STATUS_OK) {
+      status = validate_version_note(
+          layout, layout->mapped_inference_version_index, "MIV", 0xa000u, mapped_inference_version,
+          "graph mapped-inference note is not the supported 7.0.4 contract", diagnostic);
+    }
+    if (status == NPUNLOCK_STATUS_OK) {
+      status = validate_act_tile_indices(layout, diagnostic);
+    }
     if (status != NPUNLOCK_STATUS_OK) {
       graph_layout_release(layout);
       return status;
@@ -1386,6 +1486,7 @@ static npunlock_status patch_graph_blob_impl(npunlock_view graph_blob, npunlock_
   if (status != NPUNLOCK_STATUS_OK) {
     return status;
   }
+  summary->tile_count = layout.tile_count;
   status = invocation_parameter_bases(&layout, &parameter_bases, &invocation_count, diagnostic);
   if (status != NPUNLOCK_STATUS_OK) {
     graph_layout_release(&layout);

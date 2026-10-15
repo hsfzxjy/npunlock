@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Native graph blobs carry a `compatibility_string` identifying their compiler and NPU target. `npunlock` now validates `compiler=8.3` and `npu=3720` from the blob before interpreting ACT records. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#39-native-blobs-identify-their-compiler-and-npu-contract).
+> **Latest breakthrough — 2026-10-15:** Native graph compatibility metadata also bounds ACT tile indices and matches independent loader-version notes. `npunlock` now cross-checks those contracts before interpreting or changing a graph. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#40-compatibility-metadata-cross-checks-tile-and-loader-contracts).
 
 ## Quick example
 

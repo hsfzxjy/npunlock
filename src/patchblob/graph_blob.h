@@ -33,6 +33,7 @@ typedef struct npunlock_patch_summary {
   size_t image_size;
   size_t old_section_table_offset;
   size_t new_section_table_offset;
+  uint32_t tile_count;
   bool section_contents_preserved;
   bool mutation_set_preserved;
   npunlock_patch_detail *details;

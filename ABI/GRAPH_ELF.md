@@ -88,11 +88,24 @@ compiler=8.3;npu=3720;t=2;elf=1.2.0;mi=7.0.4
 
 **Confirmed:** compiler 8.3 emits this section in the retained unary, binary,
 same-precision, and conversion carriers, and the compiler and NPU fields agree
-with the versions queried from the driver at graph creation. `npunlock`
-requires exactly `compiler=8.3` and `npu=3720` before interpreting ACT records.
-Missing, duplicate, or different fields are rejected rather than treated as a
-similar-enough layout. Other fields are preserved but are not yet compatibility
-claims.
+with the versions queried from the driver at graph creation. Across 76 local
+blob artifacts, `t=1` bounded ACT invocation tile indices to 0, while `t=2`
+bounded them to 0 and 1. This correlation supports treating `t` as a tile-count
+bound; it does not say whether two invocations are partitions or replicas.
+
+The advertised `elf=1.2.0` and `mi=7.0.4` values match the dedicated note
+sections:
+
+| Section | Owner/type | Four 32-bit description words |
+| --- | --- | --- |
+| `.note.LoaderABIVersion` | `GNU`, type 1 | `0, 1, 2, 0` |
+| `.note.MappedInferenceVersion` | `MIV`, type `0xa000` | `0, 7, 0, 4` |
+
+`npunlock` requires these observed compiler, NPU, one-or-two-tile, loader-ELF,
+and mapped-inference contracts before interpreting ACT records. Missing,
+duplicate, inconsistent, or different fields are rejected rather than treated
+as a similar-enough layout. Unknown extra compatibility fields are preserved
+without assigning them semantics.
 
 The exact section set, order, size, and file offsets vary by graph. Absolute
 file offsets are not an ABI. `npunlock` follows section references and

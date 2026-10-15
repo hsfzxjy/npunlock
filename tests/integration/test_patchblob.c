@@ -72,6 +72,7 @@ int main(void) {
   npunlock_buffer elf;
   npunlock_buffer expected;
   npunlock_buffer unsupported_carrier = {0};
+  npunlock_buffer unsupported_tiles = {0};
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
@@ -109,6 +110,21 @@ int main(void) {
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
   CHECK(discovery.diagnostic.json.data != NULL);
   CHECK(strstr((const char *)discovery.diagnostic.json.data, "supported 8.3 contract") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  unsupported_tiles.data = (uint8_t *)malloc(two_operation_carrier.size);
+  CHECK(unsupported_tiles.data != NULL);
+  unsupported_tiles.size = two_operation_carrier.size;
+  memcpy(unsupported_tiles.data, two_operation_carrier.data, two_operation_carrier.size);
+  {
+    uint8_t *tiles = find_bytes(unsupported_tiles.data, unsupported_tiles.size, ";t=2;elf=");
+    CHECK(tiles != NULL);
+    tiles[3] = '1';
+  }
+  status = patchblob_discover_targets(
+      (npunlock_view){unsupported_tiles.data, unsupported_tiles.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(discovery.diagnostic.json.data != NULL);
+  CHECK(strstr((const char *)discovery.diagnostic.json.data, "tile index exceeds") != NULL);
   patchblob_discovery_result_release(&discovery);
   status = patchblob_discover_targets((npunlock_view){carrier.data, carrier.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
@@ -245,7 +261,7 @@ int main(void) {
   CHECK(result.report_json.data != NULL);
   CHECK(strstr((const char *)result.report_json.data, "npunlock.patchblob.v1") != NULL);
   CHECK(strstr((const char *)result.report_json.data,
-               "\"graph_contract\":{\"compiler\":\"8.3\",\"npu\":\"3720\"}") != NULL);
+               "\"graph_contract\":{\"compiler\":\"8.3\",\"npu\":\"3720\",\"tiles\":1") != NULL);
   CHECK(strstr((const char *)result.report_json.data, "\"invocation_index\":1") != NULL);
   patchblob_result_release(&result);
   status =
@@ -269,6 +285,7 @@ int main(void) {
   free(expected.data);
   free(elf.data);
   free(unsupported_carrier.data);
+  free(unsupported_tiles.data);
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);

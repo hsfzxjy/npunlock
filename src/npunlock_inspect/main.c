@@ -122,7 +122,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
-                      "\"source\": \"compatibility_string\"},\n") < 0 ||
+                      "\"loader_elf\": \"1.2.0\", \"mapped_inference\": \"7.0.4\", "
+                      "\"source\": \"compatibility_string + version notes\"},\n") < 0 ||
       fprintf(stream,
               "  \"act\": {\"group_count\": %zu, \"target_count\": %zu, "
               "\"targets\": [\n",

@@ -1201,6 +1201,31 @@ authenticated, or sufficient for newer compiler families. It does remove an
 earlier provenance gap for caller-supplied native blobs and gives future ports
 a concrete version gate to extend intentionally.
 
+## 40. Compatibility metadata cross-checks tile and loader contracts
+
+On 2026-10-15, the remaining fields in `compatibility_string` were compared
+with independent structures across 76 local native-blob artifacts. Five
+artifacts advertised `t=1`; all of their ACT invocation tile fields were zero.
+The other 71 advertised `t=2`; their ACT tile fields were bounded to zero and
+one. No artifact violated `tile_index < t`.
+
+This makes `t` useful as a fail-closed tile-index bound. It does not identify
+whether same-group work is partitioned or replicated, prove that every
+advertised tile must contain ACT work, or assign meaning to the tile-local CMX
+address delta. The parser therefore checks only the bound. A controlled change
+from `t=2` to `t=1` in a carrier containing tile-1 invocations is rejected.
+
+The same blobs advertised `elf=1.2.0` and `mi=7.0.4`. Their dedicated ELF
+notes independently encoded the same values: `.note.LoaderABIVersion` used
+owner `GNU`, type 1, and description words `0,1,2,0`; the mapped-inference note
+used owner `MIV`, type `0xa000`, and words `0,7,0,4`.
+
+`patchblob` now requires both the advertised values and the matching note
+records before parsing or changing a graph. Patch reports retain the observed
+tile count and both loader contracts. This narrows the accepted native
+container to the structure actually exercised; it does not claim that another
+loader or mapped-inference version is incompatible in principle.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
