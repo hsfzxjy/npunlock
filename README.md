@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** Data-dependent loops and local output permutation now run inside validated custom kernels, demonstrated by exact invocation-local insertion sort. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#30-data-dependent-loops-and-local-permutation).
+> **Latest breakthrough — 2026-10-15:** One custom entry now composes five tensor inputs, local RMS reduction, `sqrtf`, affine scaling, and gating with exact observed FP16 results. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#31-fused-five-input-local-rms-normalization).
 
 ## Quick example
 
@@ -181,7 +181,7 @@ reference.
 - compile user-written C into ACT-SHAVE machine code
 - run custom kernels inside Intel NPU graphs
 - static dense FP16 unary and two-input custom kernels, including one validated descriptor-level row-broadcast carrier
-- one static dense five-input FP16 custom carrier
+- one static dense five-input FP16 carrier, including a fused local RMS/affine/gate kernel
 - verified unary and scalar-input binary FP32 paths
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
@@ -190,7 +190,7 @@ reference.
 - ordinary static graph execution with FP16, FP32, U8, I8, U16, I16, U32, or I32 inputs and outputs
 - caller-provided I64 index inputs for validated `Gather` graphs
 - inferred contracts for `Concat`, `Split`, `VariadicSplit`, constant-mode `Pad`, positive-step `Slice`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
-- nonlinear math such as GELU, `tanhf`, `expf`, and invocation-local softmax
+- nonlinear math such as GELU, `tanhf`, `expf`, `sqrtf`, and invocation-local softmax
 - bounded custom control flow, nested helpers, invocation-local windows/reductions, data-dependent loops, and local permutation
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools

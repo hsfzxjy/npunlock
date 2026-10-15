@@ -108,6 +108,11 @@ insertion-sort kernel, again within each invocation independently. There is no
 graph-global sort contract, cross-invocation permutation, index output, dynamic
 allocation, or guarantee for unbounded loop runtimes.
 
+One five-input carrier runs a fused residual/RMS/affine/gate kernel with
+`sqrtf`, but its reduction is local to each eight-element invocation. It does
+not establish standard graph-global RMSNorm semantics, arbitrary five-input
+operators, or other high-arity layouts.
+
 `mlibm.a` math functions work only when section garbage collection leaves a
 self-contained code image and no data dependency.
 

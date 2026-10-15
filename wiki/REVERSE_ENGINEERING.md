@@ -951,6 +951,28 @@ and local value permutation. It does not establish graph-global sorting,
 cross-invocation movement, index outputs, dynamic allocation, or safe
 unbounded loop runtimes.
 
+## 31. Fused five-input local RMS normalization
+
+On 2026-10-15, the validated five-input FP16 `FakeQuantize` carrier ran a
+single composed entry using every descriptor. The kernel added data and
+residual inputs into FP32 scratch, accumulated an invocation-local sum of
+squares, used `sqrtf` to compute an inverse RMS, then applied independent
+per-element scale, bias, and gate inputs.
+
+The carrier retained four `(8,8,8,8,8) -> 8` invocations. Copied and explicitly
+shared execution matched a chunk-aware NumPy oracle within `rtol=5e-3` and
+`atol=5e-4`; the deterministic proof input had zero observed FP16 error. The
+linked ELF was 53,640 bytes with SHA-256
+`d9474290a6f8f4553e8f13bcf262fda40160e2fd7974f1e63e921bb2bf31f9a7`.
+Its executable `.text` image was 864 bytes, `.arg.data` was empty, and no
+relocations or undefined symbols remained. The runnable proof is
+[`example_fused_rmsnorm.py`](../examples/example_fused_rmsnorm.py).
+
+This confirms that high arity, local reduction, mlibm math, scratch reuse, and
+per-element post-processing can coexist in one custom entry. It does not
+establish standard graph-global RMSNorm semantics, arbitrary five-input
+carriers, unequal spans, or other precisions.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -220,6 +220,7 @@ Confirmed FP16 kernels include:
 - FP32 intermediate arithmetic with FP16 output;
 - two-input arithmetic with independently bound host inputs;
 - five-input arithmetic with independently bound host inputs;
+- a fused five-input residual/RMS/affine/gate pipeline using `sqrtf`;
 - a distinct same-file non-inlined helper with a data-dependent branch;
 - a source-level 128-byte volatile local scratch array;
 - three nested same-file helpers, a local context structure, and a five-tap
@@ -262,6 +263,13 @@ An invocation-local insertion-sort kernel produced a 608-byte executable
 data-dependent `while` loop to shift indirectly indexed values. Copied and
 shared execution exactly matched chunk-wise host sorting. This proves bounded
 local permutation, not cross-invocation movement or general dynamic storage.
+
+A fused five-input kernel combined residual addition, an FP32 sum-of-squares
+reduction, `sqrtf`, per-element scale and bias, and gating. The 53,640-byte ELF
+contained an 864-byte executable `.text` image and no relocations or undefined
+symbols. All five eight-element input records affected each eight-element
+output chunk. This validates composition on the observed carrier, not general
+RMSNorm lowering or arbitrary high-arity layouts.
 
 ## How the code image is installed
 

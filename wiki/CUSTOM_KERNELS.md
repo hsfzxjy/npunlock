@@ -304,6 +304,18 @@ __fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 5u);
 All five inputs were independently host-bound and semantically distinguished.
 This is one validated carrier contract, not support for arbitrary arity.
 
+The same carrier also runs a composed multi-pass kernel using all five inputs:
+data, residual, scale, bias, and gate. The entry adds data and residual into
+FP32 scratch, accumulates an invocation-local sum of squares, calls `sqrtf` for
+RMS normalization, then applies per-element scale, bias, and gating. Four
+observed invocations each retained the `(8,8,8,8,8) -> 8` contract. Copied and
+shared execution matched a chunk-aware NumPy oracle within `rtol=5e-3` and
+`atol=5e-4`, with zero observed FP16 error for the deterministic proof input.
+
+See the [fused RMS-normalization example](../examples/example_fused_rmsnorm.py).
+This composes several validated mechanisms in one entry; it is not a claim of
+standard graph-global RMSNorm semantics or arbitrary five-input layouts.
+
 Automatic positional mapping normally maps one computational node to one ACT
 group. A large custom operation may use several consecutive compatible groups
 when their targets uniquely and exactly cover its declared output tensor. See
@@ -317,10 +329,11 @@ archive with section garbage collection so only reachable code remains.
 The tested MoviTools compiler and `mlibm.a` combination allows most
 conventional `libm` functions to be called by their normal C names without
 including `<math.h>`. The GELU examples call `tanhf` this way, and the
-invocation-local softmax example calls `expf`. There is no complete
-supported-symbol catalog, so a host platform's `libm` is not the contract: the
-function must be accepted by MoviTools, resolve from `mlibm.a`, and produce a
-kernel ELF that passes the restrictions below.
+invocation-local softmax example calls `expf`, and the fused RMS example calls
+`sqrtf`. There is no complete supported-symbol catalog, so a host platform's
+`libm` is not the contract: the function must be accepted by MoviTools,
+resolve from `mlibm.a`, and produce a kernel ELF that passes the restrictions
+below.
 
 The [observed `mlibm.a` symbol inventory](../ABI/MLIBM_SYMBOLS.md) lists the
 names that may be referenced. The archive does not determine their C
@@ -437,6 +450,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
+- [Fused five-input invocation-local RMS normalization](../examples/example_fused_rmsnorm.py)
 - [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
 - [Five-tap window kernel with nested helpers and an embedded coefficient table](../examples/example_window_kernel.py)
 - [Invocation-local softmax with max/sum reductions and `expf`](../examples/example_invocation_softmax.py)
