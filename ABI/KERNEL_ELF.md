@@ -172,6 +172,13 @@ kernel should:
 3. check multiplication before calculating the element count; and
 4. never process beyond the element count described for this invocation.
 
+One execution probe compiled from a logical FP16 graph tensor shaped `(4,8)`
+produced four unary ACT invocations. Every entry reported rank 4, dimensions
+`(8,1,1,1)`, and element count 8. A kernel that validated those fields and
+derived its reversal width from dimension 0 matched the graph's four rows
+exactly. This is one compiler/carrier observation, not a general mapping from
+logical graph axes to invocation axes.
+
 Host-side `patchblob` validation checks the fields that the small kernel does
 not: static shape, dense bit strides, supported precision, CMX placement,
 matching input/output spans, and non-aliasing output.
@@ -230,6 +237,8 @@ Confirmed FP16 kernels include:
   `expf` implementation;
 - insertion sort with a data-dependent inner loop, indirect local indexing,
   and invocation-local output permutation;
+- rank/dimension validation and dimension-derived indexing for one observed
+  `(8,1,1,1)` invocation layout;
 - invocation-local chunks of 64, 128, and 2048 elements; and
 - reads across the full advertised 4096-byte span of a 2048-element chunk.
 

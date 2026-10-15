@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** One custom entry now composes five tensor inputs, local RMS reduction, `sqrtf`, affine scaling, and gating with exact observed FP16 results. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#31-fused-five-input-local-rms-normalization).
+> **Latest breakthrough — 2026-10-15:** Custom kernels can validate and use invocation dimensions directly; one logical `(4,8)` tensor arrived as four rank-4 `(8,1,1,1)` entries. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#32-graph-shape-and-invocation-shape-are-distinct).
 
 ## Quick example
 
@@ -192,6 +192,7 @@ reference.
 - inferred contracts for `Concat`, `Split`, `VariadicSplit`, constant-mode `Pad`, positive-step `Slice`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
 - nonlinear math such as GELU, `tanhf`, `expf`, `sqrtf`, and invocation-local softmax
 - bounded custom control flow, nested helpers, invocation-local windows/reductions, data-dependent loops, and local permutation
+- validated dimension-driven indexing for one observed rank-4 invocation layout
 - reusable NumPy-compatible host/NPU shared input and output buffers
 - reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools
 - self-describing program bundles that load without C source or MoviTools

@@ -169,6 +169,17 @@ Operations requiring neighboring values must define behavior at each chunk
 boundary. Graph-global coordinates and cross-chunk halos are not available in
 the current contract.
 
+Graph-level shape is not passed through verbatim. With graph compiler 8.3, a
+logical FP16 tensor shaped `(4, 8)` on an `Abs` carrier produced four
+invocations. Each entry reported rank 4 and dimensions `(8, 1, 1, 1)`, with
+an element count of 8. A validated entry checked all four dimensions, derived
+its loop width from `act_abi_dimension(&invocation, 0)`, and reversed each
+host-visible row exactly through copied and shared execution.
+
+See the [dimension-aware example](../examples/example_dimension_aware.py).
+Always validate the runtime invocation rank/dimensions required by the kernel;
+do not use the symbolic graph shape as an unverified device-side layout.
+
 ## Control flow, helper calls, and local storage
 
 A custom entry does not have to be one flat elementwise loop. One validated
@@ -451,6 +462,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
 - [Fused five-input invocation-local RMS normalization](../examples/example_fused_rmsnorm.py)
+- [Dimension-aware local transform](../examples/example_dimension_aware.py)
 - [Structured kernel with a helper, branching, neighbors, and local scratch](../examples/example_complex_kernel.py)
 - [Five-tap window kernel with nested helpers and an embedded coefficient table](../examples/example_window_kernel.py)
 - [Invocation-local softmax with max/sum reductions and `expf`](../examples/example_invocation_softmax.py)

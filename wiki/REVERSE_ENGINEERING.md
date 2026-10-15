@@ -973,6 +973,28 @@ per-element post-processing can coexist in one custom entry. It does not
 establish standard graph-global RMSNorm semantics, arbitrary five-input
 carriers, unequal spans, or other precisions.
 
+## 32. Graph shape and invocation shape are distinct
+
+On 2026-10-15, a metadata probe compiled from a logical FP16 input shaped
+`(4,8)` exposed one unary ACT group with four eight-element invocations. Each
+custom entry reported rank 4 and dimensions `(8,1,1,1)`, rather than the
+logical rank-2 graph shape. The element count remained the checked product of
+those invocation dimensions.
+
+A follow-up entry required exactly that rank/layout, obtained its width through
+`act_abi_dimension()`, and reversed the eight local values. Copied and
+explicitly shared execution exactly matched reversal of each of the four
+host-visible rows. The linked ELF was 1,004 bytes with SHA-256
+`a44511b2311bd2d947bf54a4d92c3a7fbffb7c53822ce6cb43296d81bd72a425`;
+its executable `.text` image was 368 bytes, `.arg.data` was empty, and no
+relocations or undefined symbols remained. The runnable proof is
+[`example_dimension_aware.py`](../examples/example_dimension_aware.py).
+
+This establishes that kernels can validate and use the observed invocation
+dimensions. It does not establish a general mapping from graph axes to ACT
+axes, or the same layout for other shapes, carriers, compiler versions, or NPU
+generations.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

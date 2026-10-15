@@ -108,6 +108,11 @@ insertion-sort kernel, again within each invocation independently. There is no
 graph-global sort contract, cross-invocation permutation, index output, dynamic
 allocation, or guarantee for unbounded loop runtimes.
 
+Invocation dimensions are compiler-local metadata, not the original graph
+shape. One logical `(4,8)` tensor was observed as four rank-4 `(8,1,1,1)`
+entries. Other shapes, carriers, compiler versions, or axis mappings must be
+inspected and validated independently.
+
 One five-input carrier runs a fused residual/RMS/affine/gate kernel with
 `sqrtf`, but its reduction is local to each eight-element invocation. It does
 not establish standard graph-global RMSNorm semantics, arbitrary five-input
