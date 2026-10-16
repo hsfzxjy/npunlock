@@ -417,6 +417,11 @@ class SymbolicTests(unittest.TestCase):
         self.assertIsNone(source_free.producer.metadata["_kernel"])
         self.assertEqual(source_free.spec, x.spec)
 
+        u8 = npu.input("u8", shape=(1, 32), dtype="u8")
+        converted = npu.custom(u8, source=b"kernel", carrier="Convert", destination_type="f32")
+        self.assertEqual(converted.shape, u8.shape)
+        self.assertEqual(converted.dtype, "f32")
+
         compiled = npu.CompiledKernel(b"linked elf")
         attached = npu.custom(x, kernel=compiled, carrier="Abs")
         self.assertIs(attached.producer.metadata["_kernel"], compiled)
@@ -1452,6 +1457,42 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertIn("f32->f16", prepared.explain())
         with self.assertRaisesRegex(ValueError, "tensor precisions"):
             prepared.build(bindings={y: prepared.groups[1]}, movi_dll_dir="movi")
+        program = prepared.build(bindings={y: group}, movi_dll_dir="movi")
+        self.assertEqual(fake.patch_args[2], targets)
+        self.assertEqual(program.graph_blob, b"patched")
+
+    def test_u8_to_f32_custom_group_requires_explicit_binding(self) -> None:
+        class MixedNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"mixed precision")
+
+        tensors = (
+            npu.PatchTensorContract("input", 0, "u8", 32, 32, 0x07),
+            npu.PatchTensorContract("output", 0, "f32", 32, 128, 0x0F),
+        )
+        targets = tuple(npu.PatchTargetV2(index, index, tensors, 1) for index in range(2))
+        fake = MixedNative()
+        fake.discovery_groups_v2 = (targets,)
+        x = npu.input("x", shape=(1, 32), dtype="u8")
+        y = npu.custom(
+            x,
+            source=b"convert",
+            carrier="Convert",
+            destination_type="f32",
+            _name="converted",
+        )
+
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(y.dtype, "f32")
+        self.assertEqual(prepared.mappings[0].status, "explicit-required")
+        group = prepared.find_group(input_dtypes=("u8",), output_dtype="f32")
+        self.assertTrue(group.unary_conversion)
+        self.assertIn("u8->f32", prepared.explain())
         program = prepared.build(bindings={y: group}, movi_dll_dir="movi")
         self.assertEqual(fake.patch_args[2], targets)
         self.assertEqual(program.graph_blob, b"patched")

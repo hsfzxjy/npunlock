@@ -107,6 +107,9 @@ static const char *tensor_precision_name(uint32_t precision) {
   if (precision == PATCHBLOB_TENSOR_PRECISION_I8_V2) {
     return "i8";
   }
+  if (precision == PATCHBLOB_TENSOR_PRECISION_U8_V2) {
+    return "u8";
+  }
   return "unknown";
 }
 

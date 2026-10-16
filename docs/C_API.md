@@ -279,7 +279,7 @@ The additive version 2 API describes every tensor record independently:
 
 ```text
 patchblob_tensor_contract_v2
-  role + tensor index + FP16/FP32/I32/I16/I8 precision + element count + byte span + flags
+  role + tensor index + FP16/FP32/U8/I32/I16/I8 precision + element count + byte span + flags
 
 patchblob_target_v2
   ABI version + invocation/range selectors + fixed tensor-contract array
@@ -291,12 +291,12 @@ Use `patchblob_discover_targets_v2()` and
 covers the current maximum of eight inputs plus one output without placing
 caller-owned pointers inside the ABI structure.
 
-Mixed precision is intentionally limited to equal-element unary FP32-to-FP16
-and FP16-to-FP32 conversion. A patch must include the complete positional
-replica group; selecting only one tile replica is rejected. Version 2 does not
-enable arbitrary mixed types, broadcasting, element-count conversion, or
-multiple outputs. The original API remains unchanged and continues to reject
-unequal input/output precision.
+Mixed precision is intentionally limited to equal-element unary FP32-to-FP16,
+FP16-to-FP32, and U8-to-FP32 conversion. A patch must include the complete
+positional replica group; selecting only one tile replica is rejected. Version
+2 does not enable arbitrary mixed types, broadcasting, element-count
+conversion, or multiple outputs. The original API remains unchanged and
+continues to reject unequal input/output precision.
 
 The observed I32 contracts use four-byte spans. They accept one same-precision
 unary layout and one two-input layout where both inputs and the output have
@@ -312,6 +312,11 @@ The observed I16 contracts use two-byte spans. They accept one same-precision
 unary layout and one two-input layout where both inputs and the output have
 equal element counts and spans. They do not enable scalar/broadcast I16, U16,
 saturation, or mixed integer/float contracts.
+
+The observed U8 custom contract is unary conversion only: one U8 input and one
+FP32 output with equal element counts and precision-sized spans. It does not
+enable same-precision U8 output, binary U8, quantization, saturation, or an
+implicit conversion selected by the library.
 
 Do not use source-level graph node names as patch selectors. Unsupported or
 ambiguous graph structures fail closed.
@@ -371,7 +376,8 @@ waits. Each caller chooses copied or shared tensors and sets a finite timeout.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
-unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 conversion, and one
-same-precision unary carrier each for I32, I16, and I8. Each of those signed
-integer precisions also has one equal-span binary carrier. Other devices, dtypes,
-layouts, dynamic shapes, and arbitrary source-node mapping are not implied.
+unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 and U8-to-FP32
+conversion, and one same-precision unary carrier each for I32, I16, and I8.
+Each of those signed integer precisions also has one equal-span binary carrier.
+Other devices, dtypes, layouts, dynamic shapes, and arbitrary source-node
+mapping are not implied.

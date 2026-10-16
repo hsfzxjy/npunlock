@@ -136,6 +136,18 @@ only for a carrier contract you have independently validated, or use `_outputs`
 for multiple outputs. Metadata expressiveness does not establish hardware
 support for a different shape, dtype, or output count.
 
+For a `Convert` carrier, `destination_type` determines the custom output dtype,
+so the validated U8-to-FP32 form also needs no private `_dtype` override:
+
+```python
+y = npu.custom(
+    x,
+    source=kernel_c,
+    carrier="Convert",
+    destination_type="f32",
+)
+```
+
 The carrier is serialized into the graph sent to Intel. The C source is
 compiled separately and installed after the native graph is returned. See
 [Custom kernels](CUSTOM_KERNELS.md) for the bundled NPU3720 include, entry
@@ -297,9 +309,9 @@ print(prepared.explain())
 ```
 
 `prepared.groups` contains immutable `ActGroup` values. Each group reports its
-index, input count, FP16/FP32/I32/I16/I8 dtype when uniform, aggregate descriptor
-element and byte coverage, stable per-invocation input/output element counts,
-contract flags, and invocation/range indices. `group.element_count` and
+index, input count, FP16/FP32/U8/I32/I16/I8 dtype when uniform, aggregate
+descriptor element and byte coverage, stable per-invocation input/output
+element counts, contract flags, and invocation/range indices. `group.element_count` and
 `group.span_bytes` are not graph-level tensor sizes: tile replicas may duplicate
 the same logical work. The per-invocation count properties return `None` when
 targets vary, in which case inspect `group.targets` individually.
@@ -447,7 +459,7 @@ neither repeats graph compilation.
 Mixed-precision unary conversion groups use version 2 per-tensor targets.
 Their `ActGroup.input_dtypes` and `ActGroup.output_dtype` properties expose the
 separate contracts, and `ActGroup.unary_conversion` identifies the currently
-supported FP16/FP32 conversion form:
+supported FP16/FP32 or U8-to-FP32 conversion form:
 
 ```python
 to_f16 = prepared.find_group(
@@ -460,7 +472,9 @@ These groups always require explicit binding. The compiler-generated targets
 are full-tensor tile replicas, so the frontend patches the complete selected
 group without summing its element counts. See
 [`example_conversion_kernels.py`](../examples/example_conversion_kernels.py)
-for both directions in one connected graph.
+for both float directions in one connected graph, and
+[`example_u8_to_f32_custom.py`](../examples/example_u8_to_f32_custom.py) for
+the unsigned-input path.
 
 When version 2 discovery also reports an ordinary same-precision group, plan
 creation uses the original version 1 patch contract if every per-tensor record
@@ -635,11 +649,13 @@ result = outputs["y"]
 Input names must match exactly. Shape and dtype must match the symbolic graph;
 noncontiguous arrays are copied to contiguous storage. The current execution
 boundary supports static FP16, FP32, U8, I8, U16, I16, U32, and I32 graph inputs
-and outputs with at most five dimensions. U8, U16, and U32 remain ordinary
-graph-execution features. I32, I16, and I8 additionally have one documented
-same-precision unary custom-kernel carrier each; this does not imply broader
+and outputs with at most five dimensions. U16 and U32 remain ordinary
+graph-execution features. U8 additionally has only the explicitly documented
+U8-to-FP32 custom conversion carrier. I32, I16, and I8 additionally have one
+documented same-precision unary custom-kernel carrier each; this does not imply broader
 integer custom support. I32, I16, and I8 additionally support one equal-span
-two-input carrier each; scalar, broadcast, and mixed-integer inputs remain unsupported.
+two-input carrier each; scalar, broadcast, and mixed-integer inputs remain
+unsupported.
 
 The supported dtype list describes tensor transport, not every operator/dtype
 combination. In particular, U8 data with I32 indices has passed `Gather`, while
@@ -748,6 +764,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [FP16 five-input custom kernel](../examples/example_five_input_custom.py)
 - [I32 structural graph](../examples/example_i32_structural.py)
 - [I32 two-input custom kernel](../examples/example_i32_binary_custom.py)
+- [U8-to-FP32 custom conversion kernel](../examples/example_u8_to_f32_custom.py)
 - [U8 Reshape and conversion graph](../examples/example_u8_reshape.py)
 - [I8 Squeeze/Unsqueeze and conversion graph](../examples/example_i8_axes.py)
 - [I8 two-input custom kernel](../examples/example_i8_binary_custom.py)

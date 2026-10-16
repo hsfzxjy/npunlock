@@ -1546,8 +1546,42 @@ the public example's 78,656-byte patched graph has SHA-256
 `d4c65267cd713188f60e923568302349a7454943c9a7b45185bac54e092593ca`.
 
 This establishes one equal-span binary I8 custom path, not scalar or broadcast
-I8, unequal spans, U8 custom execution, mixed integer precision, saturation,
-quantization, signed-overflow behavior, other shapes, or portability.
+I8, unequal spans, same-precision or binary U8 custom execution, mixed integer
+precision, saturation, quantization, signed-overflow behavior, other shapes,
+or portability.
+
+## 52. U8-to-FP32 custom-kernel execution
+
+On 2026-10-16, graph compiler 8.3 rejected static U8 `Abs` and `Relu`
+carriers because those operations did not accept unsigned-byte input. A static
+U8 `[1,32]` to FP32 `Convert` did compile, and its unmodified output matched
+the host cast exactly. This provided a compatible carrier without claiming a
+same-precision U8 operation.
+
+The retained `Convert` carrier exposed one ACT group with two invocations.
+Each invocation contained a U8 input at `+0x00` using raw element type 7,
+32 elements, and a 32-byte span, followed by an FP32 output at `+0x28` using
+raw type 1, 32 elements, and a 128-byte span. Both records used the established
+static dense CMX layout, and the output was disjoint from the input. The
+invocations are full-tensor tile replicas and must be patched together.
+
+A linked custom entry read `unsigned char`, wrote `float`, and computed
+`0.5*x - 7.25`. A discriminating input covered zero, the U8 maximum, and values
+across the range. Every NPU output matched the FP32 NumPy oracle exactly.
+Python infers the custom output dtype from the `Convert` carrier's
+`destination_type`, but explicit prepared-group binding remains required for
+the mixed-precision ACT placement.
+
+The retained 59,328-byte carrier has SHA-256
+`dc42cc0364cd973c0d840c72f2225badac007894eaff2919d215ae13602dbe7c`.
+The public example's 940-byte kernel ELF has SHA-256
+`e9fe69701874bb08b1a1b0a4490aaf3f384e5f76cb8b3aef7e6073d7e2257317`;
+its 60,224-byte patched graph has SHA-256
+`02fa6756b0a4ffc0107f01230b601cb420816540ffc55c6a8a64426dd957a48c`.
+
+This establishes one unary U8-input/FP32-output custom path, not same-precision
+or binary U8, implicit conversion insertion, quantization, saturation, other
+shapes, other compiler versions, or portability.
 
 ## What remains deliberately unresolved
 

@@ -429,7 +429,7 @@ def custom(
     _patch_targets: Sequence[object] | None = None,
     **attributes: object,
 ) -> Tensor | tuple[Tensor, ...]:
-    """Create a custom node, inheriting a single output from its first input.
+    """Create a custom node, inferring one output from its carrier when possible.
 
     Source may be omitted when ``kernel`` is attached directly or an override
     will be supplied to the prepared graph's build plan.
@@ -440,9 +440,10 @@ def custom(
     if kernel is not None and not isinstance(kernel, (KernelSpec, CompiledKernel)):
         raise TypeError("custom() kernel must be a KernelSpec or CompiledKernel")
 
+    carrier_name = _validate_operator_name(carrier)
     metadata: dict[str, object] = {
         "_kernel": kernel if kernel is not None else source,
-        "_carrier": _validate_operator_name(carrier),
+        "_carrier": carrier_name,
         "_name": _name,
     }
     if _outputs is not None:
@@ -456,7 +457,11 @@ def custom(
             if _shape is None:
                 _shape = inputs[0].shape
             if _dtype is None:
-                _dtype = inputs[0].dtype
+                _dtype = (
+                    normalize_dtype(attributes["destination_type"])
+                    if carrier_name == "Convert" and "destination_type" in attributes
+                    else inputs[0].dtype
+                )
         metadata["_shape"] = _shape
         metadata["_dtype"] = _dtype
     if _patch_targets is not None:

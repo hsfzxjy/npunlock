@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-16:** An equal-span two-input I8 ACT carrier can run non-commutative custom C exactly on NPU3720. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#51-two-input-i8-custom-kernel-execution).
+> **Latest breakthrough — 2026-10-16:** A custom kernel can consume U8 and produce FP32 through an explicit `Convert` carrier, with exact NPU3720 output. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#52-u8-to-fp32-custom-kernel-execution).
 
 ## Quick example
 
@@ -98,6 +98,8 @@ The [I16 custom-kernel example](examples/example_i16_custom.py) validates a
 bounded signed-short affine kernel on the corresponding unary carrier.
 The [binary I16 example](examples/example_i16_binary_custom.py) independently
 uses both graph inputs in a non-commutative signed-short kernel.
+The [U8-to-FP32 custom example](examples/example_u8_to_f32_custom.py) uses an
+explicit mixed-precision `Convert` carrier and needs no manual output dtype.
 The [U8 reshape example](examples/example_u8_reshape.py) likewise needs no
 MoviTools and returns both reshaped U8 data and its FP32 conversion.
 The [I8 axis-transform example](examples/example_i8_axes.py) covers signed-byte
@@ -198,6 +200,7 @@ reference.
 - verified same-precision unary and equal-span two-input I32 custom-kernel paths
 - verified same-precision unary and equal-span two-input I8 custom-kernel paths
 - verified same-precision unary and equal-span two-input I16 custom-kernel paths
+- a verified unary U8-input/FP32-output custom conversion path
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
@@ -219,9 +222,10 @@ reference.
 Support is experimental and currently limited to Windows x64, Meteor Lake /
 NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
 Connected FP32/FP16 conversion is limited to the observed unary, equal-element
-contract and requires explicit prepared-group binding. I32, I16, and I8 each
-have one equal-span two-input path; scalar and unequal-span integer inputs are
-not supported.
+contract and requires explicit prepared-group binding. The U8-input/FP32-output
+custom path has the same explicit-binding requirement; same-precision U8 is not
+supported. I32, I16, and I8 each have one equal-span two-input path; scalar and
+unequal-span integer inputs are not supported.
 Other NPU generations have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 

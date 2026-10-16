@@ -63,6 +63,15 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     PROPERTIES PASS_REGULAR_EXPRESSION "\"precision\": \"mixed\""
   )
   add_test(
+    NAME porting_inspect_u8_conversion_fixture
+    COMMAND npunlock_inspect
+      --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/convert-u8-to-f32-1x32.blob
+  )
+  set_tests_properties(
+    porting_inspect_u8_conversion_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION "\"precision\": \"u8\""
+  )
+  add_test(
     NAME porting_inspect_i32_fixture
     COMMAND npunlock_inspect
       --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs-i32-1x32.blob

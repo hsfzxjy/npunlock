@@ -172,6 +172,7 @@ int main(void) {
   npunlock_buffer broadcast_carrier;
   npunlock_buffer convert_f32_to_f16;
   npunlock_buffer convert_f16_to_f32;
+  npunlock_buffer convert_u8_to_f32;
   npunlock_buffer i32_carrier;
   npunlock_buffer binary_i32_carrier;
   npunlock_buffer i8_carrier;
@@ -189,6 +190,7 @@ int main(void) {
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
   patchblob_target_v2 conversion_targets[2] = {{0}};
+  patchblob_target_v2 u8_conversion_targets[2] = {{0}};
   patchblob_target_v2 binary_i32_targets[4] = {{0}};
   patchblob_target_v2 binary_i8_targets[4] = {{0}};
   patchblob_target_v2 binary_i16_targets[4] = {{0}};
@@ -205,6 +207,7 @@ int main(void) {
   broadcast_carrier = read_file(FIXTURE_ROOT "maximum-broadcast-1x32-f16.blob");
   convert_f32_to_f16 = read_file(FIXTURE_ROOT "convert-f32-to-f16-1x16.blob");
   convert_f16_to_f32 = read_file(FIXTURE_ROOT "convert-f16-to-f32-1x16.blob");
+  convert_u8_to_f32 = read_file(FIXTURE_ROOT "convert-u8-to-f32-1x32.blob");
   i32_carrier = read_file(FIXTURE_ROOT "abs-i32-1x32.blob");
   binary_i32_carrier = read_file(FIXTURE_ROOT "minimum-i32-1x32.blob");
   i8_carrier = read_file(FIXTURE_ROOT "abs-i8-1x32.blob");
@@ -215,8 +218,8 @@ int main(void) {
   expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
   CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
         broadcast_carrier.data != NULL && convert_f32_to_f16.data != NULL &&
-        convert_f16_to_f32.data != NULL && i32_carrier.data != NULL &&
-        binary_i32_carrier.data != NULL && i8_carrier.data != NULL &&
+        convert_f16_to_f32.data != NULL && convert_u8_to_f32.data != NULL &&
+        i32_carrier.data != NULL && binary_i32_carrier.data != NULL && i8_carrier.data != NULL &&
         binary_i8_carrier.data != NULL && i16_carrier.data != NULL &&
         binary_i16_carrier.data != NULL && elf.data != NULL && expected.data != NULL);
   unsupported_header.data = (uint8_t *)malloc(carrier.size);
@@ -721,6 +724,55 @@ int main(void) {
   }
   patchblob_discovery_result_v2_release(&discovery_v2);
   status = patchblob_discover_targets(
+      (npunlock_view){convert_u8_to_f32.data, convert_u8_to_f32.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  patchblob_discovery_result_release(&discovery);
+  status = patchblob_discover_targets_v2(
+      (npunlock_view){convert_u8_to_f32.data, convert_u8_to_f32.size}, &discovery_v2);
+  if (status != NPUNLOCK_STATUS_OK && discovery_v2.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery_v2.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery_v2.group_count == 1);
+  CHECK(discovery_v2.target_count == 2);
+  for (index = 0; index < discovery_v2.target_count; ++index) {
+    const patchblob_target_v2 *target = &discovery_v2.targets[index].target;
+    CHECK(discovery_v2.targets[index].group_index == 0);
+    CHECK(target->invocation_index == index);
+    CHECK(target->range_index == index);
+    CHECK(target->target_flags == PATCHBLOB_TARGET_UNARY_CONVERSION_V2);
+    CHECK(target->tensor_count == 2);
+    CHECK(target->tensors[0].role == PATCHBLOB_TENSOR_ROLE_INPUT_V2);
+    CHECK(target->tensors[0].precision == PATCHBLOB_TENSOR_PRECISION_U8_V2);
+    CHECK(target->tensors[0].element_count == 32);
+    CHECK(target->tensors[0].span_bytes == 32);
+    CHECK(target->tensors[1].role == PATCHBLOB_TENSOR_ROLE_OUTPUT_V2);
+    CHECK(target->tensors[1].precision == PATCHBLOB_TENSOR_PRECISION_FP32_V2);
+    CHECK(target->tensors[1].element_count == 32);
+    CHECK(target->tensors[1].span_bytes == 128);
+    u8_conversion_targets[index] = *target;
+  }
+  patchblob_discovery_result_v2_release(&discovery_v2);
+  status =
+      patchblob_patch_v2(&options, (npunlock_view){convert_u8_to_f32.data, convert_u8_to_f32.size},
+                         (npunlock_view){elf.data, elf.size}, u8_conversion_targets, 2, &result);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(result.graph_blob.size > convert_u8_to_f32.size);
+  CHECK(strstr((const char *)result.report_json.data, "\"precision\":\"u8\"") != NULL);
+  CHECK(strstr((const char *)result.report_json.data, "\"precision\":\"fp32\"") != NULL);
+  patchblob_result_release(&result);
+  for (index = 0; index < 2; ++index) {
+    u8_conversion_targets[index].target_flags = 0;
+    u8_conversion_targets[index].tensors[1].precision = PATCHBLOB_TENSOR_PRECISION_U8_V2;
+    u8_conversion_targets[index].tensors[1].span_bytes = 32;
+  }
+  status =
+      patchblob_patch_v2(&options, (npunlock_view){convert_u8_to_f32.data, convert_u8_to_f32.size},
+                         (npunlock_view){elf.data, elf.size}, u8_conversion_targets, 2, &result);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "U8-to-FP32 conversion") != NULL);
+  patchblob_result_release(&result);
+  status = patchblob_discover_targets(
       (npunlock_view){two_operation_carrier.data, two_operation_carrier.size}, &discovery);
   if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
     fprintf(stderr, "%s\n", (const char *)discovery.diagnostic.json.data);
@@ -809,6 +861,7 @@ int main(void) {
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);
+  free(convert_u8_to_f32.data);
   free(i32_carrier.data);
   free(binary_i32_carrier.data);
   free(i8_carrier.data);

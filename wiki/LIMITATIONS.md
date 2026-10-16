@@ -16,6 +16,7 @@ output does not match that contract.
 | graph compiler | current path validated with version 8.3 |
 | primary custom tensors | static, dense FP16 |
 | FP32 | validated unary accuracy-mode carrier, one same-precision scalar-input binary carrier, and explicit unary FP16/FP32 conversion |
+| U8 | one explicit unary U8-input/FP32-output `Convert` carrier; no same-precision custom path |
 | I32 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Minimum` carrier with two eight-element inputs |
 | I16 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Maximum` carrier with two eight-element inputs |
 | I8 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Subtract` carrier with two eight-element inputs |
@@ -51,7 +52,7 @@ Ordinary graph execution is validated for FP16, FP32, U8, I8, U16, I16, U32,
 and I32, while I64 is limited to the Gather-index role. Custom ACT-kernel
 contracts remain limited to the FP16/FP32 cases below and one unary carrier
 each for I32, I16, and I8, plus one equal-span binary carrier for each of those
-signed integer precisions.
+signed integer precisions and one unary U8-to-FP32 conversion carrier.
 Serialization capability must not be mistaken for either execution or
 custom-kernel support.
 
@@ -198,12 +199,15 @@ inputs and one disjoint output, and a non-commutative custom kernel matched all
 32 outputs. Scalar/broadcast or unequal-span I32, mixed integer contracts,
 other shapes, and integer-overflow semantics remain unsupported.
 
-U8 has been validated only for ordinary graph inputs and outputs, including a
-constant-pattern Reshape, U8-to-FP32 Convert, and Gather with I32 indices. It
-also covers one static unequal VariadicSplit with three outputs and one static
-multi-axis positive-step Slice. Constant-mode Pad is validated with nonnegative
-static pads and a scalar U8 fill value. U8 is not a supported custom
-ACT-kernel precision.
+U8 ordinary graph inputs and outputs are validated for a constant-pattern
+Reshape, U8-to-FP32 Convert, and Gather with I32 indices. They also cover one
+static unequal VariadicSplit with three outputs and one static multi-axis
+positive-step Slice. Constant-mode Pad is validated with nonnegative static
+pads and a scalar U8 fill value. Custom execution is limited to one static
+`[1,32]` U8-to-FP32 `Convert` carrier: two replicated invocations each expose
+a 32-element/32-byte U8 input and a 32-element/128-byte FP32 output. A custom
+affine kernel matched all outputs exactly. Same-precision or binary U8,
+quantization, saturation, and other shapes remain unsupported.
 
 I8 ordinary graph inputs and outputs are validated for positive-axis
 Squeeze/Unsqueeze and I8-to-FP32 Convert. Graph compiler 8.3 rejected one
@@ -214,8 +218,9 @@ execution contract. Custom execution is additionally validated for one static
 `[1,32]` binary `Subtract` carrier is also validated: four invocations each
 expose two equal-span eight-element inputs and one disjoint output, and a
 non-commutative custom kernel matched all 32 outputs. Scalar/broadcast or
-unequal-span I8, U8 custom kernels, saturation, quantization semantics, and
-other shapes remain unsupported.
+unequal-span I8, same-precision U8 custom kernels, saturation, quantization
+semantics, and other shapes remain unsupported; the separate U8-to-FP32
+conversion contract does not broaden this same-precision I8 carrier.
 
 I16 has been validated for ordinary graph input/output through an equal static
 three-way Split with a scalar constant axis. Graph compiler 8.3 rejected the
@@ -238,10 +243,10 @@ Gather graph. An I64 Split compiled and ran, but values outside signed 32-bit
 range were silently narrowed and one extreme shared run returned a device
 error. General I64 graph data and outputs are therefore unsupported.
 
-Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32
-conversion, FP32 binary kernels beyond the scalar-second-input carrier, I32,
-I16, or I8 custom kernels beyond the carriers above, and implicit dtype
-conversion are unsupported. The compiler-produced I16 `Maximum` baseline
+Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32 and
+U8-to-FP32 conversion, FP32 binary kernels beyond the scalar-second-input
+carrier, I32, I16, or I8 custom kernels beyond the carriers above, and
+implicit dtype conversion are unsupported. The compiler-produced I16 `Maximum` baseline
 returned incorrect values on the tested driver; only the substituted custom
 kernel semantics are claimed.
 
@@ -251,12 +256,13 @@ ACT groups remains internally single-precision.
 
 The version 2 patch contract describes every input and output record
 independently. It supports the observed unary FP32-to-FP16 and FP16-to-FP32
-layouts when input and output have equal element counts and their spans match
-their precision. Both compiler-generated tile replicas must be selected. The
-Python frontend exposes these groups but requires explicit prepared-graph
-binding; it does not treat the replicas as partitions or automatically map an
-inserted conversion to a source node. The connected conversion example has
-executed both directions in one graph and matched its host oracle exactly.
+layouts and the U8-to-FP32 layout when input and output have equal element
+counts and their spans match their precision. Both compiler-generated tile
+replicas must be selected. The Python frontend exposes these groups but
+requires explicit prepared-graph binding; it does not treat the replicas as
+partitions or automatically map an inserted conversion to a source node. The
+connected float-conversion example and separate U8-to-FP32 example matched
+their host oracles exactly.
 
 A later `[1,32]` binary-carrier experiment preserved a host-provided `[1,1]`
 operand as one scalar ACT descriptor beside eight-element input/output chunks.

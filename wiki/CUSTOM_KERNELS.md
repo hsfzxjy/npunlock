@@ -134,7 +134,7 @@ invocations; each exposes two eight-element signed-byte inputs and one
 disjoint output. A bounded non-commutative `3*a - 2*b + 7` kernel using
 `signed char` pointers matched all 32 outputs. This does not establish
 scalar/broadcast I8, other binary layouts, saturation, quantization semantics,
-U8 custom execution, or other shapes.
+or other shapes.
 
 I16 custom execution includes a same-precision unary `Abs` carrier and an
 equal-span two-input `Maximum` carrier. The binary carrier has four
@@ -143,24 +143,32 @@ disjoint output. A non-commutative `3*a - 2*b + 7` kernel using `short`
 pointers matched all 32 outputs. This does not establish scalar/broadcast I16,
 other binary layouts, U16, saturation, or mixed integer/float contracts.
 
+U8 custom execution is limited to one unary U8-to-FP32 `Convert` carrier. Its
+two invocations each expose a 32-element/32-byte U8 input and a
+32-element/128-byte FP32 output. A kernel using `const unsigned char *` and
+`float *` matched all 32 outputs exactly. Same-precision U8, binary U8,
+quantization, saturation, and other shapes remain unsupported.
+
 Although the symbolic IR serializer accepts additional data-type names, that
 does not make them valid custom-kernel or `Program.run()` contracts.
 
 ## Mixed-precision conversion kernels
 
-The version 2 target ABI supports the two execution-tested unary conversion
-layouts: dense FP32 input to FP16 output and dense FP16 input to FP32 output,
-with equal element counts. A conversion kernel uses the ordinary descriptor
-positions but gives the pointers different C types:
+The version 2 target ABI supports three execution-tested unary conversion
+layouts: dense FP32 input to FP16 output, dense FP16 input to FP32 output, and
+dense U8 input to FP32 output, all with equal element counts. A conversion
+kernel uses the ordinary descriptor positions but gives the pointers different
+C types:
 
 ```c
 const float *input = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
 __fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 1u);
 ```
 
-The reverse direction uses `const __fp16 *` and `float *`. The graph compiler
-emits two full-tensor tile replicas for each tested conversion group, so select
-the complete discovered group; do not interpret the two targets as output
+The reverse float direction uses `const __fp16 *` and `float *`. The U8 path
+uses `const unsigned char *` and `float *`. The graph compiler emits two
+full-tensor tile replicas for each tested conversion group, so select the
+complete discovered group; do not interpret the two targets as output
 partitions.
 
 Python deliberately requires explicit prepared-graph binding for these
@@ -184,7 +192,9 @@ changes, broadcasting, or automatic conversion insertion.
 See the complete
 [connected conversion example](../examples/example_conversion_kernels.py),
 which runs custom conversions in both directions around an ordinary FP16
-operation and checks the final FP32 tensor against NumPy.
+operation and checks the final FP32 tensor against NumPy. The separate
+[U8-to-FP32 example](../examples/example_u8_to_f32_custom.py) demonstrates the
+unsigned-input contract and explicit group binding.
 
 ## Invocation-local memory
 
@@ -541,6 +551,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Two-input I8 weighted-difference kernel](../examples/example_i8_binary_custom.py)
 - [Unary I16 affine kernel](../examples/example_i16_custom.py)
 - [Two-input I16 weighted-difference kernel](../examples/example_i16_binary_custom.py)
+- [U8-to-FP32 custom conversion kernel](../examples/example_u8_to_f32_custom.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
