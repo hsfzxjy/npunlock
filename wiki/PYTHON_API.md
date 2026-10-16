@@ -471,9 +471,10 @@ the normal version 1 validation again. Mixed-precision conversion groups remain
 version 2. The plan explanation shows which version will actually be patched.
 
 The same-precision unary I32, I16, and I8 carriers and the equal-span binary
-I16 carrier always remain version 2 and can use automatic positional mapping
+I32/I16 carriers always remain version 2 and can use automatic positional mapping
 when each is the unique compatible group. See
 [`example_i32_custom.py`](../examples/example_i32_custom.py) and
+[`example_i32_binary_custom.py`](../examples/example_i32_binary_custom.py),
 [`example_i8_custom.py`](../examples/example_i8_custom.py), plus
 [`example_i16_custom.py`](../examples/example_i16_custom.py) and
 [`example_i16_binary_custom.py`](../examples/example_i16_binary_custom.py).
@@ -636,8 +637,9 @@ boundary supports static FP16, FP32, U8, I8, U16, I16, U32, and I32 graph inputs
 and outputs with at most five dimensions. U8, U16, and U32 remain ordinary
 graph-execution features. I32, I16, and I8 additionally have one documented
 same-precision unary custom-kernel carrier each; this does not imply broader
-integer custom support. I16 additionally supports one equal-span two-input
-carrier; scalar, broadcast, and mixed-integer inputs remain unsupported.
+integer custom support. I32 and I16 additionally support one equal-span
+two-input carrier each; scalar, broadcast, and mixed-integer inputs remain
+unsupported.
 
 The supported dtype list describes tensor transport, not every operator/dtype
 combination. In particular, U8 data with I32 indices has passed `Gather`, while
@@ -745,6 +747,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [FP16 custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [FP16 five-input custom kernel](../examples/example_five_input_custom.py)
 - [I32 structural graph](../examples/example_i32_structural.py)
+- [I32 two-input custom kernel](../examples/example_i32_binary_custom.py)
 - [U8 Reshape and conversion graph](../examples/example_u8_reshape.py)
 - [I8 Squeeze/Unsqueeze and conversion graph](../examples/example_i8_axes.py)
 - [I16 multi-output Split graph](../examples/example_i16_split.py)

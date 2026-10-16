@@ -298,9 +298,10 @@ enable arbitrary mixed types, broadcasting, element-count conversion, or
 multiple outputs. The original API remains unchanged and continues to reject
 unequal input/output precision.
 
-Version 2 also supports the observed same-precision unary I32 contract. It
-requires one input and one output with matching element counts and four-byte
-spans. This does not enable binary I32 or other integer custom-kernel types.
+The observed I32 contracts use four-byte spans. They accept one same-precision
+unary layout and one two-input layout where both inputs and the output have
+equal element counts and spans. They do not enable scalar/broadcast I32,
+signed-overflow semantics, or mixed integer/float contracts.
 
 The observed same-precision unary I8 contract uses the same rule with one-byte
 spans. It does not enable binary I8, U8, saturation, or quantization semantics.
@@ -369,6 +370,6 @@ waits. Each caller chooses copied or shared tensors and sets a finite timeout.
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
 unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 conversion, and one
-same-precision unary carrier each for I32, I16, and I8. I16 also has one
-equal-span binary carrier. Other devices, dtypes,
+same-precision unary carrier each for I32, I16, and I8. I32 and I16 also have
+one equal-span binary carrier each. Other devices, dtypes,
 layouts, dynamic shapes, and arbitrary source-node mapping are not implied.

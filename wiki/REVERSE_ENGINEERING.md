@@ -1464,9 +1464,10 @@ The `Maximum` carrier nevertheless exposed one structurally valid ACT group
 with four invocations. Each invocation contained input A at `+0x00`, input B
 at `+0x28`, and output at `+0x50`. Every record reported raw type 10, an
 eight-element count, a 16-byte span, and the established static dense CMX
-layout. The output was disjoint from both inputs. Version 2 now accepts this
-equal-count, equal-span binary I16 form while keeping I32 and I8 unary-only and
-rejecting scalar or unequal-span I16 inputs.
+layout. The output was disjoint from both inputs. Version 2 accepts this
+equal-count, equal-span binary I16 form while keeping I8 unary-only and
+rejecting scalar or unequal-span I16 inputs. Section 50 records the later I32
+binary result.
 
 A linked non-commutative custom entry read both independent host inputs as
 signed `short` and computed `3*a - 2*b + 7`. The 32-value inputs kept every
@@ -1482,8 +1483,40 @@ the public example's 64,064-byte patched graph has SHA-256
 `325ad123c38c20ba283b14b285bdacde20cc94a932e672f6f7d55e8911dace78`.
 
 This establishes one equal-span binary I16 custom path, not correct built-in
-I16 Maximum semantics, scalar or broadcast I16, binary I32/I8, mixed integer
+I16 Maximum semantics, scalar or broadcast I16, binary I8, mixed integer
 precision, saturation, overflow behavior, other shapes, or portability.
+
+## 50. Two-input I32 custom-kernel execution
+
+On 2026-10-16, graph compiler 8.3 produced ACT-bearing static I32 `[1,32]`
+carriers for `Maximum`, `Minimum`, `Add`, `Subtract`, and `Multiply` with two
+independent graph inputs. All five unmodified graphs matched their host
+oracles exactly on the tested input set.
+
+The retained `Minimum` carrier was the smallest candidate and exposed one ACT
+group with four invocations. Each invocation contained input A at `+0x00`,
+input B at `+0x28`, and output at `+0x50`. Every record reported raw type 9,
+an eight-element count, a 32-byte span, and the established static dense CMX
+layout. The output was disjoint from both inputs. Version 2 now accepts this
+equal-count, equal-span binary I32 form while retaining the I8 unary-only rule
+and rejecting scalar or unequal-span I32 inputs.
+
+A linked non-commutative custom entry read both independent host inputs as
+signed `int` and computed `3*a - 2*b + 7`. The 32-value input domain kept all
+mathematical results in signed-I32 range and discriminated input order,
+ignored inputs, and the original Minimum semantics. Every NPU output matched
+an independent NumPy oracle widened to I64 before arithmetic.
+
+The retained 52,160-byte carrier has SHA-256
+`6e7ad8ab8b6005b4cbc5e3888a32ae93a7cf72c128d0891c42c31dfebbefa397`.
+The 940-byte kernel ELF has SHA-256
+`c447e58d1b6bcbb4b19e41adb65832803c9f2a49a865af9bbd16dc72043d1514`;
+the public example's 53,504-byte patched graph has SHA-256
+`309dc1eb40429bab450f18a596a60450ba48e141f43da2a3809e715139b1f168`.
+
+This establishes one equal-span binary I32 custom path, not scalar or
+broadcast I32, unequal spans, binary I8, mixed integer precision, signed
+overflow behavior, other shapes, or portability.
 
 ## What remains deliberately unresolved
 

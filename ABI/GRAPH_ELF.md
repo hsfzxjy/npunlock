@@ -341,8 +341,8 @@ scalar-second-input exception. The additive `patchblob_target_v2` ABI instead
 records each tensor's role, precision, element count, span, and observed flags.
 Version 2 currently accepts the same established layouts, equal-element unary
 FP32-to-FP16 and FP16-to-FP32 conversion, and the observed same-precision
-unary I32, I16, and I8 layouts plus one equal-span two-input I16 layout. It is
-not a general mixed-dtype, integer, or broadcasting ABI.
+unary I32, I16, and I8 layouts plus equal-span two-input I32 and I16 layouts.
+It is not a general mixed-dtype, integer, or broadcasting ABI.
 
 ## Validated examples
 
@@ -392,8 +392,28 @@ represents this precision and the Python frontend maps the unambiguous group
 automatically. The legacy precision-bit contract remains FP16/FP32-only.
 
 This establishes this same-precision unary carrier on NPU3720/compiler 8.3.
-It does not establish binary I32 carriers, mixed integer operations, other
-integer widths, other graph shapes, or signed-overflow behavior.
+It does not by itself establish binary I32 carriers, mixed integer operations,
+other integer widths, other graph shapes, or signed-overflow behavior. The
+separate binary contract follows.
+
+### Equal-span binary I32
+
+A static two-input I32 `[1,32]` `Minimum` carrier produced one ACT group with
+four invocations. Each parameter block contained input A at `+0x00`, input B
+at `+0x28`, and the output at `+0x50`. All three records used element-type 9,
+an eight-element count, a 32-byte span, and the established static dense CMX
+layout; the output was disjoint from both inputs.
+
+The compiler-produced `Minimum` graph matched its host oracle. A substituted
+custom kernel then used signed `int` pointers and computed
+`3*a - 2*b + 7`. The two independent inputs discriminated their roles and kept
+all arithmetic in signed-I32 range. All 32 custom outputs matched an I64-widened
+NumPy oracle exactly.
+
+This establishes the equal-count, equal-span two-input I32 descriptor layout
+for one carrier. It does not establish scalar/broadcast input records, unequal
+shapes, additional arities, binary I8, mixed integer precision, or signed
+overflow semantics.
 
 ### Same-precision unary I8
 
@@ -443,7 +463,7 @@ signed-I16 range. All 32 outputs matched a widened NumPy oracle exactly.
 
 This establishes the equal-count, equal-span two-input I16 descriptor layout
 for one carrier. It does not establish scalar/broadcast input records, unequal
-shapes, additional arities, I32/I8 binary kernels, saturation, or overflow
+shapes, additional arities, binary I8, saturation, or overflow
 semantics. The compiler-produced `Maximum` result itself was incorrect on the
 tested driver; the claim is limited to the substituted custom kernel.
 
@@ -496,7 +516,7 @@ implementation did not match a `GatherElements` host oracle in this
 configuration, so this is custom-entry ABI evidence rather than a claim that
 the carrier operator itself works. The public patch target intentionally
 rejects this mixed two-input I32 descriptor even though it accepts the separate
-same-precision unary I32 contract above.
+same-precision I32 contracts above.
 
 ### Experimental scalar-broadcast input
 
@@ -586,7 +606,7 @@ Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
-  unary I32/I16/I8, equal-span binary I16, and scalar-second-input FP32 cases
+  unary I32/I16/I8, equal-span binary I32/I16, and scalar-second-input FP32 cases
   above (mixed FP16/FP32 conversion remains limited to its explicit version 2
   contract);
 - general broadcasting or unequal binary input shapes beyond the experimental

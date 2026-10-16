@@ -120,12 +120,13 @@ frontend adds the required precision-preservation metadata and compiler flag
 automatically for an FP32 custom node. This does not establish general FP32
 carriers or multi-input support.
 
-I32 custom execution includes one same-precision unary `Abs` carrier on graph
-compiler 8.3. Its four invocations each expose 16 signed 32-bit input and
-output elements. A custom `3*x + 7` kernel matched all 32 graph outputs exactly.
-Use `int` pointers with the same NPU3720 address helpers. This does not establish
-I32 binary carriers, mixed integer contracts, overflow behavior, or other
-integer precisions.
+I32 custom execution includes one same-precision unary `Abs` carrier and an
+equal-span two-input `Minimum` carrier on graph compiler 8.3. The binary
+carrier has four invocations; each exposes two eight-element signed 32-bit
+inputs and one disjoint output. A non-commutative `3*a - 2*b + 7` kernel using
+`int` pointers matched all 32 outputs. This does not establish
+scalar/broadcast I32, other binary layouts, mixed integer contracts,
+signed-overflow behavior, or other integer precisions.
 
 I8 custom execution likewise includes one same-precision unary `Abs` carrier.
 Its four invocations each expose 16 signed-byte input and output elements. A
@@ -533,6 +534,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Unary I32 affine kernel](../examples/example_i32_custom.py)
+- [Two-input I32 weighted-difference kernel](../examples/example_i32_binary_custom.py)
 - [Unary I8 affine kernel](../examples/example_i8_custom.py)
 - [Unary I16 affine kernel](../examples/example_i16_custom.py)
 - [Two-input I16 weighted-difference kernel](../examples/example_i16_binary_custom.py)
