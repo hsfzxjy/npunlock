@@ -341,8 +341,8 @@ scalar-second-input exception. The additive `patchblob_target_v2` ABI instead
 records each tensor's role, precision, element count, span, and observed flags.
 Version 2 currently accepts the same established layouts, equal-element unary
 FP32-to-FP16 and FP16-to-FP32 conversion, and the observed same-precision
-unary I32, I16, and I8 layouts. It is not a general mixed-dtype, integer, or
-broadcasting ABI.
+unary I32, I16, and I8 layouts plus one equal-span two-input I16 layout. It is
+not a general mixed-dtype, integer, or broadcasting ABI.
 
 ## Validated examples
 
@@ -424,8 +424,28 @@ exactly. Version 2 represents I16 and Python maps this unambiguous group
 automatically; the legacy precision flags remain FP16/FP32-only.
 
 This establishes one same-precision unary I16 carrier on NPU3720/compiler 8.3.
-It does not establish binary I16, U16 custom kernels, saturation, overflow
-behavior, mixed integer/float contracts, or other shapes.
+It does not by itself establish binary I16, U16 custom kernels, saturation,
+overflow behavior, mixed integer/float contracts, or other shapes. The
+separate binary contract follows.
+
+### Equal-span binary I16
+
+A static two-input I16 `[1,32]` `Maximum` carrier produced one ACT group with
+four invocations. Each parameter block contained input A at `+0x00`, input B
+at `+0x28`, and the output at `+0x50`. All three records used element-type 10,
+an eight-element count, a 16-byte span, and the established static dense CMX
+layout; the output was disjoint from both inputs.
+
+A custom kernel used signed `short` pointers and computed
+`3*a - 2*b + 7`. The two independent host inputs were selected so swapping or
+ignoring either role changes the expected output and all arithmetic remains in
+signed-I16 range. All 32 outputs matched a widened NumPy oracle exactly.
+
+This establishes the equal-count, equal-span two-input I16 descriptor layout
+for one carrier. It does not establish scalar/broadcast input records, unequal
+shapes, additional arities, I32/I8 binary kernels, saturation, or overflow
+semantics. The compiler-produced `Maximum` result itself was incorrect on the
+tested driver; the claim is limited to the substituted custom kernel.
 
 ### Experimental mixed-precision conversion
 
@@ -566,8 +586,9 @@ Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
-  unary I32/I16/I8, and scalar-second-input FP32 cases above (mixed FP16/FP32
-  conversion remains limited to its explicit version 2 contract);
+  unary I32/I16/I8, equal-span binary I16, and scalar-second-input FP32 cases
+  above (mixed FP16/FP32 conversion remains limited to its explicit version 2
+  contract);
 - general broadcasting or unequal binary input shapes beyond the experimental
   one-element scalar case above;
 - arbitrary compiler or graph-format versions;

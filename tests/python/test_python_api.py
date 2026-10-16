@@ -1487,6 +1487,37 @@ class CompilationFlowTests(unittest.TestCase):
                 self.assertEqual(fake.patch_args[2], targets)
                 self.assertEqual(program.graph_blob, b"patched")
 
+    def test_binary_i16_custom_group_uses_version_two_contract_automatically(self) -> None:
+        class IntegerNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"integer requires version 2")
+
+        tensors = (
+            npu.PatchTensorContract("input", 0, "i16", 8, 16, 0x07),
+            npu.PatchTensorContract("input", 1, "i16", 8, 16, 0x07),
+            npu.PatchTensorContract("output", 0, "i16", 8, 16, 0x0F),
+        )
+        targets = tuple(npu.PatchTargetV2(index, index, tensors) for index in range(4))
+        fake = IntegerNative()
+        fake.discovery_groups_v2 = (targets,)
+        a = npu.input("a", shape=(1, 32), dtype="i16")
+        b = npu.input("b", shape=(1, 32), dtype="i16")
+        y = npu.custom(a, b, source=b"integer kernel", carrier="Maximum", _name="weighted")
+
+        prepared = npu.prepare(
+            npu.Graph([a, b], [y], name="binary_i16_custom"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(prepared.mappings[0].status, "automatic")
+        self.assertEqual(prepared.mappings[0].group_indices, (0,))
+        self.assertEqual(prepared.find_group(input_count=2, dtype="i16").targets, targets)
+        self.assertEqual(prepared.find_group(input_dtypes=("i16", "i16"), output_dtype="i16").targets, targets)
+        program = prepared.build(movi_dll_dir="movi")
+        self.assertEqual(fake.patch_args[2], targets)
+        self.assertEqual(program.graph_blob, b"patched")
+
     def test_mixed_precision_plan_uses_v1_for_losslessly_representable_group(self) -> None:
         class MixedNative(FakeNative):
             def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:

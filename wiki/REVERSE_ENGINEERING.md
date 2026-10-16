@@ -1448,8 +1448,42 @@ the resulting 42,224-byte patched graph has SHA-256
 `33841bd4385d90cd725596b1c3033241b6309885de0d5cce91e454279e59febf`.
 
 This establishes one signed-I16 custom path on NPU3720/compiler 8.3. It does
-not establish binary or mixed-I16 carriers, U16 custom execution, saturation,
-overflow behavior, other shapes, or portability to another compiler or NPU.
+not by itself establish binary or mixed-I16 carriers, U16 custom execution,
+saturation, overflow behavior, other shapes, or portability to another
+compiler or NPU. Section 49 records the later binary result.
+
+## 49. Two-input I16 custom-kernel execution
+
+On 2026-10-16, graph compiler 8.3 produced ACT-bearing static I16 `[1,32]`
+carriers for `Maximum`, `Minimum`, and `Multiply` with two independent graph
+inputs. I16 `Add` and `Subtract` were rejected by the compiler. The
+compiler-produced results from the three accepted operations did not match
+their host oracles, so no built-in arithmetic support is claimed.
+
+The `Maximum` carrier nevertheless exposed one structurally valid ACT group
+with four invocations. Each invocation contained input A at `+0x00`, input B
+at `+0x28`, and output at `+0x50`. Every record reported raw type 10, an
+eight-element count, a 16-byte span, and the established static dense CMX
+layout. The output was disjoint from both inputs. Version 2 now accepts this
+equal-count, equal-span binary I16 form while keeping I32 and I8 unary-only and
+rejecting scalar or unequal-span I16 inputs.
+
+A linked non-commutative custom entry read both independent host inputs as
+signed `short` and computed `3*a - 2*b + 7`. The 32-value inputs kept every
+mathematical result in signed-I16 range and discriminated input order, ignored
+inputs, and the original Maximum semantics. Every NPU output matched an
+independent NumPy oracle widened to I32 before arithmetic.
+
+The retained 63,424-byte carrier has SHA-256
+`7a8d72c7207bf8e95d5efbee77c0f19107f5c710e980a7426138fda3040b186f`.
+The 940-byte kernel ELF has SHA-256
+`559d880ddd39b1b600c4ec0f3eca4cb28ed0099ede5ba22575c0450b3f5c83d1`;
+the public example's 64,064-byte patched graph has SHA-256
+`325ad123c38c20ba283b14b285bdacde20cc94a932e672f6f7d55e8911dace78`.
+
+This establishes one equal-span binary I16 custom path, not correct built-in
+I16 Maximum semantics, scalar or broadcast I16, binary I32/I8, mixed integer
+precision, saturation, overflow behavior, other shapes, or portability.
 
 ## What remains deliberately unresolved
 

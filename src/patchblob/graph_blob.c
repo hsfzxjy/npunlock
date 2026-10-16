@@ -1178,11 +1178,18 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
       }
     }
     if ((output->precision == PATCHBLOB_TENSOR_PRECISION_I32_V2 ||
-         output->precision == PATCHBLOB_TENSOR_PRECISION_I16_V2 ||
          output->precision == PATCHBLOB_TENSOR_PRECISION_I8_V2) &&
         input_count != 1u) {
       return unsupported(diagnostic,
-                         "integer custom kernels are limited to the observed unary contracts");
+                         "I32 and I8 custom kernels are limited to the observed unary contracts");
+    }
+    if (output->precision == PATCHBLOB_TENSOR_PRECISION_I16_V2 &&
+        (input_count > 2u ||
+         (input_count == 2u && (target->tensors[1].element_count != output->element_count ||
+                                target->tensors[1].span_bytes != output->span_bytes)))) {
+      return unsupported(
+          diagnostic,
+          "I16 custom kernels are limited to observed unary or equal-span binary contracts");
     }
   }
 

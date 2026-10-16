@@ -470,11 +470,13 @@ a lossless contract projection, not a new ABI assumption; `patchblob` performs
 the normal version 1 validation again. Mixed-precision conversion groups remain
 version 2. The plan explanation shows which version will actually be patched.
 
-The same-precision unary I32, I16, and I8 carriers always remain version 2 and can
-use automatic positional mapping when each is the unique compatible group. See
+The same-precision unary I32, I16, and I8 carriers and the equal-span binary
+I16 carrier always remain version 2 and can use automatic positional mapping
+when each is the unique compatible group. See
 [`example_i32_custom.py`](../examples/example_i32_custom.py) and
 [`example_i8_custom.py`](../examples/example_i8_custom.py), plus
-[`example_i16_custom.py`](../examples/example_i16_custom.py).
+[`example_i16_custom.py`](../examples/example_i16_custom.py) and
+[`example_i16_binary_custom.py`](../examples/example_i16_binary_custom.py).
 
 For a single set of kernel-build settings, pass them to `prepared.build()` in
 the same way as `npu.compile()`:
@@ -634,7 +636,8 @@ boundary supports static FP16, FP32, U8, I8, U16, I16, U32, and I32 graph inputs
 and outputs with at most five dimensions. U8, U16, and U32 remain ordinary
 graph-execution features. I32, I16, and I8 additionally have one documented
 same-precision unary custom-kernel carrier each; this does not imply broader
-integer custom support.
+integer custom support. I16 additionally supports one equal-span two-input
+carrier; scalar, broadcast, and mixed-integer inputs remain unsupported.
 
 The supported dtype list describes tensor transport, not every operator/dtype
 combination. In particular, U8 data with I32 indices has passed `Gather`, while
@@ -746,6 +749,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [I8 Squeeze/Unsqueeze and conversion graph](../examples/example_i8_axes.py)
 - [I16 multi-output Split graph](../examples/example_i16_split.py)
 - [I16 unary custom kernel](../examples/example_i16_custom.py)
+- [I16 two-input custom kernel](../examples/example_i16_binary_custom.py)
 - [U16 multi-output Split graph](../examples/example_u16_split.py)
 - [mixed-input U8/I32 Gather graph](../examples/example_u8_gather.py)
 - [U32 multi-output Split graph](../examples/example_u32_split.py)

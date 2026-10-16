@@ -133,11 +133,12 @@ bounded `2*x + 3` kernel using `signed char` pointers matched all 32 outputs.
 This does not establish saturation, quantization semantics, binary I8, U8, or
 other shapes.
 
-I16 custom execution includes the corresponding same-precision unary `Abs`
-carrier. Its four invocations each expose 16 signed 16-bit input and output
-elements. A bounded `3*x - 11` kernel using `short` pointers matched all 32
-outputs. This does not establish binary I16, U16, saturation, or mixed
-integer/float contracts.
+I16 custom execution includes a same-precision unary `Abs` carrier and an
+equal-span two-input `Maximum` carrier. The binary carrier has four
+invocations; each exposes two eight-element signed 16-bit inputs and one
+disjoint output. A non-commutative `3*a - 2*b + 7` kernel using `short`
+pointers matched all 32 outputs. This does not establish scalar/broadcast I16,
+other binary layouts, U16, saturation, or mixed integer/float contracts.
 
 Although the symbolic IR serializer accepts additional data-type names, that
 does not make them valid custom-kernel or `Program.run()` contracts.
@@ -534,6 +535,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Unary I32 affine kernel](../examples/example_i32_custom.py)
 - [Unary I8 affine kernel](../examples/example_i8_custom.py)
 - [Unary I16 affine kernel](../examples/example_i16_custom.py)
+- [Two-input I16 weighted-difference kernel](../examples/example_i16_binary_custom.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
