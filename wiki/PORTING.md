@@ -42,6 +42,9 @@ span, and observed flags. It can therefore inspect the supported unary
 FP16/FP32 and U8-to-FP32 conversion carriers, unary I32/I16/I8 carriers, the
 equal-span binary I32/I16/I8 carriers, and uniform float groups.
 That includes the documented equal-span binary FP32 `Subtract` carrier.
+It also recognizes the structurally identical dense FP32 `(8,8)->8`
+invocations emitted for the documented row-broadcast carrier; inspection alone
+does not recover or prove its source-level broadcast shape.
 Discovery means only that the
 file matches the narrow observed NPU3720/compiler-8.3 structures. It does not
 prove that a Linux driver, newer firmware, or different NPU can load or execute

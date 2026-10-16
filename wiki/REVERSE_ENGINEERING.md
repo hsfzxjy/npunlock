@@ -1617,6 +1617,45 @@ This establishes one equal-span binary FP32 custom path on NPU3720/compiler
 inputs, other shapes, different operation ordering or rounding behavior, or
 portability to another compiler or NPU.
 
+## 54. FP32 row broadcast at the ACT descriptor boundary
+
+The first higher-arity FP32 probe on 2026-10-16 was negative: graph compiler
+8.3 rejected an accuracy-mode five-input FP32 `FakeQuantize` carrier during
+bufferization with `Only supports FP16 in/out`. The established five-input
+contract therefore remains FP16-only.
+
+The adjacent row-broadcast probe compiled static FP32 `[4,8]` data plus an
+independently bound `[1,8]` row through `Subtract`, `Add`, `Multiply`, and
+`Maximum` candidates. Unmodified `Subtract` and `Add` matched their host
+oracles exactly. `Multiply` produced an unsupported input descriptor shape,
+while `Maximum` exposed plausible dense records but returned corrupt baseline
+values. Only `Subtract` was retained.
+
+The retained carrier contains one ACT group with four invocations. Each
+invocation presents data at `+0x00`, an eight-element expanded row operand at
+`+0x28`, and output at `+0x50`. All records use raw FP32 type 1, an
+eight-element count, a 32-byte span, and the established static dense CMX
+flags. This matches the earlier FP16 `(8,8)->8` descriptor presentation even
+though the second host tensor contains only one row.
+
+A custom entry computed `3*data + 5*bias + 7`, indexing both descriptors with
+the invocation-local element index. Distinct integer-valued data and row
+values discriminated input order, row repetition, and ignored operands. All
+32 outputs matched NumPy exactly through both copied and explicitly shared
+inputs and outputs.
+
+The retained 77,640-byte carrier has SHA-256
+`f1ce4d6503198f0087e057b47f3478957dd06b1597709f9c6f9880783afd0d8e`.
+The public example's 956-byte kernel ELF has SHA-256
+`4d411b462bc045f159cd51937d4412cfa233ec453d0f7cd7fc357129b8768f89`;
+its 78,536-byte patched graph has SHA-256
+`952079c28e54e5fab1cf646b12fb11891419bdb74b4ad0a334892e662414605d`.
+
+This establishes one precision-preserved FP32 row-broadcast carrier on
+NPU3720/compiler 8.3. It does not establish five-input FP32, other source
+shapes or axes, unequal ACT descriptors, arbitrary broadcasting, other
+carriers, or portability.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

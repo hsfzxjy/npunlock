@@ -1000,6 +1000,27 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.patch_args[2], targets)
         self.assertIn('EXECUTION_MODE_HINT="ACCURACY"', fake.compile_ir_kwargs["build_flags"])
 
+    def test_f32_row_broadcast_group_maps_by_dense_descriptor_contract(self) -> None:
+        targets = tuple(npu.PatchTarget(index, index, 2, 8, 32, 0x3B) for index in range(4))
+        fake = FakeNative()
+        fake.discovery_groups = (targets,)
+        data = npu.input("data", shape=(4, 8), dtype="f32")
+        bias = npu.input("bias", shape=(1, 8), dtype="f32")
+        output = npu.custom(data, bias, source=b"row kernel", carrier="Subtract", _name="output")
+
+        prepared = npu.prepare(
+            npu.Graph([data, bias], [output], name="f32_row_broadcast"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        group = prepared.find_group(input_count=2, dtype="f32")
+        self.assertEqual(group.per_invocation_input_element_counts, (8, 8))
+        self.assertEqual(group.per_invocation_output_element_count, 8)
+        self.assertEqual(prepared.mappings[0].status, "automatic")
+        prepared.build(movi_dll_dir="movi")
+        self.assertEqual(fake.patch_args[2], targets)
+
     def test_prepared_graph_explains_and_builds_ambiguous_branches_once(self) -> None:
         shape = (1, 32)
         x = npu.input("x", shape=shape, dtype="f32")

@@ -597,6 +597,25 @@ in general; it represents this exact two-input case with
 `PATCHBLOB_CONTRACT_INPUT_1_SCALAR`. Discovery and patching remain restricted
 to a same-precision one-element second input.
 
+### Descriptor-level row broadcast
+
+Static `[4,8]` data plus an independently bound `[1,8]` row input produced
+four ACT invocations in both FP16 and precision-preserved FP32. The source
+graph shapes are unequal, but every invocation presents the same dense binary
+record sequence:
+
+| Parameter offset | Role | Count | FP32 span | FP16 span |
+| ---: | --- | ---: | ---: | ---: |
+| `+0x00` | data input | 8 | 32 bytes | 16 bytes |
+| `+0x28` | expanded row input | 8 | 32 bytes | 16 bytes |
+| `+0x50` | output | 8 | 32 bytes | 16 bytes |
+
+Custom kernels therefore index both inputs with the invocation-local element
+index. The FP16 `Maximum` and FP32 `Subtract` recipes matched copied and shared
+host oracles. This confirms only the descriptor contract presented by these
+carriers; it does not determine whether row storage is copied or reused, nor
+does it establish other ranks, axes, shapes, or general broadcasting.
+
 ## How `patchblob` substitutes code
 
 The supported mutation is deliberately narrow:
@@ -653,10 +672,10 @@ Do not infer support for:
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
   unary I32/I16/I8, equal-span binary FP32/I32/I16/I8, and
-  scalar-second-input FP32 cases above (mixed FP16/FP32 and U8-to-FP32
+  the scalar/row-broadcast cases above (mixed FP16/FP32 and U8-to-FP32
   conversion remain limited to their explicit version 2 contracts);
 - general broadcasting or unequal binary input shapes beyond the experimental
-  one-element scalar case above;
+  one-element scalar and `(4,8)` plus `(1,8)` row cases above;
 - arbitrary compiler or graph-format versions;
 - nonempty `KernelData` for custom kernels;
 - unresolved data/code fixups or helper runtimes;

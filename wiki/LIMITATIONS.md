@@ -15,13 +15,13 @@ output does not match that contract.
 | SHAVE target | `3720xx` |
 | graph compiler | current path validated with version 8.3 |
 | primary custom tensors | static, dense FP16 |
-| FP32 | validated unary accuracy-mode carrier, one scalar-input binary carrier, one equal-span binary `Subtract` carrier, and explicit unary FP16/FP32 conversion |
+| FP32 | validated unary accuracy-mode carrier, one scalar-input binary carrier, one equal-span and one `[4,8]` plus `[1,8]` row-broadcast `Subtract` carrier, and explicit unary FP16/FP32 conversion |
 | U8 | one explicit unary U8-input/FP32-output `Convert` carrier; no same-precision custom path |
 | I32 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Minimum` carrier with two eight-element inputs |
 | I16 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Maximum` carrier with two eight-element inputs |
 | I8 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Subtract` carrier with two eight-element inputs |
-| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; one FP32 scalar-input carrier and one equal-span FP32 `Subtract` carrier; one equal-span carrier each for I32, I16, and I8 |
-| higher custom arity | one static dense FP16 five-input `FakeQuantize` carrier with equal per-invocation spans |
+| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; FP32 scalar-input, equal-span, and the same row-broadcast shape through documented carriers; one equal-span carrier each for I32, I16, and I8 |
+| higher custom arity | one static dense FP16 five-input `FakeQuantize` carrier with equal per-invocation spans; compiler 8.3 rejects its FP32 equivalent |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
 | restricted graph input | I64 only as caller-provided indices for the validated U8 Gather graph |
@@ -40,8 +40,8 @@ There is no general support for:
 
 - arbitrary strides or layouts;
 - broadcasting or unequal binary input shapes beyond the implemented static
-  one-element second input and one descriptor-level FP16 `(4,8)` plus `(1,8)`
-  row broadcast;
+  one-element second input and the descriptor-level FP16/FP32 `(4,8)` plus
+  `(1,8)` row broadcasts;
 - arbitrary input/output aliasing;
 - arbitrary tensor arity beyond the validated unary, binary, and five-input
   layouts; or
@@ -191,6 +191,8 @@ one equal-span binary `Subtract` carrier, all with precision-conversion
 suppression and accuracy-mode graph compilation. The equal-span `[1,32]`
 carrier exposes four invocations with two eight-element/32-byte inputs and one
 disjoint output; a non-commutative custom kernel matched all outputs exactly.
+The `[4,8]` plus `[1,8]` row-broadcast form also exposes four dense
+`(8,8)->8` invocations and matched copied and shared NumPy oracles exactly.
 
 I32 ordinary graph inputs and outputs are validated for Abs, Concat,
 Transpose, and FP32-to-I32 Convert graphs. Custom execution is additionally
@@ -248,10 +250,11 @@ error. General I64 graph data and outputs are therefore unsupported.
 
 Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32 and
 U8-to-FP32 conversion, FP32 binary kernels beyond the scalar-second-input and
-equal-span `Subtract` carriers, I32, I16, or I8 custom kernels beyond the
-carriers above, and implicit dtype conversion are unsupported. The
-compiler-produced I16 `Maximum` baseline returned incorrect values on the
-tested driver; only the substituted custom kernel semantics are claimed.
+the equal-span/row-broadcast `Subtract` carriers, I32, I16, or I8 custom
+kernels beyond the carriers above, and implicit dtype conversion are
+unsupported. The compiler-produced I16 `Maximum` baseline returned incorrect
+values on the tested driver; only the substituted custom kernel semantics are
+claimed.
 
 One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those

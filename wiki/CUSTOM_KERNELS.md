@@ -370,14 +370,15 @@ for (unsigned i = 0; i < invocation.element_count; ++i) {
 
 Do not index the scalar with `i`.
 
-Separately, graph compiler 8.3 presents one FP16 row broadcast as dense ACT
-operands for a `Maximum` carrier. Host inputs shaped `(4, 8)` and `(1, 8)`
-produced four ACT invocations whose contracts were `(8, 8) -> 8`: both input
-records were dense and equal-sized inside every invocation. The custom C
-therefore reads `input_1[i]`, not `input_1[0]`. This establishes the descriptor
-contract visible to the entry, not whether backing storage is physically
-copied or reused. It validates that exact carrier and shape, not arbitrary
-NumPy broadcasting or an unequal ACT descriptor.
+Separately, graph compiler 8.3 presents one row broadcast as dense ACT operands
+in both FP16 and precision-preserved FP32. Host inputs shaped `(4, 8)` and
+`(1, 8)` produced four ACT invocations whose contracts were `(8, 8) -> 8`:
+both input records were dense and equal-sized inside every invocation. The
+FP16 recipe uses `Maximum`; the FP32 recipe uses `Subtract`. Custom C therefore
+reads `input_1[i]`, not `input_1[0]`. This establishes the descriptor contract
+visible to the entry, not whether backing storage is physically copied or
+reused. It validates those exact carriers and shapes, not arbitrary NumPy
+broadcasting or an unequal ACT descriptor.
 
 Call `prepared.explain()` before patching to see stable per-invocation element
 counts such as `per-invocation=(8,8)->8`. The same values are available as
@@ -397,6 +398,8 @@ __fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 5u);
 
 All five inputs were independently host-bound and semantically distinguished.
 This is one validated carrier contract, not support for arbitrary arity.
+Compiler 8.3 rejected the corresponding accuracy-mode FP32 carrier with
+`Only supports FP16 in/out`, so five-input FP32 remains unsupported.
 
 The same carrier also runs a composed multi-pass kernel using all five inputs:
 data, residual, scale, bias, and gate. The entry adds data and residual into
@@ -554,6 +557,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [Two-input FP32 weighted-difference kernel](../examples/example_f32_binary_custom.py)
+- [FP32 custom kernel with a descriptor-level row broadcast](../examples/example_f32_broadcast_custom.py)
 - [Unary I32 affine kernel](../examples/example_i32_custom.py)
 - [Two-input I32 weighted-difference kernel](../examples/example_i32_binary_custom.py)
 - [Unary I8 affine kernel](../examples/example_i8_custom.py)

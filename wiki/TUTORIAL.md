@@ -175,7 +175,7 @@ Use these C types for the currently validated custom paths:
 | Graph dtype | Kernel pointer type | Current custom scope |
 | --- | --- | --- |
 | `f16` | `__fp16` | unary, selected binary/broadcast, and one five-input carrier |
-| `f32` | `float` | unary, one scalar-second-input carrier, and one equal-span binary carrier |
+| `f32` | `float` | unary, scalar/equal-span binary, and one row-broadcast carrier |
 | `i32` | `int` | unary and equal-span binary |
 | `i16` | `short` | unary and equal-span binary |
 | `i8` | `signed char` | unary and equal-span binary |
@@ -214,6 +214,7 @@ The current carrier recipes are:
 | two equal-span FP32 inputs | `Subtract` | automatic when the graph is unambiguous |
 | FP16 data plus a one-element second input | `Maximum` | automatic when the exact scalar contract is discovered |
 | FP16 `(4,8)` plus `(1,8)` row input | `Maximum` | only the documented dense `(8,8)->8` invocation layout |
+| FP32 `(4,8)` plus `(1,8)` row input | `Subtract` | only the documented dense `(8,8)->8` invocation layout |
 | two equal-span I32 inputs | `Minimum` | automatic when the graph is unambiguous |
 | two equal-span I16 inputs | `Maximum` | automatic when the graph is unambiguous |
 | two equal-span I8 inputs | `Subtract` | automatic when the graph is unambiguous |
@@ -277,8 +278,9 @@ Broadcasting is not inferred from NumPy rules. A one-element second ACT input
 must be read as `input_1[0]`; the validated `(4,8)` plus `(1,8)` row carrier
 instead presents equal eight-element records and uses `input_1[i]`. Follow the
 [scalar-input example](../examples/example_branched_network.py) or
-[row-broadcast example](../examples/example_broadcast_custom.py) exactly before
-generalizing either layout.
+[FP16 row-broadcast example](../examples/example_broadcast_custom.py) or
+[FP32 row-broadcast example](../examples/example_f32_broadcast_custom.py)
+exactly before generalizing either layout.
 
 ## 8. Inspect and bind a carrier explicitly
 

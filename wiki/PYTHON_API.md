@@ -202,6 +202,13 @@ two eight-element inputs and one output. The complete
 inputs non-commutatively and checks all 32 results exactly. This recipe does
 not imply that other FP32 binary carriers or shapes are compatible.
 
+The same precision-preserving path has one row-broadcast recipe: FP32
+`[4,8]` data plus an independently bound `[1,8]` row through `Subtract`.
+Discovery reports four dense `(8,8)->8` invocation contracts, so custom C
+indexes the row with the invocation-local `i`, not index zero. See the
+[FP32 row-broadcast example](../examples/example_f32_broadcast_custom.py).
+Other ranks, shapes, axes, and broadcast forms remain unsupported.
+
 ## Graphs
 
 Create a graph from declared inputs and one or more output tensors:
@@ -773,6 +780,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
 - [FP32 two-input custom kernel](../examples/example_f32_binary_custom.py)
+- [FP32 row-broadcast custom kernel](../examples/example_f32_broadcast_custom.py)
 - [FP16 custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [FP16 five-input custom kernel](../examples/example_five_input_custom.py)
 - [I32 structural graph](../examples/example_i32_structural.py)
