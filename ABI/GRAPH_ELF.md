@@ -311,11 +311,11 @@ descriptor is 0x28 bytes:
 | `+0x0c` | rank as `u32` |
 | `+0x10` | pointer to `rank` signed 32-bit dimensions |
 | `+0x14` | pointer to `rank` signed 64-bit bit-strides |
-| `+0x18` | element-type value: 1 for FP32, 2 for FP16, 9 for I32, and 11 for I8 in observed records |
+| `+0x18` | element-type value: 1 for FP32, 2 for FP16, 9 for I32, 10 for I16, and 11 for I8 in observed records |
 | `+0x24` | raw value 2 for supported CMX tensors |
 
-The raw element values match the `NN_FP32`, `NN_FP16`, `NN_I32`, and `NN_I8`
-entries in the compatible software-kernel runtime type definition. An IR
+The raw element values match the `NN_FP32`, `NN_FP16`, `NN_I32`, `NN_I16`, and
+`NN_I8` entries in the compatible software-kernel runtime type definition. An IR
 boolean condition was lowered to an I8 descriptor. `npunlock` still validates
 the complete combination rather than assuming that every enum member or
 mixture is usable.
@@ -333,15 +333,15 @@ unary operation:  input at +0x00, output at +0x28
 binary operation: input A at +0x00, input B at +0x28, output at +0x50
 ```
 
-An I8 span is `element_count`; an FP16 span is `element_count * 2`; and an
-FP32 or I32 span is `element_count * 4`. The output span must not alias an
+An I8 span is `element_count`; an FP16 or I16 span is `element_count * 2`;
+and an FP32 or I32 span is `element_count * 4`. The output span must not alias an
 input span. The original `patchblob_target` ABI requires all inputs and the
 output to describe one precision and normally one byte span, with one explicit
 scalar-second-input exception. The additive `patchblob_target_v2` ABI instead
 records each tensor's role, precision, element count, span, and observed flags.
 Version 2 currently accepts the same established layouts, equal-element unary
 FP32-to-FP16 and FP16-to-FP32 conversion, and the observed same-precision
-unary I32 and I8 layouts. It is not a general mixed-dtype, integer, or
+unary I32, I16, and I8 layouts. It is not a general mixed-dtype, integer, or
 broadcasting ABI.
 
 ## Validated examples
@@ -410,6 +410,22 @@ unambiguous group automatically; the legacy precision flags remain unchanged.
 This establishes one same-precision unary I8 carrier. It does not establish
 binary I8, U8 custom kernels, saturation or quantization semantics, overflow
 behavior, or other shapes.
+
+### Same-precision unary I16
+
+A static I16 `[1,32]` `Abs` carrier also produced one ACT group with four
+invocations. Each input/output descriptor used raw element-type value 10, a
+16-bit first stride, 16 elements, and a 32-byte span. Static, dense, CMX, and
+disjoint-output fields matched the supported unary structure.
+
+A custom kernel read and wrote signed `short` values and computed `3*x - 11`
+over a bounded input domain. All 32 results matched the widened NumPy oracle
+exactly. Version 2 represents I16 and Python maps this unambiguous group
+automatically; the legacy precision flags remain FP16/FP32-only.
+
+This establishes one same-precision unary I16 carrier on NPU3720/compiler 8.3.
+It does not establish binary I16, U16 custom kernels, saturation, overflow
+behavior, mixed integer/float contracts, or other shapes.
 
 ### Experimental mixed-precision conversion
 
@@ -550,7 +566,7 @@ Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
-  unary I32/I8, and scalar-second-input FP32 cases above (mixed FP16/FP32
+  unary I32/I16/I8, and scalar-second-input FP32 cases above (mixed FP16/FP32
   conversion remains limited to its explicit version 2 contract);
 - general broadcasting or unequal binary input shapes beyond the experimental
   one-element scalar case above;

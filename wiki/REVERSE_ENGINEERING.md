@@ -705,8 +705,9 @@ An adjacent I16-to-FP32 Convert probe was rejected by graph compiler 8.3 as an
 unsupported `si16 -> f32` configuration. No such conversion path is claimed.
 The runnable positive proof is
 [`example_i16_split.py`](../examples/example_i16_split.py). It does not
-establish I16 ACT descriptors, arbitrary I16 operators, uneven splits, dynamic
-axes, or general multi-output operator support.
+by itself establish I16 ACT descriptors, arbitrary I16 operators, uneven
+splits, dynamic axes, or general multi-output operator support. The separate
+custom-kernel evidence appears later in section 48.
 
 ## 21. U16 graph I/O and mixed-input Gather
 
@@ -1418,6 +1419,37 @@ the resulting 42,224-byte patched graph has SHA-256
 This establishes one signed-I8 custom path, not binary or mixed-I8 carriers,
 U8 custom execution, saturation, quantization semantics, overflow behavior,
 other shapes, or portability to another compiler or NPU.
+
+## 48. Unary I16 custom-kernel execution
+
+On 2026-10-16, graph compiler 8.3 produced a static I16 `[1,32]` `Abs`
+carrier with one ACT group and four invocations. Each invocation used the
+ordinary unary input/output descriptor sequence at offsets `+0x00` and
+`+0x28`. Both records reported raw element type 10, a 16-bit first stride, 16
+elements, a 32-byte span, static dense CMX placement, and disjoint output. The
+compiler-produced graph matched I16 `Abs` for all 32 baseline values before
+patching.
+
+Version 2 gained a distinct I16 precision value and accepts it only for this
+same-precision unary contract. The legacy FP16/FP32 flags remain unchanged.
+The Python frontend discovers and automatically maps the complete group when
+its graph position and tensor contract are unambiguous.
+
+A linked custom entry used signed `short` pointers and computed `3*x - 11`.
+The 32-value input domain kept every mathematical result within signed 16-bit
+range, avoiding a saturation or overflow assumption. All NPU outputs matched
+an independent NumPy calculation widened to I32 before the affine operation.
+
+The retained 41,072-byte carrier has SHA-256
+`8991918f7332065a31373accd63cf469ece064d20be4b870634132b134f2c74d`.
+The 924-byte kernel ELF has SHA-256
+`da194142f23e3ecbe7478dafbcfeb1d288cc08b27159e5cef63dfcffa756bc17`;
+the resulting 42,224-byte patched graph has SHA-256
+`33841bd4385d90cd725596b1c3033241b6309885de0d5cce91e454279e59febf`.
+
+This establishes one signed-I16 custom path on NPU3720/compiler 8.3. It does
+not establish binary or mixed-I16 carriers, U16 custom execution, saturation,
+overflow behavior, other shapes, or portability to another compiler or NPU.
 
 ## What remains deliberately unresolved
 

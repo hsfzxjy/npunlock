@@ -1448,16 +1448,16 @@ class PreparedGraph:
             isinstance(input_count, bool) or not isinstance(input_count, int) or input_count <= 0
         ):
             raise ValueError("input_count must be a positive integer or None")
-        if dtype is not None and dtype not in {"f16", "f32", "i32", "i8"}:
-            raise ValueError("dtype must be 'f16', 'f32', 'i32', 'i8', or None")
+        if dtype is not None and dtype not in {"f16", "f32", "i32", "i16", "i8"}:
+            raise ValueError("dtype must be 'f16', 'f32', 'i32', 'i16', 'i8', or None")
         if input_dtypes is not None and (
             not isinstance(input_dtypes, tuple)
             or not input_dtypes
-            or any(value not in {"f16", "f32", "i32", "i8"} for value in input_dtypes)
+            or any(value not in {"f16", "f32", "i32", "i16", "i8"} for value in input_dtypes)
         ):
-            raise ValueError("input_dtypes must be a non-empty tuple of 'f16'/'f32'/'i32'/'i8' values or None")
-        if output_dtype is not None and output_dtype not in {"f16", "f32", "i32", "i8"}:
-            raise ValueError("output_dtype must be 'f16', 'f32', 'i32', 'i8', or None")
+            raise ValueError("input_dtypes must be a non-empty tuple of 'f16'/'f32'/'i32'/'i16'/'i8' values or None")
+        if output_dtype is not None and output_dtype not in {"f16", "f32", "i32", "i16", "i8"}:
+            raise ValueError("output_dtype must be 'f16', 'f32', 'i32', 'i16', 'i8', or None")
         if element_count is not None and (
             isinstance(element_count, bool) or not isinstance(element_count, int) or element_count <= 0
         ):

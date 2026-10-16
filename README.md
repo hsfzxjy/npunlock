@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-15:** A same-precision unary I8 ACT carrier can run custom signed-byte C exactly on NPU3720. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#47-unary-i8-custom-kernel-execution).
+> **Latest breakthrough — 2026-10-16:** A same-precision unary I16 ACT carrier can run custom signed-short C exactly on NPU3720. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#48-unary-i16-custom-kernel-execution).
 
 ## Quick example
 
@@ -90,6 +90,8 @@ The [I32 custom-kernel example](examples/example_i32_custom.py) compiles a
 signed-integer affine loop and checks every result against NumPy.
 The [I8 custom-kernel example](examples/example_i8_custom.py) does the same for
 one bounded signed-byte carrier.
+The [I16 custom-kernel example](examples/example_i16_custom.py) validates a
+bounded signed-short affine kernel on the corresponding unary carrier.
 The [U8 reshape example](examples/example_u8_reshape.py) likewise needs no
 MoviTools and returns both reshaped U8 data and its FP32 conversion.
 The [I8 axis-transform example](examples/example_i8_axes.py) covers signed-byte
@@ -189,6 +191,7 @@ reference.
 - verified unary and scalar-input binary FP32 paths
 - a verified same-precision unary I32 custom-kernel path
 - a verified same-precision unary I8 custom-kernel path
+- a verified same-precision unary I16 custom-kernel path
 - one graph containing independent FP32-unary and FP16-binary custom branches
 - a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
 - prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
@@ -210,8 +213,8 @@ reference.
 Support is experimental and currently limited to Windows x64, Meteor Lake /
 NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
 Connected FP32/FP16 conversion is limited to the observed unary, equal-element
-contract and requires explicit prepared-group binding. I32 custom kernels are
-limited to the observed same-precision unary carrier, as are I8 custom kernels.
+contract and requires explicit prepared-group binding. I32, I16, and I8 custom
+kernels are each limited to one observed same-precision unary carrier.
 Other NPU generations have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 
