@@ -326,7 +326,7 @@ print(prepared.explain())
 ```
 
 `prepared.groups` contains immutable `ActGroup` values. Each group reports its
-index, input count, FP16/FP32/U8/U16/I32/I16/I8 dtype when uniform, aggregate
+index, input count, FP16/FP32/U8/U16/U32/I32/I16/I8 dtype when uniform, aggregate
 descriptor element and byte coverage, stable per-invocation input/output
 element counts, contract flags, and invocation/range indices. `group.element_count` and
 `group.span_bytes` are not graph-level tensor sizes: tile replicas may duplicate
@@ -502,7 +502,7 @@ the normal version 1 validation again. Mixed-precision conversion groups remain
 version 2. The plan explanation shows which version will actually be patched.
 
 The same-precision unary I32, I16, and I8 carriers and the equal-span binary
-I32/I16/I8/U16 carriers always remain version 2 and can use automatic
+I32/I16/I8/U16/U32 carriers always remain version 2 and can use automatic
 positional mapping when each is the unique compatible group. See
 [`example_i32_custom.py`](../examples/example_i32_custom.py) and
 [`example_i32_binary_custom.py`](../examples/example_i32_binary_custom.py),
@@ -510,7 +510,8 @@ positional mapping when each is the unique compatible group. See
 [`example_i8_binary_custom.py`](../examples/example_i8_binary_custom.py), plus
 [`example_i16_custom.py`](../examples/example_i16_custom.py) and
 [`example_i16_binary_custom.py`](../examples/example_i16_binary_custom.py), and
-[`example_u16_binary_custom.py`](../examples/example_u16_binary_custom.py).
+[`example_u16_binary_custom.py`](../examples/example_u16_binary_custom.py), and
+[`example_u32_binary_custom.py`](../examples/example_u32_binary_custom.py).
 
 For a single set of kernel-build settings, pass them to `prepared.build()` in
 the same way as `npu.compile()`:
@@ -667,13 +668,13 @@ result = outputs["y"]
 Input names must match exactly. Shape and dtype must match the symbolic graph;
 noncontiguous arrays are copied to contiguous storage. The current execution
 boundary supports static FP16, FP32, U8, I8, U16, I16, U32, and I32 graph inputs
-and outputs with at most five dimensions. U32 remains an ordinary
-graph-execution feature. U8 additionally has only the explicitly documented
-U8-to-FP32 custom conversion carrier. I32, I16, and I8 additionally have one
-documented same-precision unary custom-kernel carrier each; this does not imply
-broader integer custom support. I32, I16, I8, and U16 additionally support one
-equal-span two-input carrier each; U16 has no validated unary carrier. Scalar,
-broadcast, and mixed-integer inputs remain unsupported.
+and outputs with at most five dimensions. U8 additionally has only the
+explicitly documented U8-to-FP32 custom conversion carrier. I32, I16, and I8
+additionally have one documented same-precision unary custom-kernel carrier
+each; this does not imply broad integer custom support. I32, I16, I8, U16, and
+U32 additionally support one equal-span two-input carrier each; U16 and U32
+have no validated unary carrier. Scalar, broadcast, and mixed-integer inputs
+remain unsupported.
 FP32 custom execution additionally has one equal-span `[1,32]` two-input
 `Subtract` carrier; other binary FP32 carriers and shapes are not implied.
 
@@ -681,8 +682,8 @@ The supported dtype list describes tensor transport, not every operator/dtype
 combination. In particular, U8 data with I32 indices has passed `Gather`, while
 the tested U16-data `Gather` returned incorrect values despite successful graph
 submission. Treat the installed compiler and a host oracle as authoritative.
-U32 is validated through structural `Split`; no U32 arithmetic operation is
-implied by that result.
+U32 is validated through structural `Split` and the exact custom `Subtract`
+carrier above; other U32 graph arithmetic operations are not implied.
 I64 is validated only for caller-provided `Gather` indices. A full-width I64
 Split silently narrowed values to signed 32 bits, so ordinary I64 data and
 outputs are not supported.
@@ -797,6 +798,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [U16 two-input custom kernel](../examples/example_u16_binary_custom.py)
 - [mixed-input U8/I32 Gather graph](../examples/example_u8_gather.py)
 - [U32 multi-output Split graph](../examples/example_u32_split.py)
+- [U32 two-input custom kernel](../examples/example_u32_binary_custom.py)
 - [U8 Gather with I64 indices](../examples/example_u8_gather_i64.py)
 - [U8 unequal VariadicSplit graph](../examples/example_u8_variadic_split.py)
 - [U8 multi-axis Slice graph](../examples/example_u8_slice.py)

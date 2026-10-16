@@ -37,10 +37,10 @@ cmake --build --preset linux-inspect
 
 The version 2 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
-tensor record's role, FP16/FP32/U8/U16/I32/I16/I8 precision, element count, byte
+tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It can therefore inspect the supported unary
 FP16/FP32 and U8-to-FP32 conversion carriers, unary I32/I16/I8 carriers, the
-equal-span binary I32/I16/I8/U16 carriers, and uniform float groups.
+equal-span binary I32/I16/I8/U16/U32 carriers, and uniform float groups.
 That includes the documented equal-span binary FP32 `Subtract` carrier.
 It also recognizes the structurally identical dense FP32 `(8,8)->8`
 invocations emitted for the documented row-broadcast carrier; inspection alone

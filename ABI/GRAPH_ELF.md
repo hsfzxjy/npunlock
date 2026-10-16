@@ -311,10 +311,10 @@ descriptor is 0x28 bytes:
 | `+0x0c` | rank as `u32` |
 | `+0x10` | pointer to `rank` signed 32-bit dimensions |
 | `+0x14` | pointer to `rank` signed 64-bit bit-strides |
-| `+0x18` | element-type value: 1 for FP32, 2 for FP16, 6 for U16, 7 for U8, 9 for I32, 10 for I16, and 11 for I8 in observed records |
+| `+0x18` | element-type value: 1 for FP32, 2 for FP16, 5 for U32, 6 for U16, 7 for U8, 9 for I32, 10 for I16, and 11 for I8 in observed records |
 | `+0x24` | raw value 2 for supported CMX tensors |
 
-The raw element values match the `NN_FP32`, `NN_FP16`, `NN_U16`, `NN_U8`,
+The raw element values match the `NN_FP32`, `NN_FP16`, `NN_U32`, `NN_U16`, `NN_U8`,
 `NN_I32`, `NN_I16`, and `NN_I8` entries in the compatible software-kernel
 runtime type definition. An IR boolean condition was lowered to an I8 descriptor.
 `npunlock` still validates the complete combination rather than assuming that
@@ -334,7 +334,7 @@ binary operation: input A at +0x00, input B at +0x28, output at +0x50
 ```
 
 An I8 or U8 span is `element_count`; an FP16, I16, or U16 span is
-`element_count * 2`; and an FP32 or I32 span is `element_count * 4`. The output
+`element_count * 2`; and an FP32, U32, or I32 span is `element_count * 4`. The output
 span must not alias an input span. The original `patchblob_target` ABI requires
 all inputs and the output to describe one precision and normally one byte span,
 with one explicit scalar-second-input exception. The additive
@@ -343,7 +343,7 @@ element count, span, and observed flags.
 Version 2 currently accepts the same established layouts, equal-element unary
 FP32-to-FP16, FP16-to-FP32, and U8-to-FP32 conversion, and the observed
 same-precision unary I32, I16, and I8 layouts plus equal-span two-input I32,
-I16, I8, and U16 layouts. It is not a general mixed-dtype, integer, or
+I16, I8, U16, and U32 layouts. It is not a general mixed-dtype, integer, or
 broadcasting ABI.
 
 ## Validated examples
@@ -525,8 +525,27 @@ matched NumPy exactly through copied and explicitly shared buffers.
 
 This establishes one equal-count, equal-span two-input U16 carrier on
 NPU3720/compiler 8.3. It does not establish unary, scalar/broadcast,
-unequal-span, additional-arity, saturation, overflow, mixed-precision, or U32
-custom contracts.
+unequal-span, additional-arity, saturation, overflow, or mixed-precision
+contracts. The separate U32 contract follows.
+
+### Equal-span binary U32
+
+A static two-input U32 `[1,32]` `Subtract` carrier produced one ACT group with
+four invocations. Each parameter block used input A at `+0x00`, input B at
+`+0x28`, and output at `+0x50`. All records used raw element type 5, an
+eight-element count, a 32-byte span, and the established static dense CMX
+layout; the output was disjoint from both inputs.
+
+The compiler-produced `Subtract`, `Add`, and `Multiply` candidates matched
+their U32 host oracles exactly. `Maximum` and `Minimum` returned corrupt
+baseline data and were rejected. A substituted kernel used `unsigned int`
+pointers and computed `(a >> 2) + (b >> 3) + 5`; all 32 outputs matched NumPy
+through copied and explicitly shared buffers.
+
+This establishes one equal-count, equal-span two-input U32 carrier on
+NPU3720/compiler 8.3. It does not establish unary, scalar/broadcast,
+unequal-span, additional-arity, saturation, overflow, mixed precision, or
+other U32 carrier operations.
 
 ### Mixed-precision conversion
 
@@ -692,7 +711,7 @@ Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
-  unary I32/I16/I8, equal-span binary FP32/I32/I16/I8/U16, and
+  unary I32/I16/I8, equal-span binary FP32/I32/I16/I8/U16/U32, and
   the scalar/row-broadcast cases above (mixed FP16/FP32 and U8-to-FP32
   conversion remain limited to their explicit version 2 contracts);
 - general broadcasting or unequal binary input shapes beyond the experimental

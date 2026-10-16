@@ -117,6 +117,15 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     PROPERTIES PASS_REGULAR_EXPRESSION "\"precision\": \"u16\""
   )
   add_test(
+    NAME porting_inspect_binary_u32_fixture
+    COMMAND npunlock_inspect
+      --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/subtract-u32-1x32.blob
+  )
+  set_tests_properties(
+    porting_inspect_binary_u32_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION "\"precision\": \"u32\""
+  )
+  add_test(
     NAME porting_inspect_binary_i32_fixture
     COMMAND npunlock_inspect
       --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/minimum-i32-1x32.blob

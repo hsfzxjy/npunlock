@@ -279,7 +279,7 @@ The additive version 2 API describes every tensor record independently:
 
 ```text
 patchblob_tensor_contract_v2
-  role + tensor index + FP16/FP32/U8/U16/I32/I16/I8 precision + element count + byte span + flags
+  role + tensor index + FP16/FP32/U8/U16/U32/I32/I16/I8 precision + element count + byte span + flags
 
 patchblob_target_v2
   ABI version + invocation/range selectors + fixed tensor-contract array
@@ -314,6 +314,11 @@ equal element counts and spans. They do not enable scalar/broadcast I16,
 saturation, or mixed integer/float contracts.
 
 The observed U16 contract also uses two-byte spans. It accepts only the tested
+two-input layout where both inputs and the output have equal element counts
+and spans. It does not enable unary, scalar/broadcast, unequal-span, overflow,
+saturation, or mixed integer/float contracts.
+
+The observed U32 contract uses four-byte spans. It accepts only the tested
 two-input layout where both inputs and the output have equal element counts
 and spans. It does not enable unary, scalar/broadcast, unequal-span, overflow,
 saturation, or mixed integer/float contracts.
@@ -383,6 +388,6 @@ The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
 unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 and U8-to-FP32
 conversion, and one same-precision unary carrier each for I32, I16, and I8.
-Each of those signed integer precisions plus U16 also has one equal-span binary
-carrier. Other devices, dtypes, layouts, dynamic shapes, and arbitrary
-source-node mapping are not implied.
+Each of those signed integer precisions plus U16 and U32 also has one
+equal-span binary carrier. Other devices, dtypes, layouts, dynamic shapes, and
+arbitrary source-node mapping are not implied.

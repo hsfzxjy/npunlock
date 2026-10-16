@@ -1688,7 +1688,39 @@ its 78,656-byte patched graph has SHA-256
 This establishes one equal-span binary U16 `Subtract` carrier on
 NPU3720/compiler 8.3. It does not establish a unary U16 carrier, scalar or row
 broadcasting, unequal spans, overflow or saturation semantics, mixed
-precision, U32 custom kernels, other shapes, or portability.
+precision, the U32 custom path established later, other shapes, or portability.
+
+## 56. Equal-span two-input U32 custom-kernel execution
+
+On 2026-10-16, static U32 `[1,32]` binary probes compiled through graph
+compiler 8.3. The unmodified `Add`, `Subtract`, and `Multiply` graphs matched
+exact NumPy U32 oracles, including values above `2**31`. `Maximum` and
+`Minimum` compiled but returned corrupt values and were rejected. The
+non-commutative `Subtract` carrier was retained.
+
+The carrier contains one ACT group with four invocations. Every invocation
+presents input A at `+0x00`, input B at `+0x28`, and output at `+0x50`. Each
+record uses raw element-type value 5, an eight-element count, a 32-byte span,
+and the established static dense CMX flags; the output is disjoint from both
+inputs.
+
+A custom entry read `unsigned int` pointers and computed
+`(a >> 2) + (b >> 3) + 5`. Values above `2**31` discriminated unsigned
+interpretation, independent inputs discriminated operand order, and the
+formula cannot overflow U32. All 32 outputs matched NumPy exactly through
+both copied and explicitly shared buffers.
+
+The retained 77,760-byte carrier has SHA-256
+`c6c7c2e0a1f6a9906f106861739755d6f3013e6b532273d8d285c866369a5240`.
+The public example's 940-byte kernel ELF has SHA-256
+`7c766174c821905cfdbfab2d7219bf6dfd1413aecf685f2f39c0494010046627`;
+its 78,656-byte patched graph has SHA-256
+`c3f126dec85a6a277bcb0f5bf8037cab1beaa7ca0f539728a9506445e5b12871`.
+
+This establishes one equal-span binary U32 `Subtract` carrier on
+NPU3720/compiler 8.3. It does not establish a unary U32 carrier, scalar or row
+broadcasting, unequal spans, overflow or saturation semantics, mixed
+precision, other shapes, or portability.
 
 ## What remains deliberately unresolved
 
