@@ -128,11 +128,13 @@ inputs and one disjoint output. A non-commutative `3*a - 2*b + 7` kernel using
 scalar/broadcast I32, other binary layouts, mixed integer contracts,
 signed-overflow behavior, or other integer precisions.
 
-I8 custom execution likewise includes one same-precision unary `Abs` carrier.
-Its four invocations each expose 16 signed-byte input and output elements. A
-bounded `2*x + 3` kernel using `signed char` pointers matched all 32 outputs.
-This does not establish saturation, quantization semantics, binary I8, U8, or
-other shapes.
+I8 custom execution includes one same-precision unary `Abs` carrier and an
+equal-span two-input `Subtract` carrier. The binary carrier has four
+invocations; each exposes two eight-element signed-byte inputs and one
+disjoint output. A bounded non-commutative `3*a - 2*b + 7` kernel using
+`signed char` pointers matched all 32 outputs. This does not establish
+scalar/broadcast I8, other binary layouts, saturation, quantization semantics,
+U8 custom execution, or other shapes.
 
 I16 custom execution includes a same-precision unary `Abs` carrier and an
 equal-span two-input `Maximum` carrier. The binary carrier has four
@@ -536,6 +538,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Unary I32 affine kernel](../examples/example_i32_custom.py)
 - [Two-input I32 weighted-difference kernel](../examples/example_i32_binary_custom.py)
 - [Unary I8 affine kernel](../examples/example_i8_custom.py)
+- [Two-input I8 weighted-difference kernel](../examples/example_i8_binary_custom.py)
 - [Unary I16 affine kernel](../examples/example_i16_custom.py)
 - [Two-input I16 weighted-difference kernel](../examples/example_i16_binary_custom.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)

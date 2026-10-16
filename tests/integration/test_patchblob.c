@@ -175,6 +175,7 @@ int main(void) {
   npunlock_buffer i32_carrier;
   npunlock_buffer binary_i32_carrier;
   npunlock_buffer i8_carrier;
+  npunlock_buffer binary_i8_carrier;
   npunlock_buffer i16_carrier;
   npunlock_buffer binary_i16_carrier;
   npunlock_buffer elf;
@@ -189,6 +190,7 @@ int main(void) {
   patchblob_target broadcast_targets[4] = {{0}};
   patchblob_target_v2 conversion_targets[2] = {{0}};
   patchblob_target_v2 binary_i32_targets[4] = {{0}};
+  patchblob_target_v2 binary_i8_targets[4] = {{0}};
   patchblob_target_v2 binary_i16_targets[4] = {{0}};
   patchblob_discovery_result discovery = {0};
   patchblob_discovery_result_v2 discovery_v2 = {0};
@@ -206,6 +208,7 @@ int main(void) {
   i32_carrier = read_file(FIXTURE_ROOT "abs-i32-1x32.blob");
   binary_i32_carrier = read_file(FIXTURE_ROOT "minimum-i32-1x32.blob");
   i8_carrier = read_file(FIXTURE_ROOT "abs-i8-1x32.blob");
+  binary_i8_carrier = read_file(FIXTURE_ROOT "subtract-i8-1x32.blob");
   i16_carrier = read_file(FIXTURE_ROOT "abs-i16-1x32.blob");
   binary_i16_carrier = read_file(FIXTURE_ROOT "maximum-i16-1x32.blob");
   elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
@@ -213,7 +216,8 @@ int main(void) {
   CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
         broadcast_carrier.data != NULL && convert_f32_to_f16.data != NULL &&
         convert_f16_to_f32.data != NULL && i32_carrier.data != NULL &&
-        binary_i32_carrier.data != NULL && i8_carrier.data != NULL && i16_carrier.data != NULL &&
+        binary_i32_carrier.data != NULL && i8_carrier.data != NULL &&
+        binary_i8_carrier.data != NULL && i16_carrier.data != NULL &&
         binary_i16_carrier.data != NULL && elf.data != NULL && expected.data != NULL);
   unsupported_header.data = (uint8_t *)malloc(carrier.size);
   CHECK(unsupported_header.data != NULL);
@@ -535,6 +539,51 @@ int main(void) {
     CHECK(target->tensors[1].span_bytes == 16);
   }
   patchblob_discovery_result_v2_release(&discovery_v2);
+  status = patchblob_discover_targets(
+      (npunlock_view){binary_i8_carrier.data, binary_i8_carrier.size}, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  patchblob_discovery_result_release(&discovery);
+  status = patchblob_discover_targets_v2(
+      (npunlock_view){binary_i8_carrier.data, binary_i8_carrier.size}, &discovery_v2);
+  if (status != NPUNLOCK_STATUS_OK && discovery_v2.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery_v2.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery_v2.group_count == 1);
+  CHECK(discovery_v2.target_count == 4);
+  for (index = 0; index < discovery_v2.target_count; ++index) {
+    const patchblob_target_v2 *target = &discovery_v2.targets[index].target;
+    CHECK(discovery_v2.targets[index].group_index == 0);
+    CHECK(target->invocation_index == index);
+    CHECK(target->range_index == index);
+    CHECK(target->target_flags == 0);
+    CHECK(target->tensor_count == 3);
+    CHECK(target->tensors[0].role == PATCHBLOB_TENSOR_ROLE_INPUT_V2);
+    CHECK(target->tensors[0].precision == PATCHBLOB_TENSOR_PRECISION_I8_V2);
+    CHECK(target->tensors[0].element_count == 8);
+    CHECK(target->tensors[0].span_bytes == 8);
+    CHECK(target->tensors[1].role == PATCHBLOB_TENSOR_ROLE_INPUT_V2);
+    CHECK(target->tensors[1].precision == PATCHBLOB_TENSOR_PRECISION_I8_V2);
+    CHECK(target->tensors[1].element_count == 8);
+    CHECK(target->tensors[1].span_bytes == 8);
+    CHECK(target->tensors[2].role == PATCHBLOB_TENSOR_ROLE_OUTPUT_V2);
+    CHECK(target->tensors[2].precision == PATCHBLOB_TENSOR_PRECISION_I8_V2);
+    CHECK(target->tensors[2].element_count == 8);
+    CHECK(target->tensors[2].span_bytes == 8);
+    binary_i8_targets[index] = *target;
+  }
+  patchblob_discovery_result_v2_release(&discovery_v2);
+  binary_i8_targets[0].tensors[1].element_count = 1;
+  binary_i8_targets[0].tensors[1].span_bytes = 1;
+  options.struct_size = sizeof(options);
+  options.image_alignment = 0x400;
+  options.tail_padding = 0x80;
+  status =
+      patchblob_patch_v2(&options, (npunlock_view){binary_i8_carrier.data, binary_i8_carrier.size},
+                         (npunlock_view){elf.data, elf.size}, binary_i8_targets, 4, &result);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "equal-span binary") != NULL);
+  patchblob_result_release(&result);
   status =
       patchblob_discover_targets((npunlock_view){i16_carrier.data, i16_carrier.size}, &discovery);
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
@@ -763,6 +812,7 @@ int main(void) {
   free(i32_carrier.data);
   free(binary_i32_carrier.data);
   free(i8_carrier.data);
+  free(binary_i8_carrier.data);
   free(i16_carrier.data);
   free(binary_i16_carrier.data);
   free(two_operation_carrier.data);

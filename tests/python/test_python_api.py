@@ -1492,7 +1492,11 @@ class CompilationFlowTests(unittest.TestCase):
             def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
                 raise npu.NativeError("patchblob discovery", 5, "unsupported", b"integer requires version 2")
 
-        for dtype, span, carrier in (("i32", 32, "Minimum"), ("i16", 16, "Maximum")):
+        for dtype, span, carrier in (
+            ("i32", 32, "Minimum"),
+            ("i16", 16, "Maximum"),
+            ("i8", 8, "Subtract"),
+        ):
             with self.subTest(dtype=dtype):
                 tensors = (
                     npu.PatchTensorContract("input", 0, dtype, 8, span, 0x07),

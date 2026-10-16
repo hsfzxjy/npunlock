@@ -303,8 +303,10 @@ unary layout and one two-input layout where both inputs and the output have
 equal element counts and spans. They do not enable scalar/broadcast I32,
 signed-overflow semantics, or mixed integer/float contracts.
 
-The observed same-precision unary I8 contract uses the same rule with one-byte
-spans. It does not enable binary I8, U8, saturation, or quantization semantics.
+The observed I8 contracts use one-byte spans. They accept one same-precision
+unary layout and one two-input layout where both inputs and the output have
+equal element counts and spans. They do not enable scalar/broadcast I8, U8,
+saturation, or quantization semantics.
 
 The observed I16 contracts use two-byte spans. They accept one same-precision
 unary layout and one two-input layout where both inputs and the output have
@@ -370,6 +372,6 @@ waits. Each caller chooses copied or shared tensors and sets a finite timeout.
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
 unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 conversion, and one
-same-precision unary carrier each for I32, I16, and I8. I32 and I16 also have
-one equal-span binary carrier each. Other devices, dtypes,
+same-precision unary carrier each for I32, I16, and I8. Each of those signed
+integer precisions also has one equal-span binary carrier. Other devices, dtypes,
 layouts, dynamic shapes, and arbitrary source-node mapping are not implied.
