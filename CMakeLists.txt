@@ -489,6 +489,10 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
         NAME python_api
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_python_api.py
       )
+      add_test(
+        NAME tutorial_docs
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_tutorial.py
+      )
     endif()
   endif()
 

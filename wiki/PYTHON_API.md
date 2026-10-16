@@ -6,6 +6,9 @@ The `npunlock` Python package is a small symbolic graph builder over the native
 C libraries. It is not an eager tensor framework: constructing a `Tensor`
 records graph structure and does not run NumPy or NPU computation.
 
+For a guided first project, read the [custom-kernel tutorial](TUTORIAL.md)
+before using this page as an API reference.
+
 ## Inputs and constants
 
 Create graph inputs with an explicit name, static shape, and IR dtype:

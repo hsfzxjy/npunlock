@@ -11,6 +11,10 @@ NPU3720.
 
 > **Latest breakthrough — 2026-10-16:** A custom kernel can consume U8 and produce FP32 through an explicit `Convert` carrier, with exact NPU3720 output. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#52-u8-to-fp32-custom-kernel-execution).
 
+New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
+a first FP16 loop through carrier selection, multi-input kernels, conversions,
+and reusable deployment artifacts.
+
 ## Quick example
 
 This complete FP32 GELU example embeds the C kernel in Python, places it in an
@@ -252,6 +256,7 @@ passthrough, so Linux execution is not a supported configuration yet.
 
 ## Documentation
 
+- **[Custom-kernel tutorial](wiki/TUTORIAL.md)** — write a first kernel, choose a compatible carrier, and grow to multi-input and mixed-precision graphs
 - **[Getting MoviTools](wiki/GET_MOVITOOLS.md)** — obtain the compiler toolchain without installing the legacy driver
 - **[Python API](wiki/PYTHON_API.md)** — construct, compile, and execute graphs from Python
 - **[Writing custom kernels](wiki/CUSTOM_KERNELS.md)** — C entry point, tensor contract, and examples

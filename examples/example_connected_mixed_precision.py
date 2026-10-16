@@ -70,7 +70,6 @@ def build_graph() -> tuple[npu.Graph, npu.Tensor, npu.Tensor, npu.Tensor]:
         source=to_f16_c,
         carrier="Convert",
         destination_type="f16",
-        _dtype="f16",
         _name="to_f16",
     )
     blended = npu.custom(half, peer, source=blend_f16_c, carrier="Maximum", _name="blend_f16")
@@ -87,7 +86,6 @@ def build_graph() -> tuple[npu.Graph, npu.Tensor, npu.Tensor, npu.Tensor]:
         source=to_f32_c,
         carrier="Convert",
         destination_type="f32",
-        _dtype="f32",
         _name="to_f32",
     )
     return npu.Graph([data, peer], [output], name="connected_mixed_precision"), half, blended, output

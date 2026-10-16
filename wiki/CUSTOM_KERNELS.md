@@ -10,6 +10,10 @@ the computation.
 The contract described here is intentionally narrow and execution-tested. It
 is not a general Intel SHAVE ABI.
 
+If this is your first kernel, start with the [general-user
+tutorial](TUTORIAL.md). This page is the detailed programming reference used
+after that guided path.
+
 ## Entry point
 
 Start NPU3720 kernel source with the bundled target header, then define the

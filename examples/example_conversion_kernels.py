@@ -41,7 +41,6 @@ half = npu.custom(
     source=to_f16_c,
     carrier="Convert",
     destination_type="f16",
-    _dtype="f16",
     _name="to_f16",
 )
 absolute = npu.Abs(half)
@@ -50,7 +49,6 @@ y = npu.custom(
     source=to_f32_c,
     carrier="Convert",
     destination_type="f32",
-    _dtype="f32",
     _name="to_f32",
 )
 

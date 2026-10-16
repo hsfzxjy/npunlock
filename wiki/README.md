@@ -5,6 +5,9 @@ and where the current compatibility boundary lies.
 
 ## Start here
 
+- [Custom-kernel tutorial](TUTORIAL.md) — progress from a first FP16 C loop to
+  carrier selection, multi-input kernels, explicit bindings, conversions,
+  reusable artifacts, and shared buffers.
 - [Getting MoviTools](GET_MOVITOOLS.md) — download and extract the external
   compiler toolchain required for custom C kernels.
 - [Python API](PYTHON_API.md) — construct, compile, and execute graphs from
