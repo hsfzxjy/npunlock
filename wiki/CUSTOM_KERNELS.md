@@ -118,11 +118,15 @@ and spans, CMX placement, and a disjoint output.
 Static dense FP16 is the primary custom-kernel contract. Both unary and narrow
 two-input layouts have been executed successfully.
 
-FP32 custom execution includes the validated unary accuracy-mode path and one
-same-precision two-input carrier with a scalar second input. The Python
-frontend adds the required precision-preservation metadata and compiler flag
-automatically for an FP32 custom node. This does not establish general FP32
-carriers or multi-input support.
+FP32 custom execution includes the validated unary accuracy-mode path, one
+same-precision two-input carrier with a scalar second input, and one
+equal-span two-input `Subtract` carrier. The equal-span `[1,32]` carrier has
+four invocations; each exposes two eight-element FP32 inputs and one disjoint
+output. A non-commutative `3*a - 2*b + 7` kernel using `float` pointers matched
+all 32 outputs exactly. The Python frontend adds the required
+precision-preservation metadata and compiler flag automatically for an FP32
+custom node. This does not establish other binary carriers, unequal shapes,
+or general FP32 multi-input support.
 
 I32 custom execution includes one same-precision unary `Abs` carrier and an
 equal-span two-input `Minimum` carrier on graph compiler 8.3. The binary
@@ -549,6 +553,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
+- [Two-input FP32 weighted-difference kernel](../examples/example_f32_binary_custom.py)
 - [Unary I32 affine kernel](../examples/example_i32_custom.py)
 - [Two-input I32 weighted-difference kernel](../examples/example_i32_binary_custom.py)
 - [Unary I8 affine kernel](../examples/example_i8_custom.py)

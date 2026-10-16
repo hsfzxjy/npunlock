@@ -200,10 +200,11 @@ host reference.
 ## Confirmed versus inferred behavior
 
 Confirmed behavior includes the complete unary FP16 path, narrow
-precision-preserved unary FP32, same-precision unary I32/I16/I8 paths, and
-static dense FP16, I32, I16, and I8 binary carriers with independently bound
-host inputs. It also includes one explicitly bound U8-to-FP32 unary conversion
-carrier. The exact layouts used by these cases are execution-tested.
+precision-preserved unary FP32, one precision-preserved equal-span binary FP32
+carrier, same-precision unary I32/I16/I8 paths, and static dense FP16, I32,
+I16, and I8 binary carriers with independently bound host inputs. It also
+includes one explicitly bound U8-to-FP32 unary conversion carrier. The exact
+layouts used by these cases are execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic

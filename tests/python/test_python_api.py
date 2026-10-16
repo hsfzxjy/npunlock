@@ -980,6 +980,26 @@ class CompilationFlowTests(unittest.TestCase):
 
         self.assertEqual(fake.patch_args[2], targets)
 
+    def test_equal_span_binary_f32_custom_group_maps_automatically(self) -> None:
+        targets = tuple(npu.PatchTarget(index, index, 2, 8, 32, 0x3B) for index in range(4))
+        fake = FakeNative()
+        fake.discovery_groups = (targets,)
+        a = npu.input("a", shape=(1, 32), dtype="f32")
+        b = npu.input("b", shape=(1, 32), dtype="f32")
+        y = npu.custom(a, b, source=b"binary f32 kernel", carrier="Subtract", _name="y")
+
+        prepared = npu.prepare(
+            npu.Graph([a, b], [y], name="binary_f32_custom"),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(prepared.mappings[0].status, "automatic")
+        self.assertEqual(prepared.find_group(input_count=2, dtype="f32").targets, targets)
+        prepared.build(movi_dll_dir="movi")
+        self.assertEqual(fake.patch_args[2], targets)
+        self.assertIn('EXECUTION_MODE_HINT="ACCURACY"', fake.compile_ir_kwargs["build_flags"])
+
     def test_prepared_graph_explains_and_builds_ambiguous_branches_once(self) -> None:
         shape = (1, 32)
         x = npu.input("x", shape=shape, dtype="f32")

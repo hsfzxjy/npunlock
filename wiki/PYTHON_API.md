@@ -195,6 +195,13 @@ for every invocation-local output element. This has been executed with FP16
 and FP32 `[1,32]` data plus a `[1,1]` scalar. It does not imply support for
 other input positions, broadcast axes, shapes, or operators.
 
+One equal-span FP32 case is also implemented: two static `[1,32]` inputs on a
+precision-preserved `Subtract` carrier. Its four ACT invocations each expose
+two eight-element inputs and one output. The complete
+[binary FP32 example](../examples/example_f32_binary_custom.py) uses both
+inputs non-commutatively and checks all 32 results exactly. This recipe does
+not imply that other FP32 binary carriers or shapes are compatible.
+
 ## Graphs
 
 Create a graph from declared inputs and one or more output tensors:
@@ -659,6 +666,8 @@ documented same-precision unary custom-kernel carrier each; this does not imply 
 integer custom support. I32, I16, and I8 additionally support one equal-span
 two-input carrier each; scalar, broadcast, and mixed-integer inputs remain
 unsupported.
+FP32 custom execution additionally has one equal-span `[1,32]` two-input
+`Subtract` carrier; other binary FP32 carriers and shapes are not implied.
 
 The supported dtype list describes tensor transport, not every operator/dtype
 combination. In particular, U8 data with I32 indices has passed `Gather`, while
@@ -763,6 +772,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 
 - [FP16 GELU](../examples/example_gelu.py)
 - [FP32 GELU](../examples/example_gelu_f32.py)
+- [FP32 two-input custom kernel](../examples/example_f32_binary_custom.py)
 - [FP16 custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [FP16 five-input custom kernel](../examples/example_five_input_custom.py)
 - [I32 structural graph](../examples/example_i32_structural.py)

@@ -380,6 +380,25 @@ absolute error `2.38419e-07`.
 This establishes one unary FP32 carrier configuration, not general FP32 graph
 support.
 
+### Equal-span binary FP32
+
+With the same precision-conversion suppression and accuracy-mode build flag,
+a static two-input FP32 `[1,32]` `Subtract` graph produced one ACT group with
+four invocations. Each parameter block used the binary record order input A at
+`+0x00`, input B at `+0x28`, and output at `+0x50`. All three records used raw
+element type 1, an eight-element count, a 32-byte span, static dense CMX
+placement, and a disjoint output.
+
+The unmodified `Subtract`, `Multiply`, and `Add` candidates matched their host
+oracles. `Maximum` and `Minimum` exposed the same apparent descriptor contract
+but returned corrupt baseline values and were rejected. A substituted
+non-commutative `3*a - 2*b + 7` kernel in the retained `Subtract` carrier
+matched all 32 FP32 outputs exactly.
+
+This establishes only the tested equal-span `Subtract` carrier on
+NPU3720/compiler 8.3. It does not establish other FP32 binary operations,
+shapes, unequal spans, or general multi-input FP32 support.
+
 ### Same-precision unary I32
 
 A static I32 `[1,32]` `Abs` carrier produced one ACT group containing four
@@ -633,9 +652,9 @@ Do not infer support for:
 
 - dynamic shapes or arbitrary strides/layouts;
 - supported patch targets beyond the narrow same-precision FP16, unary FP32,
-  unary I32/I16/I8, equal-span binary I32/I16/I8, and scalar-second-input FP32
-  cases above (mixed FP16/FP32 and U8-to-FP32 conversion remain limited to
-  their explicit version 2 contracts);
+  unary I32/I16/I8, equal-span binary FP32/I32/I16/I8, and
+  scalar-second-input FP32 cases above (mixed FP16/FP32 and U8-to-FP32
+  conversion remain limited to their explicit version 2 contracts);
 - general broadcasting or unequal binary input shapes beyond the experimental
   one-element scalar case above;
 - arbitrary compiler or graph-format versions;

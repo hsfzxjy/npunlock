@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-16:** A custom kernel can consume U8 and produce FP32 through an explicit `Convert` carrier, with exact NPU3720 output. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#52-u8-to-fp32-custom-kernel-execution).
+> **Latest breakthrough — 2026-10-16:** Two independent, equal-span FP32 inputs now work in one custom kernel through a precision-preserved `Subtract` carrier, with exact NPU3720 output. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#53-equal-span-two-input-fp32-custom-kernel-execution).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,
@@ -102,6 +102,8 @@ The [I16 custom-kernel example](examples/example_i16_custom.py) validates a
 bounded signed-short affine kernel on the corresponding unary carrier.
 The [binary I16 example](examples/example_i16_binary_custom.py) independently
 uses both graph inputs in a non-commutative signed-short kernel.
+The [binary FP32 example](examples/example_f32_binary_custom.py) does the same
+through a precision-preserved equal-span `Subtract` carrier.
 The [U8-to-FP32 custom example](examples/example_u8_to_f32_custom.py) uses an
 explicit mixed-precision `Convert` carrier and needs no manual output dtype.
 The [U8 reshape example](examples/example_u8_reshape.py) likewise needs no
@@ -200,7 +202,7 @@ reference.
 - run custom kernels inside Intel NPU graphs
 - static dense FP16 unary and two-input custom kernels, including one validated descriptor-level row-broadcast carrier
 - one static dense five-input FP16 carrier, including a fused local RMS/affine/gate kernel
-- verified unary and scalar-input binary FP32 paths
+- verified unary, scalar-input binary, and equal-span two-input FP32 paths
 - verified same-precision unary and equal-span two-input I32 custom-kernel paths
 - verified same-precision unary and equal-span two-input I8 custom-kernel paths
 - verified same-precision unary and equal-span two-input I16 custom-kernel paths
@@ -229,7 +231,8 @@ Connected FP32/FP16 conversion is limited to the observed unary, equal-element
 contract and requires explicit prepared-group binding. The U8-input/FP32-output
 custom path has the same explicit-binding requirement; same-precision U8 is not
 supported. I32, I16, and I8 each have one equal-span two-input path; scalar and
-unequal-span integer inputs are not supported.
+unequal-span integer inputs are not supported. Equal-span FP32 is limited to
+the documented `[1,32]` precision-preserved `Subtract` carrier.
 Other NPU generations have not been verified. See
 [Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
 

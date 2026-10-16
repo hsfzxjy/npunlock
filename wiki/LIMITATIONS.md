@@ -15,12 +15,12 @@ output does not match that contract.
 | SHAVE target | `3720xx` |
 | graph compiler | current path validated with version 8.3 |
 | primary custom tensors | static, dense FP16 |
-| FP32 | validated unary accuracy-mode carrier, one same-precision scalar-input binary carrier, and explicit unary FP16/FP32 conversion |
+| FP32 | validated unary accuracy-mode carrier, one scalar-input binary carrier, one equal-span binary `Subtract` carrier, and explicit unary FP16/FP32 conversion |
 | U8 | one explicit unary U8-input/FP32-output `Convert` carrier; no same-precision custom path |
 | I32 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Minimum` carrier with two eight-element inputs |
 | I16 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Maximum` carrier with two eight-element inputs |
 | I8 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Subtract` carrier with two eight-element inputs |
-| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; one FP32 scalar-input carrier; one equal-span carrier each for I32, I16, and I8 |
+| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; one FP32 scalar-input carrier and one equal-span FP32 `Subtract` carrier; one equal-span carrier each for I32, I16, and I8 |
 | higher custom arity | one static dense FP16 five-input `FakeQuantize` carrier with equal per-invocation spans |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
@@ -186,8 +186,11 @@ addresses are not established by the ELF64 relocation record.
 ## Precision
 
 Static dense FP16 is the established general MVP path. FP32 support is limited
-to the documented unary carrier and one scalar-second-input binary carrier,
-both with precision-conversion suppression and accuracy-mode graph compilation.
+to the documented unary carrier, one scalar-second-input binary carrier, and
+one equal-span binary `Subtract` carrier, all with precision-conversion
+suppression and accuracy-mode graph compilation. The equal-span `[1,32]`
+carrier exposes four invocations with two eight-element/32-byte inputs and one
+disjoint output; a non-commutative custom kernel matched all outputs exactly.
 
 I32 ordinary graph inputs and outputs are validated for Abs, Concat,
 Transpose, and FP32-to-I32 Convert graphs. Custom execution is additionally
@@ -244,11 +247,11 @@ range were silently narrowed and one extreme shared run returned a device
 error. General I64 graph data and outputs are therefore unsupported.
 
 Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32 and
-U8-to-FP32 conversion, FP32 binary kernels beyond the scalar-second-input
-carrier, I32, I16, or I8 custom kernels beyond the carriers above, and
-implicit dtype conversion are unsupported. The compiler-produced I16 `Maximum` baseline
-returned incorrect values on the tested driver; only the substituted custom
-kernel semantics are claimed.
+U8-to-FP32 conversion, FP32 binary kernels beyond the scalar-second-input and
+equal-span `Subtract` carriers, I32, I16, or I8 custom kernels beyond the
+carriers above, and implicit dtype conversion are unsupported. The
+compiler-produced I16 `Maximum` baseline returned incorrect values on the
+tested driver; only the substituted custom kernel semantics are claimed.
 
 One graph containing independent FP32-unary and FP16-binary custom branches
 has been executed successfully with explicit target selection. Each of those

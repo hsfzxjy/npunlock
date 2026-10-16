@@ -175,7 +175,7 @@ Use these C types for the currently validated custom paths:
 | Graph dtype | Kernel pointer type | Current custom scope |
 | --- | --- | --- |
 | `f16` | `__fp16` | unary, selected binary/broadcast, and one five-input carrier |
-| `f32` | `float` | unary and one scalar-second-input binary carrier |
+| `f32` | `float` | unary, one scalar-second-input carrier, and one equal-span binary carrier |
 | `i32` | `int` | unary and equal-span binary |
 | `i16` | `short` | unary and equal-span binary |
 | `i8` | `signed char` | unary and equal-span binary |
@@ -211,6 +211,7 @@ The current carrier recipes are:
 | unary FP16 or FP32 | `Abs` | automatic when the graph is unambiguous |
 | unary I32, I16, or I8 | `Abs` | automatic when the graph is unambiguous |
 | two equal-span FP16 inputs | `Maximum` | automatic when the graph is unambiguous |
+| two equal-span FP32 inputs | `Subtract` | automatic when the graph is unambiguous |
 | FP16 data plus a one-element second input | `Maximum` | automatic when the exact scalar contract is discovered |
 | FP16 `(4,8)` plus `(1,8)` row input | `Maximum` | only the documented dense `(8,8)->8` invocation layout |
 | two equal-span I32 inputs | `Minimum` | automatic when the graph is unambiguous |
@@ -261,6 +262,11 @@ b = npu.input("b", shape=shape, dtype="f16")
 y = npu.custom(a, b, source=kernel_c, carrier="Maximum", _name="y")
 program = npu.compile(npu.Graph([a, b], [y], name="weighted_mix"))
 ```
+
+The FP32 equal-span form uses `float *`, `dtype="f32"`, and the tested
+`Subtract` carrier instead. See the complete
+[binary FP32 example](../examples/example_f32_binary_custom.py); the frontend
+adds precision-preservation metadata and accuracy mode automatically.
 
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input

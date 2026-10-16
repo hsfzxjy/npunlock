@@ -1583,6 +1583,40 @@ This establishes one unary U8-input/FP32-output custom path, not same-precision
 or binary U8, implicit conversion insertion, quantization, saturation, other
 shapes, other compiler versions, or portability.
 
+## 53. Equal-span two-input FP32 custom-kernel execution
+
+On 2026-10-16, graph compiler 8.3 produced precision-preserved static FP32
+`[1,32]` ACT carriers for `Maximum`, `Minimum`, `Subtract`, `Multiply`, and
+`Add` with two independent host inputs. `Subtract`, `Multiply`, and `Add`
+matched their unmodified host oracles exactly. `Maximum` and `Minimum` exposed
+plausible FP32 descriptors but returned corrupt baseline values, so they were
+rejected rather than promoted from structure alone.
+
+The retained `Subtract` carrier contains one ACT group with four invocations.
+Each invocation has input A at `+0x00`, input B at `+0x28`, and output at
+`+0x50`. Every descriptor reports raw type 1, eight elements, a 32-byte span,
+and the established static dense CMX flags; the output is disjoint from both
+inputs. As with unary FP32, the IR carrier has
+`DisablePrecisionConversion=dynamic:f16` and graph compilation uses
+`EXECUTION_MODE_HINT="ACCURACY"`.
+
+A linked non-commutative custom entry read both inputs as `float` and computed
+`3*a - 2*b + 7`. Integer-valued FP32 inputs made swapped or ignored inputs
+obvious while keeping the host and device operation sequence exactly
+representable. Every one of the 32 NPU outputs matched the NumPy oracle.
+
+The retained 77,760-byte carrier has SHA-256
+`7bdd59be16b403f7b24a7a7c490783575a924c565a0219815116ce843081a429`.
+The public example's 956-byte kernel ELF has SHA-256
+`040cdbc6a210a0531d838326ab9d9adcf6ff7fd3b94f7cae40c2d19a6f04941e`;
+its 78,656-byte patched graph has SHA-256
+`77f0d37c07cf670c6f3e3a64a9a886ab1ef92187103d3df3c66d753a45c809ed`.
+
+This establishes one equal-span binary FP32 custom path on NPU3720/compiler
+8.3. It does not establish arbitrary FP32 carriers, unequal or broadcast
+inputs, other shapes, different operation ordering or rounding behavior, or
+portability to another compiler or NPU.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

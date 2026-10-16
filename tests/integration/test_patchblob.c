@@ -179,6 +179,7 @@ int main(void) {
   npunlock_buffer binary_i8_carrier;
   npunlock_buffer i16_carrier;
   npunlock_buffer binary_i16_carrier;
+  npunlock_buffer binary_f32_carrier;
   npunlock_buffer elf;
   npunlock_buffer expected;
   npunlock_buffer unsupported_header = {0};
@@ -189,6 +190,7 @@ int main(void) {
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
+  patchblob_target binary_f32_targets[4] = {{0}};
   patchblob_target_v2 conversion_targets[2] = {{0}};
   patchblob_target_v2 u8_conversion_targets[2] = {{0}};
   patchblob_target_v2 binary_i32_targets[4] = {{0}};
@@ -214,6 +216,7 @@ int main(void) {
   binary_i8_carrier = read_file(FIXTURE_ROOT "subtract-i8-1x32.blob");
   i16_carrier = read_file(FIXTURE_ROOT "abs-i16-1x32.blob");
   binary_i16_carrier = read_file(FIXTURE_ROOT "maximum-i16-1x32.blob");
+  binary_f32_carrier = read_file(FIXTURE_ROOT "subtract-f32-1x32.blob");
   elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
   expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
   CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
@@ -221,7 +224,8 @@ int main(void) {
         convert_f16_to_f32.data != NULL && convert_u8_to_f32.data != NULL &&
         i32_carrier.data != NULL && binary_i32_carrier.data != NULL && i8_carrier.data != NULL &&
         binary_i8_carrier.data != NULL && i16_carrier.data != NULL &&
-        binary_i16_carrier.data != NULL && elf.data != NULL && expected.data != NULL);
+        binary_i16_carrier.data != NULL && binary_f32_carrier.data != NULL && elf.data != NULL &&
+        expected.data != NULL);
   unsupported_header.data = (uint8_t *)malloc(carrier.size);
   CHECK(unsupported_header.data != NULL);
   unsupported_header.size = carrier.size;
@@ -232,6 +236,27 @@ int main(void) {
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
   CHECK(discovery.diagnostic.json.data != NULL);
   CHECK(strstr((const char *)discovery.diagnostic.json.data, "ELF identity") != NULL);
+  patchblob_discovery_result_release(&discovery);
+  status = patchblob_discover_targets(
+      (npunlock_view){binary_f32_carrier.data, binary_f32_carrier.size}, &discovery);
+  if (status != NPUNLOCK_STATUS_OK && discovery.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery.group_count == 1);
+  CHECK(discovery.target_count == 4);
+  for (index = 0; index < discovery.target_count; ++index) {
+    const patchblob_target *target = &discovery.targets[index].target;
+    CHECK(discovery.targets[index].group_index == 0);
+    CHECK(target->invocation_index == index);
+    CHECK(target->range_index == index);
+    CHECK(target->expected_input_count == 2);
+    CHECK(target->expected_element_count == 8);
+    CHECK(target->expected_span_bytes == 32);
+    CHECK((target->required_contract_flags & PATCHBLOB_CONTRACT_FP32) != 0);
+    CHECK((target->required_contract_flags & PATCHBLOB_CONTRACT_INPUT_1_SCALAR) == 0);
+    binary_f32_targets[index] = *target;
+  }
   patchblob_discovery_result_release(&discovery);
   unsupported_carrier.data = (uint8_t *)malloc(carrier.size);
   CHECK(unsupported_carrier.data != NULL);
@@ -843,6 +868,17 @@ int main(void) {
   CHECK(result.graph_blob.size > broadcast_carrier.size);
   CHECK(strstr((const char *)result.report_json.data, "\"input_1_scalar\"") != NULL);
   patchblob_result_release(&result);
+  status =
+      patchblob_patch(&options, (npunlock_view){binary_f32_carrier.data, binary_f32_carrier.size},
+                      (npunlock_view){elf.data, elf.size}, binary_f32_targets, 4, &result);
+  if (status != NPUNLOCK_STATUS_OK && result.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)result.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(result.graph_blob.size > binary_f32_carrier.size);
+  CHECK(strstr((const char *)result.report_json.data,
+               "\"contract\":[\"static\",\"dense\",\"fp32\"") != NULL);
+  patchblob_result_release(&result);
   broadcast_targets[0].required_contract_flags &= ~PATCHBLOB_CONTRACT_INPUT_1_SCALAR;
   status =
       patchblob_patch(&options, (npunlock_view){broadcast_carrier.data, broadcast_carrier.size},
@@ -868,6 +904,7 @@ int main(void) {
   free(binary_i8_carrier.data);
   free(i16_carrier.data);
   free(binary_i16_carrier.data);
+  free(binary_f32_carrier.data);
   free(two_operation_carrier.data);
   free(carrier.data);
   return 0;
