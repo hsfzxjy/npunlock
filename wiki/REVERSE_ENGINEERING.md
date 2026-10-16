@@ -1450,7 +1450,8 @@ the resulting 42,224-byte patched graph has SHA-256
 This establishes one signed-I16 custom path on NPU3720/compiler 8.3. It does
 not by itself establish binary or mixed-I16 carriers, U16 custom execution,
 saturation, overflow behavior, other shapes, or portability to another
-compiler or NPU. Section 49 records the later binary result.
+compiler or NPU. Section 49 records the later binary I16 result; section 55
+records the later binary U16 result.
 
 ## 49. Two-input I16 custom-kernel execution
 
@@ -1655,6 +1656,39 @@ This establishes one precision-preserved FP32 row-broadcast carrier on
 NPU3720/compiler 8.3. It does not establish five-input FP32, other source
 shapes or axes, unequal ACT descriptors, arbitrary broadcasting, other
 carriers, or portability.
+
+## 55. Equal-span two-input U16 custom-kernel execution
+
+On 2026-10-16, static U16 `[1,32]` binary probes compiled through graph
+compiler 8.3. The unmodified `Add`, `Subtract`, and `Multiply` graphs matched
+their NumPy U16 oracles exactly. `Maximum` and `Minimum` compiled but returned
+corrupt values and were rejected. The non-commutative `Subtract` carrier was
+retained.
+
+The carrier contains one ACT group with four invocations. Every invocation
+presents input A at `+0x00`, input B at `+0x28`, and output at `+0x50`. Each
+record uses raw element-type value 6, an eight-element count, a 16-byte span,
+and the established static dense CMX flags; the output is disjoint from both
+inputs.
+
+A custom entry read `unsigned short` pointers and computed
+`(a >> 1) + (b >> 2) + 3` using widened unsigned intermediates. Values above
+`32767` discriminated unsigned interpretation, the independent inputs
+discriminated operand order, and the selected domain kept every output within
+U16 range. All 32 outputs matched NumPy exactly through both copied and
+explicitly shared buffers.
+
+The retained 77,760-byte carrier has SHA-256
+`66c587ee7b2178f534c49f667b172b2ba1c854c0e6bab8e6e5703cf68c5b0380`.
+The public example's 940-byte kernel ELF has SHA-256
+`3381f2822a41002282ad498aaaaf2ba192904756a5077f764e9698397b9bf808`;
+its 78,656-byte patched graph has SHA-256
+`ac6256539289a102ae6b81aad369f5e9885fed51ea431fe0257751d54dd02127`.
+
+This establishes one equal-span binary U16 `Subtract` carrier on
+NPU3720/compiler 8.3. It does not establish a unary U16 carrier, scalar or row
+broadcasting, unequal spans, overflow or saturation semantics, mixed
+precision, U32 custom kernels, other shapes, or portability.
 
 ## What remains deliberately unresolved
 

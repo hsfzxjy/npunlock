@@ -179,6 +179,7 @@ Use these C types for the currently validated custom paths:
 | `i32` | `int` | unary and equal-span binary |
 | `i16` | `short` | unary and equal-span binary |
 | `i8` | `signed char` | unary and equal-span binary |
+| `u16` | `unsigned short` | one equal-span binary carrier |
 | `u8` | `unsigned char` input | only the validated U8-to-FP32 conversion |
 
 Stay within the arithmetic range of integer outputs unless you are explicitly
@@ -218,14 +219,15 @@ The current carrier recipes are:
 | two equal-span I32 inputs | `Minimum` | automatic when the graph is unambiguous |
 | two equal-span I16 inputs | `Maximum` | automatic when the graph is unambiguous |
 | two equal-span I8 inputs | `Subtract` | automatic when the graph is unambiguous |
+| two equal-span U16 inputs | `Subtract` | automatic when the graph is unambiguous |
 | five equal-span FP16 inputs | `FakeQuantize`, `levels=256` | automatic for the documented carrier |
 | FP32→FP16, FP16→FP32, or U8→FP32 | `Convert`, matching `destination_type` | explicit prepared-group binding |
 
 These rows are verified recipes, not a general operator compatibility matrix.
 Changing dtype, shape, compiler version, broadcast form, or graph context can
 change or remove the ACT group. For example, there is no same-precision U8
-custom carrier, and ordinary U16/U32 graph transport does not imply U16/U32
-custom kernels.
+custom carrier, no unary U16 carrier, and ordinary U32 graph transport does
+not imply U32 custom kernels.
 
 Do not choose an operation merely because its name resembles your function.
 Also do not assume a different operation is usable because the Intel compiler
@@ -268,6 +270,11 @@ The FP32 equal-span form uses `float *`, `dtype="f32"`, and the tested
 `Subtract` carrier instead. See the complete
 [binary FP32 example](../examples/example_f32_binary_custom.py); the frontend
 adds precision-preservation metadata and accuracy mode automatically.
+
+The exact U16 recipe also uses `Subtract`, with `unsigned short *` pointers
+and `dtype="u16"`. Keep intermediate arithmetic in a wider unsigned type and
+stay within the output range unless overflow is the behavior being tested.
+See the [binary U16 example](../examples/example_u16_binary_custom.py).
 
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input

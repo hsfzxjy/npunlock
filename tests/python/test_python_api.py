@@ -1578,6 +1578,7 @@ class CompilationFlowTests(unittest.TestCase):
             ("i32", 32, "Minimum"),
             ("i16", 16, "Maximum"),
             ("i8", 8, "Subtract"),
+            ("u16", 16, "Subtract"),
         ):
             with self.subTest(dtype=dtype):
                 tensors = (

@@ -329,8 +329,8 @@ class PatchTensorContract:
     def __post_init__(self) -> None:
         if self.role not in {"input", "output"}:
             raise ValueError("tensor role must be 'input' or 'output'")
-        if self.dtype not in {"f16", "f32", "u8", "i32", "i16", "i8"}:
-            raise ValueError("tensor dtype must be 'f16', 'f32', 'u8', 'i32', 'i16', or 'i8'")
+        if self.dtype not in {"f16", "f32", "u8", "u16", "i32", "i16", "i8"}:
+            raise ValueError("tensor dtype must be 'f16', 'f32', 'u8', 'u16', 'i32', 'i16', or 'i8'")
         for name in ("index", "observed_flags"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFF:
@@ -989,7 +989,15 @@ class NativeLibraries:
                     native_tensor.struct_size = ctypes.sizeof(_PatchTensorContractV2)
                     native_tensor.role = {"input": 1, "output": 2}[tensor.role]
                     native_tensor.tensor_index = tensor.index
-                    native_tensor.precision = {"f16": 1, "f32": 2, "i32": 3, "i8": 4, "i16": 5, "u8": 6}[tensor.dtype]
+                    native_tensor.precision = {
+                        "f16": 1,
+                        "f32": 2,
+                        "i32": 3,
+                        "i8": 4,
+                        "i16": 5,
+                        "u8": 6,
+                        "u16": 7,
+                    }[tensor.dtype]
                     native_tensor.element_count = tensor.element_count
                     native_tensor.span_bytes = tensor.span_bytes
                     native_tensor.observed_flags = tensor.observed_flags
@@ -1073,7 +1081,7 @@ class NativeLibraries:
                 self._raise("patchblob discovery v2", status, result.diagnostic)
             groups: list[list[PatchTargetV2]] = [[] for _ in range(result.group_count)]
             roles = {1: "input", 2: "output"}
-            precisions = {1: "f16", 2: "f32", 3: "i32", 4: "i8", 5: "i16", 6: "u8"}
+            precisions = {1: "f16", 2: "f32", 3: "i32", 4: "i8", 5: "i16", 6: "u8", 7: "u16"}
             for index in range(result.target_count):
                 discovered = result.targets[index]
                 if discovered.group_index >= result.group_count:

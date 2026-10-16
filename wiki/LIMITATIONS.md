@@ -20,7 +20,8 @@ output does not match that contract.
 | I32 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Minimum` carrier with two eight-element inputs |
 | I16 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Maximum` carrier with two eight-element inputs |
 | I8 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Subtract` carrier with two eight-element inputs |
-| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; FP32 scalar-input, equal-span, and the same row-broadcast shape through documented carriers; one equal-span carrier each for I32, I16, and I8 |
+| U16 | one equal-span binary `Subtract` carrier with two eight-element inputs; no unary custom carrier |
+| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; FP32 scalar-input, equal-span, and the same row-broadcast shape through documented carriers; one equal-span carrier each for I32, I16, I8, and U16 |
 | higher custom arity | one static dense FP16 five-input `FakeQuantize` carrier with equal per-invocation spans; compiler 8.3 rejects its FP32 equivalent |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
@@ -52,7 +53,8 @@ Ordinary graph execution is validated for FP16, FP32, U8, I8, U16, I16, U32,
 and I32, while I64 is limited to the Gather-index role. Custom ACT-kernel
 contracts remain limited to the FP16/FP32 cases below and one unary carrier
 each for I32, I16, and I8, plus one equal-span binary carrier for each of those
-signed integer precisions and one unary U8-to-FP32 conversion carrier.
+signed integer precisions, one equal-span binary U16 carrier, and one unary
+U8-to-FP32 conversion carrier.
 Serialization capability must not be mistaken for either execution or
 custom-kernel support.
 
@@ -237,7 +239,12 @@ only the substituted non-commutative custom-kernel result is claimed.
 U16 has been validated for ordinary graph input/output through an equal static
 two-way Split. The tested U16-data Gather compiled and executed without a
 reported device error but returned incorrect values, so U16 Gather is not in
-the supported contract. U16 is not a supported custom ACT-kernel precision.
+the supported contract. Custom execution is limited to one static `[1,32]`
+binary `Subtract` carrier. Its four invocations expose two equal-span
+eight-element inputs and one disjoint output. A bounded unsigned custom kernel
+matched all 32 outputs exactly through copied and shared buffers. Unary,
+scalar/broadcast, unequal-span, overflow, saturation, and other U16 custom
+contracts remain unsupported.
 
 U32 has been validated for ordinary graph input/output through an equal static
 three-way Split, including exact values through `2**32 - 1`. This does not
@@ -250,7 +257,7 @@ error. General I64 graph data and outputs are therefore unsupported.
 
 Other dtypes, mixed-precision custom contracts beyond unary FP16/FP32 and
 U8-to-FP32 conversion, FP32 binary kernels beyond the scalar-second-input and
-the equal-span/row-broadcast `Subtract` carriers, I32, I16, or I8 custom
+the equal-span/row-broadcast `Subtract` carriers, I32, I16, I8, or U16 custom
 kernels beyond the carriers above, and implicit dtype conversion are
 unsupported. The compiler-produced I16 `Maximum` baseline returned incorrect
 values on the tested driver; only the substituted custom kernel semantics are

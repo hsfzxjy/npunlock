@@ -63,6 +63,9 @@ static const char *tensor_precision_name_v2(uint32_t precision) {
   if (precision == PATCHBLOB_TENSOR_PRECISION_U8_V2) {
     return "u8";
   }
+  if (precision == PATCHBLOB_TENSOR_PRECISION_U16_V2) {
+    return "u16";
+  }
   return "unknown";
 }
 

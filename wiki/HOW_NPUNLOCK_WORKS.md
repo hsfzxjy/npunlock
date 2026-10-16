@@ -152,10 +152,10 @@ The version 2 contract records each invocation tensor separately—role,
 precision, element count, byte span, and observed layout flags. It supports
 equal-element unary FP32-to-FP16, FP16-to-FP32, and U8-to-FP32 conversion
 groups, plus the same-precision unary I32, I16, and I8 carriers and equal-span
-binary I32, I16, and I8 carriers. Conversion groups require explicit binding;
-the same-precision integer groups can use the normal unambiguous positional
-mapping. Replicated invocations are patched together and are not assumed to be
-output partitions.
+binary I32, I16, I8, and U16 carriers. Conversion groups require explicit
+binding; the same-precision integer groups can use the normal unambiguous
+positional mapping. Replicated invocations are patched together and are not
+assumed to be output partitions.
 
 ## 5. Substitute the executable image
 
@@ -204,8 +204,9 @@ precision-preserved unary FP32, one precision-preserved equal-span binary FP32
 carrier, one dense descriptor-level FP32 row-broadcast carrier,
 same-precision unary I32/I16/I8 paths, and static dense FP16, I32, I16, and I8
 binary carriers with independently bound host inputs. It also includes one
-explicitly bound U8-to-FP32 unary conversion carrier. The exact layouts used
-by these cases are execution-tested.
+equal-span U16 binary carrier and one explicitly bound U8-to-FP32 unary
+conversion carrier. The exact layouts used by these cases are
+execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic

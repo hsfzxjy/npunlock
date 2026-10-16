@@ -149,7 +149,14 @@ equal-span two-input `Maximum` carrier. The binary carrier has four
 invocations; each exposes two eight-element signed 16-bit inputs and one
 disjoint output. A non-commutative `3*a - 2*b + 7` kernel using `short`
 pointers matched all 32 outputs. This does not establish scalar/broadcast I16,
-other binary layouts, U16, saturation, or mixed integer/float contracts.
+other binary layouts, saturation, or mixed integer/float contracts.
+
+U16 custom execution is limited to one equal-span two-input `Subtract`
+carrier. Its four invocations each expose two eight-element unsigned 16-bit
+inputs and one disjoint output. A bounded kernel using `unsigned short`
+pointers matched all 32 outputs through copied and shared buffers. This does
+not establish unary, scalar/broadcast, unequal-span, saturation, overflow, or
+mixed-precision U16 behavior.
 
 U8 custom execution is limited to one unary U8-to-FP32 `Convert` carrier. Its
 two invocations each expose a 32-element/32-byte U8 input and a
@@ -564,6 +571,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Two-input I8 weighted-difference kernel](../examples/example_i8_binary_custom.py)
 - [Unary I16 affine kernel](../examples/example_i16_custom.py)
 - [Two-input I16 weighted-difference kernel](../examples/example_i16_binary_custom.py)
+- [Two-input U16 unsigned-arithmetic kernel](../examples/example_u16_binary_custom.py)
 - [U8-to-FP32 custom conversion kernel](../examples/example_u8_to_f32_custom.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)

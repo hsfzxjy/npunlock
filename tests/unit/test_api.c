@@ -38,6 +38,7 @@ _Static_assert(PATCHBLOB_TENSOR_PRECISION_I32_V2 == 3u, "I32 tensor precision AB
 _Static_assert(PATCHBLOB_TENSOR_PRECISION_I8_V2 == 4u, "I8 tensor precision ABI changed");
 _Static_assert(PATCHBLOB_TENSOR_PRECISION_I16_V2 == 5u, "I16 tensor precision ABI changed");
 _Static_assert(PATCHBLOB_TENSOR_PRECISION_U8_V2 == 6u, "U8 tensor precision ABI changed");
+_Static_assert(PATCHBLOB_TENSOR_PRECISION_U16_V2 == 7u, "U16 tensor precision ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&

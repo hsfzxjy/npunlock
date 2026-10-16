@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-16:** FP32 custom kernels can now consume a `[4,8]` tensor plus an independently bound `[1,8]` row input through dense invocation-local descriptors. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#54-fp32-row-broadcast-at-the-act-descriptor-boundary).
+> **Latest breakthrough — 2026-10-16:** Two independent U16 tensors can now feed a custom kernel through an execution-tested equal-span `Subtract` carrier. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#55-equal-span-two-input-u16-custom-kernel-execution).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,
