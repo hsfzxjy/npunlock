@@ -372,6 +372,11 @@ candidate contract summaries when the result is missing or ambiguous. Use
 `find_groups()` when zero or several results are expected and the caller will
 handle them deliberately.
 
+`ActGroup.input_1_scalar` and the matching `input_1_scalar=` filter work for
+both legacy FP16/FP32 targets and version-2 U16/U32 targets. A version-2 scalar
+group is recognized from a stable `(N,1)->N` per-invocation contract, not from
+a legacy precision flag.
+
 ### Review a multi-kernel build plan
 
 For a graph with several custom kernels, separate validation from compiler
@@ -501,9 +506,9 @@ a lossless contract projection, not a new ABI assumption; `patchblob` performs
 the normal version 1 validation again. Mixed-precision conversion groups remain
 version 2. The plan explanation shows which version will actually be patched.
 
-The same-precision unary I32, I16, and I8 carriers and the equal-span binary
-I32/I16/I8/U16/U32 carriers always remain version 2 and can use automatic
-positional mapping when each is the unique compatible group. See
+The same-precision unary I32, I16, and I8 carriers, equal-span binary integer
+carriers, and scalar-second-input U16/U32 carriers always remain version 2 and
+can use automatic positional mapping when each is the unique compatible group. See
 [`example_i32_custom.py`](../examples/example_i32_custom.py) and
 [`example_i32_binary_custom.py`](../examples/example_i32_binary_custom.py),
 [`example_i8_custom.py`](../examples/example_i8_custom.py),
@@ -512,6 +517,8 @@ positional mapping when each is the unique compatible group. See
 [`example_i16_binary_custom.py`](../examples/example_i16_binary_custom.py), and
 [`example_u16_binary_custom.py`](../examples/example_u16_binary_custom.py), and
 [`example_u32_binary_custom.py`](../examples/example_u32_binary_custom.py).
+The [unsigned broadcast example](../examples/example_unsigned_broadcast_custom.py)
+also chains the scalar and exact row-broadcast forms for both widths.
 
 For a single set of kernel-build settings, pass them to `prepared.build()` in
 the same way as `npu.compile()`:
@@ -671,10 +678,11 @@ boundary supports static FP16, FP32, U8, I8, U16, I16, U32, and I32 graph inputs
 and outputs with at most five dimensions. U8 additionally has only the
 explicitly documented U8-to-FP32 custom conversion carrier. I32, I16, and I8
 additionally have one documented same-precision unary custom-kernel carrier
-each; this does not imply broad integer custom support. I32, I16, I8, U16, and
-U32 additionally support one equal-span two-input carrier each; U16 and U32
-have no validated unary carrier. Scalar, broadcast, and mixed-integer inputs
-remain unsupported.
+each; this does not imply broad integer custom support. I32, I16, and I8
+additionally support one equal-span binary carrier each. U16 and U32 support
+equal-span, one-element second-input, and exact `(4,8)` plus `(1,8)`
+row-broadcast carriers, but have no validated unary carrier. Other broadcast
+and mixed-integer inputs remain unsupported.
 FP32 custom execution additionally has one equal-span `[1,32]` two-input
 `Subtract` carrier; other binary FP32 carriers and shapes are not implied.
 
@@ -799,6 +807,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [mixed-input U8/I32 Gather graph](../examples/example_u8_gather.py)
 - [U32 multi-output Split graph](../examples/example_u32_split.py)
 - [U32 two-input custom kernel](../examples/example_u32_binary_custom.py)
+- [U16/U32 scalar and row-broadcast custom kernels](../examples/example_unsigned_broadcast_custom.py)
 - [U8 Gather with I64 indices](../examples/example_u8_gather_i64.py)
 - [U8 unequal VariadicSplit graph](../examples/example_u8_variadic_split.py)
 - [U8 multi-axis Slice graph](../examples/example_u8_slice.py)

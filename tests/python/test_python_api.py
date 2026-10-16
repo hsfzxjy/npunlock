@@ -52,6 +52,18 @@ class SymbolicTests(unittest.TestCase):
                 npu.PatchTargetV2(7, 7, conversion_tensors, 1),
             ),
         )
+        scalar_v2_tensors = (
+            npu.PatchTensorContract("input", 0, "u32", 8, 32, 0x07),
+            npu.PatchTensorContract("input", 1, "u32", 1, 4, 0x07),
+            npu.PatchTensorContract("output", 0, "u32", 8, 32, 0x0F),
+        )
+        scalar_v2 = npu.ActGroup(
+            5,
+            (
+                npu.PatchTargetV2(8, 8, scalar_v2_tensors),
+                npu.PatchTargetV2(9, 9, scalar_v2_tensors),
+            ),
+        )
 
         self.assertEqual(dense.per_invocation_input_element_counts, (8, 8))
         self.assertEqual(dense.per_invocation_output_element_count, 8)
@@ -63,6 +75,7 @@ class SymbolicTests(unittest.TestCase):
         self.assertEqual(conversion.element_count, 32)
         self.assertEqual(conversion.span_bytes, 64)
         self.assertEqual(conversion.per_invocation_output_element_count, 16)
+        self.assertTrue(scalar_v2.input_1_scalar)
 
     def test_dynamic_unknown_operator_and_attributes(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
@@ -1607,6 +1620,38 @@ class CompilationFlowTests(unittest.TestCase):
                     prepared.find_group(input_dtypes=(dtype, dtype), output_dtype=dtype).targets,
                     targets,
                 )
+                program = prepared.build(movi_dll_dir="movi")
+                self.assertEqual(fake.patch_args[2], targets)
+                self.assertEqual(program.graph_blob, b"patched")
+
+    def test_unsigned_scalar_custom_groups_map_automatically(self) -> None:
+        class IntegerNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"integer requires version 2")
+
+        for dtype, span in (("u16", 2), ("u32", 4)):
+            with self.subTest(dtype=dtype):
+                tensors = (
+                    npu.PatchTensorContract("input", 0, dtype, 8, 8 * span, 0x07),
+                    npu.PatchTensorContract("input", 1, dtype, 1, span, 0x07),
+                    npu.PatchTensorContract("output", 0, dtype, 8, 8 * span, 0x0F),
+                )
+                targets = tuple(npu.PatchTargetV2(index, index, tensors) for index in range(4))
+                fake = IntegerNative()
+                fake.discovery_groups_v2 = (targets,)
+                data = npu.input("data", shape=(1, 32), dtype=dtype)
+                scalar = npu.input("scalar", shape=(1, 1), dtype=dtype)
+                output = npu.custom(data, scalar, source=b"unsigned scalar kernel", carrier="Subtract")
+
+                prepared = npu.prepare(
+                    npu.Graph([data, scalar], [output], name=f"scalar_{dtype}_custom"),
+                    native_dir="unused",
+                    libraries=fake,  # type: ignore[arg-type]
+                )
+
+                self.assertEqual(prepared.mappings[0].status, "automatic")
+                self.assertTrue(prepared.groups[0].input_1_scalar)
+                self.assertEqual(prepared.find_group(dtype=dtype, input_1_scalar=True).targets, targets)
                 program = prepared.build(movi_dll_dir="movi")
                 self.assertEqual(fake.patch_args[2], targets)
                 self.assertEqual(program.graph_blob, b"patched")

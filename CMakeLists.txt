@@ -126,6 +126,13 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     PROPERTIES PASS_REGULAR_EXPRESSION "\"precision\": \"u32\""
   )
   add_test(
+    NAME porting_inspect_unsigned_scalar_fixtures
+    COMMAND ${CMAKE_COMMAND}
+      -DINSPECT=$<TARGET_FILE:npunlock_inspect>
+      -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_inspect_unsigned_scalar.cmake
+  )
+  add_test(
     NAME porting_inspect_binary_i32_fixture
     COMMAND npunlock_inspect
       --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/minimum-i32-1x32.blob

@@ -267,6 +267,17 @@ class ActGroup:
 
     @property
     def input_1_scalar(self) -> bool:
+        if self.targets and all(isinstance(target, PatchTargetV2) for target in self.targets):
+            input_counts = self.per_invocation_input_element_counts
+            output_count = self.per_invocation_output_element_count
+            return (
+                input_counts is not None
+                and len(input_counts) == 2
+                and input_counts[0] == output_count
+                and input_counts[1] == 1
+                and output_count is not None
+                and output_count > 1
+            )
         flags = self.contract_flags
         return flags is not None and bool(flags & 0x40)
 

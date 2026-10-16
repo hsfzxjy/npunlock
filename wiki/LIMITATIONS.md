@@ -20,9 +20,9 @@ output does not match that contract.
 | I32 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Minimum` carrier with two eight-element inputs |
 | I16 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Maximum` carrier with two eight-element inputs |
 | I8 | one unary `Abs` carrier with 16-element descriptors and one equal-span binary `Subtract` carrier with two eight-element inputs |
-| U16 | one equal-span binary `Subtract` carrier with two eight-element inputs; no unary custom carrier |
-| U32 | one equal-span binary `Subtract` carrier with two eight-element inputs; no unary custom carrier |
-| binary custom kernel | static dense FP16 carriers with uniform inputs, a scalar second input, or the validated descriptor-level `(4,8)` plus `(1,8)` row-broadcast carrier; FP32 scalar-input, equal-span, and the same row-broadcast shape through documented carriers; one equal-span carrier each for I32, I16, I8, U16, and U32 |
+| U16 | one binary `Subtract` carrier for equal-span, scalar-second-input, and exact `(4,8)` plus `(1,8)` row-broadcast inputs; no unary carrier |
+| U32 | one binary `Subtract` carrier for equal-span, scalar-second-input, and exact `(4,8)` plus `(1,8)` row-broadcast inputs; no unary carrier |
+| binary custom kernel | static dense FP16/FP32 carriers with the documented equal-span, scalar, or row-broadcast layouts; one equal-span carrier each for I32, I16, and I8; the three exact unsigned layouts above for U16 and U32 |
 | higher custom arity | one static dense FP16 five-input `FakeQuantize` carrier with equal per-invocation spans; compiler 8.3 rejects its FP32 equivalent |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
@@ -42,8 +42,8 @@ There is no general support for:
 
 - arbitrary strides or layouts;
 - broadcasting or unequal binary input shapes beyond the implemented static
-  one-element second input and the descriptor-level FP16/FP32 `(4,8)` plus
-  `(1,8)` row broadcasts;
+  one-element second input and the descriptor-level FP16/FP32/U16/U32 `(4,8)`
+  plus `(1,8)` row broadcasts;
 - arbitrary input/output aliasing;
 - arbitrary tensor arity beyond the validated unary, binary, and five-input
   layouts; or
@@ -54,8 +54,9 @@ Ordinary graph execution is validated for FP16, FP32, U8, I8, U16, I16, U32,
 and I32, while I64 is limited to the Gather-index role. Custom ACT-kernel
 contracts remain limited to the FP16/FP32 cases below and one unary carrier
 each for I32, I16, and I8, plus one equal-span binary carrier for each of those
-signed integer precisions, one equal-span binary carrier each for U16 and U32,
-and one unary U8-to-FP32 conversion carrier.
+signed integer precisions, equal-span and scalar-second-input carriers for U16
+and U32, the exact unsigned row-broadcast form, and one unary U8-to-FP32
+conversion carrier.
 Serialization capability must not be mistaken for either execution or
 custom-kernel support.
 
@@ -241,19 +242,20 @@ U16 has been validated for ordinary graph input/output through an equal static
 two-way Split. The tested U16-data Gather compiled and executed without a
 reported device error but returned incorrect values, so U16 Gather is not in
 the supported contract. Custom execution is limited to one static `[1,32]`
-binary `Subtract` carrier. Its four invocations expose two equal-span
-eight-element inputs and one disjoint output. A bounded unsigned custom kernel
-matched all 32 outputs exactly through copied and shared buffers. Unary,
-scalar/broadcast, unequal-span, overflow, saturation, and other U16 custom
-contracts remain unsupported.
+binary `Subtract` carrier. Equal-span invocations expose two eight-element
+inputs; the scalar form exposes `(8,1)->8`; and the exact `[4,8]` plus `[1,8]`
+row broadcast presents `(8,8)->8`. Bounded unsigned custom kernels matched all
+outputs through copied and shared buffers. Unary, other broadcast forms,
+overflow, saturation, and other U16 custom contracts remain unsupported.
 
 U32 ordinary graph input/output is validated through an equal static three-way
 Split, including exact values through `2**32 - 1`. Custom execution is also
-validated for one static `[1,32]` binary `Subtract` carrier. Its four
-invocations expose two equal-span eight-element inputs and one disjoint output,
-and a bounded unsigned custom kernel matched all 32 outputs through copied and
-shared buffers. Unary, scalar/broadcast, unequal-span, overflow, saturation,
-and other U32 custom contracts remain unsupported.
+validated for the corresponding equal-span, scalar-second-input, and exact
+`[4,8]` plus `[1,8]` row-broadcast `Subtract` forms. Their invocation
+descriptors are respectively `(8,8)->8`, `(8,1)->8`, and `(8,8)->8`.
+Bounded unsigned custom kernels matched copied and shared outputs. Unary,
+other broadcast forms, overflow, saturation, and other U32 custom contracts
+remain unsupported.
 
 I64 has been validated only as a caller-provided index input to the tested U8
 Gather graph. An I64 Split compiled and ran, but values outside signed 32-bit

@@ -342,9 +342,10 @@ with one explicit scalar-second-input exception. The additive
 element count, span, and observed flags.
 Version 2 currently accepts the same established layouts, equal-element unary
 FP32-to-FP16, FP16-to-FP32, and U8-to-FP32 conversion, and the observed
-same-precision unary I32, I16, and I8 layouts plus equal-span two-input I32,
-I16, I8, U16, and U32 layouts. It is not a general mixed-dtype, integer, or
-broadcasting ABI.
+same-precision unary I32, I16, and I8 layouts, equal-span two-input integer
+layouts, and the observed scalar-second-input U16/U32 layouts. The documented
+unsigned row broadcasts present equal-span invocation descriptors. This is not
+a general mixed-dtype, integer, or broadcasting ABI.
 
 ## Validated examples
 
@@ -546,6 +547,26 @@ This establishes one equal-count, equal-span two-input U32 carrier on
 NPU3720/compiler 8.3. It does not establish unary, scalar/broadcast,
 unequal-span, additional-arity, saturation, overflow, mixed precision, or
 other U32 carrier operations.
+
+### Unsigned scalar and row broadcasts
+
+Static U16 and U32 `Subtract` graphs with `[1,32]` data and an independently
+bound `[1,1]` input each produced one group with four invocations. The first
+input and output contain eight elements per invocation. The second descriptor
+contains exactly one element and one precision-sized span: two bytes for U16
+or four bytes for U32. Custom kernels read this descriptor only at index zero.
+
+For the exact source-level `[4,8]` plus `[1,8]` form, graph compiler 8.3
+instead expands the row into an eight-element descriptor for every invocation.
+The resulting `(8,8)->8` descriptor layout is structurally the same as the
+equal-span carrier, and custom kernels index both inputs by the local element
+index. Correct built-in and substituted `Subtract` execution established the
+source-level broadcast meaning; descriptor inspection alone cannot recover it.
+
+Both layouts were executed with values above the signed range for their
+widths. Chained scalar and row custom kernels matched all 32 U16 and U32
+outputs through copied and shared buffers. This does not establish other
+shapes, axes, scalar positions, dtypes, or general broadcasting.
 
 ### Mixed-precision conversion
 

@@ -313,15 +313,16 @@ unary layout and one two-input layout where both inputs and the output have
 equal element counts and spans. They do not enable scalar/broadcast I16,
 saturation, or mixed integer/float contracts.
 
-The observed U16 contract also uses two-byte spans. It accepts only the tested
-two-input layout where both inputs and the output have equal element counts
-and spans. It does not enable unary, scalar/broadcast, unequal-span, overflow,
+The observed U16 contract also uses two-byte spans. It accepts the tested
+equal-span two-input layout and the tested scalar-second-input layout. The
+exact source-level `[4,8]` plus `[1,8]` row broadcast presents the equal-span
+descriptor form. It does not enable unary, other broadcasts, overflow,
 saturation, or mixed integer/float contracts.
 
-The observed U32 contract uses four-byte spans. It accepts only the tested
-two-input layout where both inputs and the output have equal element counts
-and spans. It does not enable unary, scalar/broadcast, unequal-span, overflow,
-saturation, or mixed integer/float contracts.
+The observed U32 contract uses four-byte spans and accepts the corresponding
+equal-span, scalar-second-input, and exact row-broadcast forms. It does not
+enable unary, other broadcasts, overflow, saturation, or mixed integer/float
+contracts.
 
 The observed U8 custom contract is unary conversion only: one U8 input and one
 FP32 output with equal element counts and precision-sized spans. It does not
@@ -388,6 +389,7 @@ The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
 unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 and U8-to-FP32
 conversion, and one same-precision unary carrier each for I32, I16, and I8.
-Each of those signed integer precisions plus U16 and U32 also has one
-equal-span binary carrier. Other devices, dtypes, layouts, dynamic shapes, and
-arbitrary source-node mapping are not implied.
+Each signed integer precision also has one equal-span binary carrier. U16 and
+U32 additionally have one scalar-second-input and one exact row-broadcast
+form. Other devices, dtypes, layouts, dynamic shapes, and arbitrary source-node
+mapping are not implied.

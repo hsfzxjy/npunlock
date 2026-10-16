@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-16:** Full-width U32 data can now feed a custom kernel through an execution-tested equal-span `Subtract` carrier. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#56-equal-span-two-input-u32-custom-kernel-execution).
+> **Latest breakthrough — 2026-10-16:** U16 and U32 custom kernels now accept independently bound scalar and row-broadcast inputs. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#57-unsigned-scalar-and-row-broadcast-custom-kernel-execution).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,

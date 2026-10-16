@@ -1686,9 +1686,9 @@ its 78,656-byte patched graph has SHA-256
 `ac6256539289a102ae6b81aad369f5e9885fed51ea431fe0257751d54dd02127`.
 
 This establishes one equal-span binary U16 `Subtract` carrier on
-NPU3720/compiler 8.3. It does not establish a unary U16 carrier, scalar or row
-broadcasting, unequal spans, overflow or saturation semantics, mixed
-precision, the U32 custom path established later, other shapes, or portability.
+NPU3720/compiler 8.3. By itself it did not establish a unary U16 carrier,
+the scalar/row broadcast paths established later, unequal spans, overflow or
+saturation semantics, mixed precision, U32, other shapes, or portability.
 
 ## 56. Equal-span two-input U32 custom-kernel execution
 
@@ -1718,9 +1718,46 @@ its 78,656-byte patched graph has SHA-256
 `c3f126dec85a6a277bcb0f5bf8037cab1beaa7ca0f539728a9506445e5b12871`.
 
 This establishes one equal-span binary U32 `Subtract` carrier on
-NPU3720/compiler 8.3. It does not establish a unary U32 carrier, scalar or row
-broadcasting, unequal spans, overflow or saturation semantics, mixed
-precision, other shapes, or portability.
+NPU3720/compiler 8.3. By itself it did not establish a unary U32 carrier, the
+scalar/row broadcast paths established later, unequal spans, overflow or
+saturation semantics, mixed precision, other shapes, or portability.
+
+## 57. Unsigned scalar and row-broadcast custom-kernel execution
+
+On 2026-10-16, graph compiler 8.3 produced correct U16 and U32 `Subtract`,
+`Add`, and `Multiply` baselines for `[1,32]` data plus an independently bound
+`[1,1]` second input. `Maximum` and `Minimum` returned corrupt data and were
+rejected. The retained `Subtract` carriers each contain one group with four
+invocations and `(8,1)->8` descriptors. The scalar record has a two-byte U16
+span or four-byte U32 span and is read only at index zero.
+
+The adjacent `[4,8]` plus `[1,8]` probe produced correct `Subtract` and `Add`
+baselines for both widths. `Multiply` exposed an unsupported descriptor form;
+`Maximum` and `Minimum` returned corrupt data. Retained `Subtract` carriers
+present `(8,8)->8`: the compiler expands the host row into an invocation-local
+eight-element descriptor. That source-level broadcast meaning comes from the
+controlled compile and execution, not from the descriptor alone.
+
+Bounded custom kernels used `unsigned short` and `unsigned int` pointers.
+Scalar kernels read the second input at index zero; row kernels indexed it by
+the local element. Both standalone forms matched all 32 values through copied
+and shared buffers. A public two-layer graph then chained scalar and row custom
+ops and again matched all 32 U16 and U32 outputs in both memory modes.
+
+The retained scalar U16 carrier is 77,640 bytes with SHA-256
+`8062398d941f75a02e0131919aa69a1980e24655d3ede5f9f3cc3d0c803c4301`;
+the scalar U32 carrier has the same size and SHA-256
+`1a5559aa8ba692b30e831d1097e5137c7158c04f70d30a77115fc340a61ad6bd`.
+The tested row carriers have SHA-256
+`85e21b30d27195f4788cbdd66a98db4345cc9a6cf64a4bd38461b366e0a3cbc5`
+for U16 and
+`b06391fdb06876c08d4a6590bba1ca9a4a50a21240af558c83e2ea98e79ca866`
+for U32.
+
+This establishes only U16/U32 `Subtract` carriers for the exact scalar and
+row shapes above on NPU3720/compiler 8.3. It does not establish arbitrary
+broadcasting, another scalar position, other axes/shapes, overflow or
+saturation semantics, another compiler, or another device.
 
 ## What remains deliberately unresolved
 

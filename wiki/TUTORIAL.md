@@ -179,8 +179,8 @@ Use these C types for the currently validated custom paths:
 | `i32` | `int` | unary and equal-span binary |
 | `i16` | `short` | unary and equal-span binary |
 | `i8` | `signed char` | unary and equal-span binary |
-| `u16` | `unsigned short` | one equal-span binary carrier |
-| `u32` | `unsigned int` | one equal-span binary carrier |
+| `u16` | `unsigned short` | equal-span, scalar-second-input, and one row-broadcast carrier |
+| `u32` | `unsigned int` | equal-span, scalar-second-input, and one row-broadcast carrier |
 | `u8` | `unsigned char` input | only the validated U8-to-FP32 conversion |
 
 Stay within the arithmetic range of integer outputs unless you are explicitly
@@ -222,6 +222,8 @@ The current carrier recipes are:
 | two equal-span I8 inputs | `Subtract` | automatic when the graph is unambiguous |
 | two equal-span U16 inputs | `Subtract` | automatic when the graph is unambiguous |
 | two equal-span U32 inputs | `Subtract` | automatic when the graph is unambiguous |
+| U16 or U32 data plus a one-element second input | `Subtract` | automatic when the exact scalar contract is discovered |
+| U16 or U32 `(4,8)` plus `(1,8)` row input | `Subtract` | only the documented dense `(8,8)->8` invocation layout |
 | five equal-span FP16 inputs | `FakeQuantize`, `levels=256` | automatic for the documented carrier |
 | FP32→FP16, FP16→FP32, or U8→FP32 | `Convert`, matching `destination_type` | explicit prepared-group binding |
 
@@ -282,6 +284,12 @@ and `dtype="u32"`. Keep calculations within the U32 range unless overflow is
 the behavior under test. See the
 [binary U32 example](../examples/example_u32_binary_custom.py).
 
+For U16 and U32, the tested `Subtract` carrier also supports a `[1,1]` second
+input read as `input_1[0]`, and the exact `(4,8)` plus `(1,8)` row form read as
+`input_1[i]`. The [unsigned broadcast
+example](../examples/example_unsigned_broadcast_custom.py) chains both forms
+and runs them for both widths.
+
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input
 example](../examples/example_multilayer_multi_input.py) places this kernel
@@ -292,8 +300,9 @@ must be read as `input_1[0]`; the validated `(4,8)` plus `(1,8)` row carrier
 instead presents equal eight-element records and uses `input_1[i]`. Follow the
 [scalar-input example](../examples/example_branched_network.py) or
 [FP16 row-broadcast example](../examples/example_broadcast_custom.py) or
-[FP32 row-broadcast example](../examples/example_f32_broadcast_custom.py)
-exactly before generalizing either layout.
+[FP32 row-broadcast example](../examples/example_f32_broadcast_custom.py) or
+[unsigned broadcast example](../examples/example_unsigned_broadcast_custom.py)
+exactly before generalizing a layout.
 
 ## 8. Inspect and bind a carrier explicitly
 
