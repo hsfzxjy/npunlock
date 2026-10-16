@@ -74,57 +74,11 @@ print(f"maximum absolute error: {np.max(np.abs(output - reference)):g}")
 ```
 
 The same code is available as the runnable
-[FP32 GELU example](examples/example_gelu_f32.py). See also the
-[FP16 GELU](examples/example_gelu.py) and
-[multi-layer two-input](examples/example_multilayer_multi_input.py) examples,
-plus a [row-broadcast two-input kernel](examples/example_broadcast_custom.py),
-a [precision-preserved FP32 row-broadcast kernel](examples/example_f32_broadcast_custom.py),
-a [five-input kernel](examples/example_five_input_custom.py), and a
-[mixed-precision graph with unary and binary custom branches](examples/example_mixed_precision_multi_custom.py)
-and a
-[branched network combining DPU work with three custom kernels](examples/example_branched_network.py).
-The [connected conversion example](examples/example_conversion_kernels.py)
-uses custom kernels on both sides of an ordinary FP16 graph operation.
-The [connected mixed-precision example](examples/example_connected_mixed_precision.py)
-adds a two-input custom kernel, DPU matrix multiplication, reviewed build plan,
-prepared-carrier reload, and saved-program reload in one path.
-The [I32 structural example](examples/example_i32_structural.py) needs no
-MoviTools and demonstrates ordinary multi-input/multi-output `Concat`,
-`Transpose`, and `Convert` execution.
-The [I32 custom-kernel example](examples/example_i32_custom.py) compiles a
-signed-integer affine loop and checks every result against NumPy.
-The [binary I32 example](examples/example_i32_binary_custom.py) independently
-uses both graph inputs in a non-commutative signed-integer kernel.
-The [I8 custom-kernel example](examples/example_i8_custom.py) does the same for
-one bounded signed-byte carrier.
-The [binary I8 example](examples/example_i8_binary_custom.py) uses two
-independent graph inputs while keeping every result in signed-byte range.
-The [I16 custom-kernel example](examples/example_i16_custom.py) validates a
-bounded signed-short affine kernel on the corresponding unary carrier.
-The [binary I16 example](examples/example_i16_binary_custom.py) independently
-uses both graph inputs in a non-commutative signed-short kernel.
-The [binary FP32 example](examples/example_f32_binary_custom.py) does the same
-through a precision-preserved equal-span `Subtract` carrier.
-The [U8-to-FP32 custom example](examples/example_u8_to_f32_custom.py) uses an
-explicit mixed-precision `Convert` carrier and needs no manual output dtype.
-The [U8 reshape example](examples/example_u8_reshape.py) likewise needs no
-MoviTools and returns both reshaped U8 data and its FP32 conversion.
-The [I8 axis-transform example](examples/example_i8_axes.py) covers signed-byte
-`Squeeze`, `Unsqueeze`, and FP32 conversion in one ordinary graph.
-The [I16 Split example](examples/example_i16_split.py) demonstrates one
-multi-output node bound directly to three shared output arrays.
-The [U16 Split example](examples/example_u16_split.py) covers unsigned 16-bit
-boundary values, while the [U8 Gather example](examples/example_u8_gather.py)
-uses caller-provided I32 indices in a mixed-input ordinary graph.
-The [U32 Split example](examples/example_u32_split.py) extends ordinary graph
-transport through the full unsigned 32-bit range.
-The [I64-index Gather example](examples/example_u8_gather_i64.py) validates
-64-bit index inputs without claiming general I64 graph data.
-The [unequal U8 split example](examples/example_u8_variadic_split.py) binds
-three differently shaped outputs from one `VariadicSplit` node. The
-[U8 Slice example](examples/example_u8_slice.py) selects and strides two axes
-using constant bounds, while the [U8 Pad example](examples/example_u8_pad.py)
-adds constant borders with an exact scalar fill value.
+[FP32 GELU example](examples/example_gelu_f32.py). See also:
+
+- [multi-layer, two-input custom kernels](examples/example_multilayer_multi_input.py)
+- [an FP32 row-broadcast custom kernel](examples/example_f32_broadcast_custom.py)
+- [a mixed DPU/custom-kernel network](examples/example_branched_network.py)
 
 ## Why npunlock?
 
@@ -199,45 +153,31 @@ reference.
 
 ## What currently works
 
-- compile user-written C into ACT-SHAVE machine code
-- run custom kernels inside Intel NPU graphs
-- static dense FP16 unary and two-input custom kernels
-- validated FP16 and FP32 descriptor-level row-broadcast carriers
-- one static dense five-input FP16 carrier, including a fused local RMS/affine/gate kernel
-- verified unary, scalar-input binary, and equal-span two-input FP32 paths
-- verified same-precision unary and equal-span two-input I32 custom-kernel paths
-- verified same-precision unary and equal-span two-input I8 custom-kernel paths
-- verified same-precision unary and equal-span two-input I16 custom-kernel paths
-- a verified unary U8-input/FP32-output custom conversion path
-- one graph containing independent FP32-unary and FP16-binary custom branches
-- a branched graph combining ordinary ACT operations, DPU matrix multiplication, and three custom kernels
-- prepared-graph inspection and explicit symbolic binding for ambiguous ACT placement
-- connected unary FP32-to-FP16 and FP16-to-FP32 custom kernels through per-tensor contracts
-- ordinary static graph execution with FP16, FP32, U8, I8, U16, I16, U32, or I32 inputs and outputs
-- caller-provided I64 index inputs for validated `Gather` graphs
-- inferred contracts for `Concat`, `Split`, `VariadicSplit`, constant-mode `Pad`, positive-step `Slice`, `Gather`, `Transpose`, `Reshape`, `Squeeze`, `Unsqueeze`, `Convert`, and rank-2 `MatMul`
-- nonlinear math such as GELU, `tanhf`, `expf`, `sqrtf`, and invocation-local softmax
-- bounded custom control flow, nested helpers, invocation-local windows/reductions, data-dependent loops, and local permutation
-- validated dimension-driven indexing for one observed rank-4 invocation layout
-- bounded runtime dispatch through same-file function pointers and an invocation-local table
-- reusable NumPy-compatible host/NPU shared input and output buffers
-- reusable compiled SHAVE ELFs for rebuilds that do not need MoviTools
-- self-describing program bundles that load without C source or MoviTools
-- Python, CLI, and native C APIs
+You can write a C kernel, compile it to ACT-SHAVE machine code, place it in a
+compatible Intel NPU graph, and run it from Python or the native C API. The
+hardware-tested examples cover unary and multi-input kernels, selected FP16,
+FP32, integer and conversion paths, nonlinear math, local reductions, and
+bounded control flow.
+
+Custom kernels can coexist with ordinary graph operations and DPU work.
+Programs can be saved and loaded without their original C source, while tensor
+I/O can use ordinary copies or reusable NumPy-compatible shared buffers.
+
+Start with the [custom-kernel tutorial](wiki/TUTORIAL.md), then consult
+[Writing custom kernels](wiki/CUSTOM_KERNELS.md) for the programming model and
+[Current limitations](wiki/LIMITATIONS.md) for the exact tested carriers,
+dtypes, shapes, and graph operations.
 
 ## Current limitations
 
-Support is experimental and currently limited to Windows x64, Meteor Lake /
-NPU3720, static shapes, compatible ACT carriers, and known tensor layouts.
-Connected FP32/FP16 conversion is limited to the observed unary, equal-element
-contract and requires explicit prepared-group binding. The U8-input/FP32-output
-custom path has the same explicit-binding requirement; same-precision U8 is not
-supported. I32, I16, and I8 each have one equal-span two-input path; scalar and
-unequal-span integer inputs are not supported. Equal-span FP32 is limited to
-the documented `[1,32]` precision-preserved `Subtract` carrier; FP32 row
-broadcast is limited to the documented `[4,8]` plus `[1,8]` form.
-Other NPU generations have not been verified. See
-[Current limitations](wiki/LIMITATIONS.md) for the full compatibility boundary.
+`npunlock` is experimental and has been verified on Windows x64 with Meteor
+Lake / NPU3720 and graph compiler 8.3. Custom kernels currently require static
+shapes and one of the known-compatible carrier and tensor layouts; a graph
+operation that looks similar is not automatically compatible.
+
+Linux and newer Intel NPUs remain testing targets rather than supported
+platforms. See [Current limitations](wiki/LIMITATIONS.md) for the exact
+hardware, dtype, shape, carrier, and graph-operation compatibility matrix.
 
 ## Help test Linux and newer NPUs
 
