@@ -1,6 +1,6 @@
 # NPU3720 native graph ELF: observed ABI
 
-Status: experimental. Last updated 2026-09-21.
+Status: experimental. Last updated 2026-10-17.
 
 This document explains the part of an Intel NPU3720 native graph blob that
 `npunlock` reads and modifies. It is written for readers who know ordinary ELF
@@ -343,9 +343,10 @@ element count, span, and observed flags.
 Version 2 currently accepts the same established layouts, equal-element unary
 FP32-to-FP16, FP16-to-FP32, and U8-to-FP32 conversion, and the observed
 same-precision unary I32, I16, and I8 layouts, equal-span two-input integer
-layouts, and the observed scalar-second-input U16/U32 layouts. The documented
-unsigned row broadcasts present equal-span invocation descriptors. This is not
-a general mixed-dtype, integer, or broadcasting ABI.
+layouts, and one observed scalar in either binary input position for
+FP16/FP32/U16/U32. The documented unsigned row broadcasts present equal-span
+invocation descriptors. This is not a general mixed-dtype, integer, or
+broadcasting ABI.
 
 ## Validated examples
 
@@ -524,10 +525,10 @@ pointers and computed `(a >> 1) + (b >> 2) + 3`, with widened unsigned
 intermediates and a domain that kept every result in range. All 32 outputs
 matched NumPy exactly through copied and explicitly shared buffers.
 
-This establishes one equal-count, equal-span two-input U16 carrier on
-NPU3720/compiler 8.3. It does not establish unary, scalar/broadcast,
-unequal-span, additional-arity, saturation, overflow, or mixed-precision
-contracts. The separate U32 contract follows.
+By itself, this establishes one equal-count, equal-span two-input U16 carrier
+on NPU3720/compiler 8.3. The separate scalar/broadcast and U32 contracts
+follow; unary, additional-arity, saturation, overflow, and mixed precision
+remain outside this result.
 
 ### Equal-span binary U32
 
@@ -543,10 +544,10 @@ baseline data and were rejected. A substituted kernel used `unsigned int`
 pointers and computed `(a >> 2) + (b >> 3) + 5`; all 32 outputs matched NumPy
 through copied and explicitly shared buffers.
 
-This establishes one equal-count, equal-span two-input U32 carrier on
-NPU3720/compiler 8.3. It does not establish unary, scalar/broadcast,
-unequal-span, additional-arity, saturation, overflow, mixed precision, or
-other U32 carrier operations.
+By itself, this establishes one equal-count, equal-span two-input U32 carrier
+on NPU3720/compiler 8.3. The separate scalar/broadcast contracts follow;
+unary, additional arity, saturation, overflow, mixed precision, and other U32
+carrier operations remain outside this result.
 
 ### Unsigned scalar and row broadcasts
 
@@ -565,8 +566,14 @@ source-level broadcast meaning; descriptor inspection alone cannot recover it.
 
 Both layouts were executed with values above the signed range for their
 widths. Chained scalar and row custom kernels matched all 32 U16 and U32
-outputs through copied and shared buffers. This does not establish other
-shapes, axes, scalar positions, dtypes, or general broadcasting.
+outputs through copied and shared buffers.
+
+A later non-commutative `[1,1]` minus `[1,32]` probe preserved the scalar as
+input record zero and the data as record one. Each FP16, FP32, U16, and U32
+carrier exposed four `(1,8)->8` invocations. Custom kernels using output-record
+dimensions matched all copied and shared outputs. Together these probes
+establish one scalar in either position, not multiple scalars, other shapes or
+axes, signed integer scalar inputs, or general broadcasting.
 
 ### Mixed-precision conversion
 
@@ -653,10 +660,10 @@ general broadcasting. Other scalar positions, dimensions, shapes, operators,
 broadcast axes, and compiler versions remain unverified. The unmodified
 `Maximum` carrier produced invalid-looking output in this configuration, so
 the carrier is evidence for the custom entry ABI rather than for built-in
-operator semantics. The public patch target cannot express per-record counts
-in general; it represents this exact two-input case with
-`PATCHBLOB_CONTRACT_INPUT_1_SCALAR`. Discovery and patching remain restricted
-to a same-precision one-element second input.
+operator semantics. The legacy public patch target cannot express per-record
+counts in general; it represents this exact two-input case with
+`PATCHBLOB_CONTRACT_INPUT_1_SCALAR`. The version-2 target records each tensor
+and also represents the later scalar-first `Subtract` carriers.
 
 ### Descriptor-level row broadcast
 

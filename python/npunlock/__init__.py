@@ -267,19 +267,28 @@ class ActGroup:
 
     @property
     def input_1_scalar(self) -> bool:
-        if self.targets and all(isinstance(target, PatchTargetV2) for target in self.targets):
-            input_counts = self.per_invocation_input_element_counts
-            output_count = self.per_invocation_output_element_count
-            return (
-                input_counts is not None
-                and len(input_counts) == 2
-                and input_counts[0] == output_count
-                and input_counts[1] == 1
-                and output_count is not None
-                and output_count > 1
-            )
+        scalar_inputs = self.scalar_input_indices
+        return scalar_inputs is not None and 1 in scalar_inputs
+
+    @property
+    def scalar_input_indices(self) -> tuple[int, ...] | None:
+        """Return stable invocation-local scalar input positions."""
+
+        if not self.targets:
+            return None
+        if all(isinstance(target, PatchTargetV2) for target in self.targets):
+            values = {
+                tuple(
+                    tensor.index
+                    for tensor in target.tensors
+                    if tensor.role == "input" and tensor.element_count == 1 and target.output.element_count > 1
+                )
+                for target in self.targets
+                if isinstance(target, PatchTargetV2)
+            }
+            return next(iter(values)) if len(values) == 1 else None
         flags = self.contract_flags
-        return flags is not None and bool(flags & 0x40)
+        return (1,) if flags is not None and bool(flags & 0x40) else ()
 
     @property
     def input_dtypes(self) -> tuple[str, ...] | None:
@@ -346,7 +355,7 @@ def _act_group_summary(group: ActGroup) -> str:
         f"output_dtype={group.output_dtype or 'unknown'}, descriptor_elements={group.element_count}, "
         f"invocation_elements=({input_elements})->"
         f"{output_elements if output_elements is not None else 'varies'}, "
-        f"input_1_scalar={group.input_1_scalar}, invocations={group.invocation_indices})"
+        f"scalar_inputs={group.scalar_input_indices}, invocations={group.invocation_indices})"
     )
 
 
@@ -945,6 +954,10 @@ def _custom_targets_mismatch(
         return "custom mapping requires one output and at least one ACT target"
     expected_inputs = tuple(value.dtype for value in node.inputs)
     expected_output = node.outputs[0].dtype
+    output_elements = prod(node.outputs[0].shape)
+    expected_scalar_inputs = (
+        tuple(index for index, value in enumerate(node.inputs) if prod(value.shape) == 1) if output_elements > 1 else ()
+    )
     if all(isinstance(target, PatchTarget) for target in targets):
         legacy = tuple(target for target in targets if isinstance(target, PatchTarget))
         dtypes = {_legacy_target_dtype(target) for target in legacy}
@@ -956,6 +969,9 @@ def _custom_targets_mismatch(
         dtype = next(iter(dtypes))
         if expected_inputs != (dtype,) * len(expected_inputs) or expected_output != dtype:
             return "ACT tensor precisions do not match the custom node"
+        scalar_inputs = {(1,) if target.contract_flags & 0x40 else () for target in legacy}
+        if scalar_inputs != {expected_scalar_inputs}:
+            return "ACT scalar input positions do not match the custom node"
         counts = tuple(target.element_count for target in legacy)
     elif all(isinstance(target, PatchTargetV2) for target in targets):
         versioned = tuple(target for target in targets if isinstance(target, PatchTargetV2))
@@ -963,6 +979,13 @@ def _custom_targets_mismatch(
             input_dtypes = tuple(tensor.dtype for tensor in target.tensors if tensor.role == "input")
             if input_dtypes != expected_inputs or target.output.dtype != expected_output:
                 return "ACT tensor precisions do not match the custom node"
+            scalar_inputs = tuple(
+                tensor.index
+                for tensor in target.tensors
+                if tensor.role == "input" and tensor.element_count == 1 and target.output.element_count > 1
+            )
+            if scalar_inputs != expected_scalar_inputs:
+                return "ACT scalar input positions do not match the custom node"
         counts = tuple(target.output.element_count for target in versioned)
     else:
         return "ACT targets mix incompatible contract versions"
@@ -1451,6 +1474,7 @@ class PreparedGraph:
         input_dtypes: tuple[str, ...] | None = None,
         output_dtype: str | None = None,
         element_count: int | None = None,
+        scalar_input_indices: tuple[int, ...] | None = None,
         input_1_scalar: bool | None = None,
     ) -> tuple[ActGroup, ...]:
         """Return groups matching caller-specified validated contract fields."""
@@ -1485,6 +1509,12 @@ class PreparedGraph:
             isinstance(element_count, bool) or not isinstance(element_count, int) or element_count <= 0
         ):
             raise ValueError("element_count must be a positive integer or None")
+        if scalar_input_indices is not None and (
+            not isinstance(scalar_input_indices, tuple)
+            or tuple(sorted(set(scalar_input_indices))) != scalar_input_indices
+            or any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in scalar_input_indices)
+        ):
+            raise ValueError("scalar_input_indices must be a sorted tuple of unique nonnegative integers or None")
         if input_1_scalar is not None and not isinstance(input_1_scalar, bool):
             raise TypeError("input_1_scalar must be bool or None")
         return tuple(
@@ -1495,6 +1525,7 @@ class PreparedGraph:
             and (input_dtypes is None or group.input_dtypes == input_dtypes)
             and (output_dtype is None or group.output_dtype == output_dtype)
             and (element_count is None or group.element_count == element_count)
+            and (scalar_input_indices is None or group.scalar_input_indices == scalar_input_indices)
             and (input_1_scalar is None or group.input_1_scalar == input_1_scalar)
         )
 
@@ -1506,6 +1537,7 @@ class PreparedGraph:
         input_dtypes: tuple[str, ...] | None = None,
         output_dtype: str | None = None,
         element_count: int | None = None,
+        scalar_input_indices: tuple[int, ...] | None = None,
         input_1_scalar: bool | None = None,
     ) -> ActGroup:
         """Return the only group matching validated contract fields."""
@@ -1516,6 +1548,7 @@ class PreparedGraph:
             "input_dtypes": input_dtypes,
             "output_dtype": output_dtype,
             "element_count": element_count,
+            "scalar_input_indices": scalar_input_indices,
             "input_1_scalar": input_1_scalar,
         }
         matches = self.find_groups(
@@ -1524,6 +1557,7 @@ class PreparedGraph:
             input_dtypes=input_dtypes,
             output_dtype=output_dtype,
             element_count=element_count,
+            scalar_input_indices=scalar_input_indices,
             input_1_scalar=input_1_scalar,
         )
         if len(matches) == 1:

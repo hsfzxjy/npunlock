@@ -108,6 +108,8 @@ class ActGroup:
     @property
     def input_1_scalar(self) -> bool: ...
     @property
+    def scalar_input_indices(self) -> tuple[int, ...] | None: ...
+    @property
     def input_dtypes(self) -> tuple[str, ...] | None: ...
     @property
     def per_invocation_input_element_counts(self) -> tuple[int, ...] | None: ...
@@ -254,6 +256,7 @@ class PreparedGraph:
         input_dtypes: tuple[str, ...] | None = ...,
         output_dtype: str | None = ...,
         element_count: int | None = ...,
+        scalar_input_indices: tuple[int, ...] | None = ...,
         input_1_scalar: bool | None = ...,
     ) -> tuple[ActGroup, ...]: ...
     def find_group(
@@ -264,6 +267,7 @@ class PreparedGraph:
         input_dtypes: tuple[str, ...] | None = ...,
         output_dtype: str | None = ...,
         element_count: int | None = ...,
+        scalar_input_indices: tuple[int, ...] | None = ...,
         input_1_scalar: bool | None = ...,
     ) -> ActGroup: ...
     def explain(self) -> str: ...

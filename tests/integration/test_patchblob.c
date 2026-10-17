@@ -166,9 +166,9 @@ static int sections_are_aligned(const uint8_t *data, size_t size) {
   return 1;
 }
 
-static int check_unsigned_scalar_carrier(npunlock_view carrier, npunlock_view elf,
-                                         uint32_t precision, uint64_t scalar_span,
-                                         const char *precision_name) {
+static int check_scalar_carrier(npunlock_view carrier, npunlock_view elf, uint32_t precision,
+                                uint64_t element_span, uint32_t scalar_input_index,
+                                const char *precision_name) {
   patchblob_discovery_result discovery = {0};
   patchblob_discovery_result_v2 discovery_v2 = {0};
   patchblob_target_v2 targets[4] = {{0}};
@@ -177,6 +177,8 @@ static int check_unsigned_scalar_carrier(npunlock_view carrier, npunlock_view el
   npunlock_status status;
   size_t index;
   char report_precision[32];
+
+  CHECK(scalar_input_index < 2u);
 
   status = patchblob_discover_targets(carrier, &discovery);
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
@@ -196,13 +198,16 @@ static int check_unsigned_scalar_carrier(npunlock_view carrier, npunlock_view el
     CHECK(target->target_flags == 0);
     CHECK(target->tensor_count == 3);
     CHECK(target->tensors[0].precision == precision);
-    CHECK(target->tensors[0].element_count == 8);
+    CHECK(target->tensors[0].element_count == (scalar_input_index == 0u ? 1u : 8u));
+    CHECK(target->tensors[0].span_bytes ==
+          (scalar_input_index == 0u ? element_span : 8u * element_span));
     CHECK(target->tensors[1].precision == precision);
-    CHECK(target->tensors[1].element_count == 1);
-    CHECK(target->tensors[1].span_bytes == scalar_span);
+    CHECK(target->tensors[1].element_count == (scalar_input_index == 1u ? 1u : 8u));
+    CHECK(target->tensors[1].span_bytes ==
+          (scalar_input_index == 1u ? element_span : 8u * element_span));
     CHECK(target->tensors[2].precision == precision);
     CHECK(target->tensors[2].element_count == 8);
-    CHECK(target->tensors[2].span_bytes == 8u * scalar_span);
+    CHECK(target->tensors[2].span_bytes == 8u * element_span);
     targets[index] = *target;
   }
   patchblob_discovery_result_v2_release(&discovery_v2);
@@ -218,11 +223,20 @@ static int check_unsigned_scalar_carrier(npunlock_view carrier, npunlock_view el
   CHECK(strstr((const char *)result.report_json.data, report_precision) != NULL);
   patchblob_result_release(&result);
 
-  targets[0].tensors[1].element_count = 2;
-  targets[0].tensors[1].span_bytes = 2u * scalar_span;
+  targets[0].tensors[scalar_input_index].element_count = 2;
+  targets[0].tensors[scalar_input_index].span_bytes = 2u * element_span;
   status = patchblob_patch_v2(&options, carrier, elf, targets, 4, &result);
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
   CHECK(strstr((const char *)result.diagnostic.json.data, "shape is unsupported") != NULL);
+  patchblob_result_release(&result);
+
+  targets[0].tensors[scalar_input_index].element_count = 1;
+  targets[0].tensors[scalar_input_index].span_bytes = element_span;
+  targets[0].tensors[scalar_input_index ^ 1u].element_count = 1;
+  targets[0].tensors[scalar_input_index ^ 1u].span_bytes = element_span;
+  status = patchblob_patch_v2(&options, carrier, elf, targets, 4, &result);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "at most one") != NULL);
   patchblob_result_release(&result);
   return 0;
 }
@@ -242,8 +256,10 @@ int main(void) {
   npunlock_buffer binary_i16_carrier;
   npunlock_buffer binary_u16_carrier;
   npunlock_buffer scalar_u16_carrier;
+  npunlock_buffer scalar_first_fp16_carrier;
   npunlock_buffer binary_u32_carrier;
   npunlock_buffer scalar_u32_carrier;
+  npunlock_buffer scalar_first_u32_carrier;
   npunlock_buffer binary_f32_carrier;
   npunlock_buffer elf;
   npunlock_buffer expected;
@@ -285,8 +301,10 @@ int main(void) {
   binary_i16_carrier = read_file(FIXTURE_ROOT "maximum-i16-1x32.blob");
   binary_u16_carrier = read_file(FIXTURE_ROOT "subtract-u16-1x32.blob");
   scalar_u16_carrier = read_file(FIXTURE_ROOT "subtract-u16-scalar-1x32.blob");
+  scalar_first_fp16_carrier = read_file(FIXTURE_ROOT "subtract-fp16-scalar-first-1x32.blob");
   binary_u32_carrier = read_file(FIXTURE_ROOT "subtract-u32-1x32.blob");
   scalar_u32_carrier = read_file(FIXTURE_ROOT "subtract-u32-scalar-1x32.blob");
+  scalar_first_u32_carrier = read_file(FIXTURE_ROOT "subtract-u32-scalar-first-1x32.blob");
   binary_f32_carrier = read_file(FIXTURE_ROOT "subtract-f32-1x32.blob");
   elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
   expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
@@ -296,17 +314,24 @@ int main(void) {
         i32_carrier.data != NULL && binary_i32_carrier.data != NULL && i8_carrier.data != NULL &&
         binary_i8_carrier.data != NULL && i16_carrier.data != NULL &&
         binary_i16_carrier.data != NULL && binary_u16_carrier.data != NULL &&
-        scalar_u16_carrier.data != NULL && binary_u32_carrier.data != NULL &&
-        scalar_u32_carrier.data != NULL && binary_f32_carrier.data != NULL && elf.data != NULL &&
-        expected.data != NULL);
+        scalar_u16_carrier.data != NULL && scalar_first_fp16_carrier.data != NULL &&
+        binary_u32_carrier.data != NULL && scalar_u32_carrier.data != NULL &&
+        scalar_first_u32_carrier.data != NULL && binary_f32_carrier.data != NULL &&
+        elf.data != NULL && expected.data != NULL);
 
-  CHECK(check_unsigned_scalar_carrier(
-            (npunlock_view){scalar_u16_carrier.data, scalar_u16_carrier.size},
-            (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U16_V2, 2u,
-            "u16") == 0);
-  CHECK(check_unsigned_scalar_carrier(
-            (npunlock_view){scalar_u32_carrier.data, scalar_u32_carrier.size},
-            (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U32_V2, 4u,
+  CHECK(check_scalar_carrier((npunlock_view){scalar_u16_carrier.data, scalar_u16_carrier.size},
+                             (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U16_V2,
+                             2u, 1u, "u16") == 0);
+  CHECK(check_scalar_carrier((npunlock_view){scalar_u32_carrier.data, scalar_u32_carrier.size},
+                             (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U32_V2,
+                             4u, 1u, "u32") == 0);
+  CHECK(check_scalar_carrier(
+            (npunlock_view){scalar_first_fp16_carrier.data, scalar_first_fp16_carrier.size},
+            (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_FP16_V2, 2u, 0u,
+            "fp16") == 0);
+  CHECK(check_scalar_carrier(
+            (npunlock_view){scalar_first_u32_carrier.data, scalar_first_u32_carrier.size},
+            (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U32_V2, 4u, 0u,
             "u32") == 0);
   unsupported_header.data = (uint8_t *)malloc(carrier.size);
   CHECK(unsupported_header.data != NULL);
@@ -826,7 +851,7 @@ int main(void) {
                               (npunlock_view){binary_u16_carrier.data, binary_u16_carrier.size},
                               (npunlock_view){elf.data, elf.size}, binary_u16_targets, 4, &result);
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
-  CHECK(strstr((const char *)result.diagnostic.json.data, "scalar-second-input") != NULL);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "one-scalar") != NULL);
   patchblob_result_release(&result);
   status = patchblob_discover_targets(
       (npunlock_view){binary_u32_carrier.data, binary_u32_carrier.size}, &discovery);
@@ -886,7 +911,7 @@ int main(void) {
                               (npunlock_view){binary_u32_carrier.data, binary_u32_carrier.size},
                               (npunlock_view){elf.data, elf.size}, binary_u32_targets, 4, &result);
   CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
-  CHECK(strstr((const char *)result.diagnostic.json.data, "scalar-second-input") != NULL);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "one-scalar") != NULL);
   patchblob_result_release(&result);
   status = patchblob_discover_targets(
       (npunlock_view){convert_f32_to_f16.data, convert_f32_to_f16.size}, &discovery);
@@ -1108,8 +1133,10 @@ int main(void) {
   free(binary_i16_carrier.data);
   free(binary_u16_carrier.data);
   free(scalar_u16_carrier.data);
+  free(scalar_first_fp16_carrier.data);
   free(binary_u32_carrier.data);
   free(scalar_u32_carrier.data);
+  free(scalar_first_u32_carrier.data);
   free(binary_f32_carrier.data);
   free(two_operation_carrier.data);
   free(carrier.data);

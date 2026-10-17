@@ -30,20 +30,24 @@ ACT_ABI_ALWAYS_INLINE unsigned act_abi_load_le_u32(const unsigned char *address)
          ((unsigned)address[3] << 24);
 }
 
-ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
-                                                    act_abi_invocation *invocation) {
+ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32_from_record(unsigned layer_params32,
+                                                                unsigned record_index,
+                                                                act_abi_invocation *invocation) {
   const unsigned char *params32;
+  const unsigned char *shape_record32;
   const unsigned char *dims32;
   unsigned rank;
   unsigned count = 1;
   unsigned dimension_index;
 
-  if (layer_params32 == 0 || invocation == 0) {
+  if (layer_params32 == 0 || invocation == 0 ||
+      record_index > (~0u - layer_params32) / ACT_ABI_TENSOR_RECORD_BYTES) {
     return 0;
   }
   params32 = (const unsigned char *)layer_params32;
-  rank = act_abi_load_le_u32(params32 + ACT_ABI_RANK_OFFSET);
-  dims32 = (const unsigned char *)act_abi_load_le_u32(params32 + ACT_ABI_DIMS_PTR32_OFFSET);
+  shape_record32 = params32 + record_index * ACT_ABI_TENSOR_RECORD_BYTES;
+  rank = act_abi_load_le_u32(shape_record32 + ACT_ABI_RANK_OFFSET);
+  dims32 = (const unsigned char *)act_abi_load_le_u32(shape_record32 + ACT_ABI_DIMS_PTR32_OFFSET);
   if (rank == 0 || rank > ACT_ABI_MAX_RANK || dims32 == 0) {
     return 0;
   }
@@ -61,6 +65,11 @@ ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
   return 1;
 }
 
+ACT_ABI_ALWAYS_INLINE int act_abi_load_invocation32(unsigned layer_params32,
+                                                    act_abi_invocation *invocation) {
+  return act_abi_load_invocation32_from_record(layer_params32, 0u, invocation);
+}
+
 ACT_ABI_ALWAYS_INLINE unsigned act_abi_dimension(const act_abi_invocation *invocation,
                                                  unsigned axis) {
   if (invocation == 0 || invocation->dims32 == 0 || axis >= invocation->rank) {
@@ -75,6 +84,16 @@ ACT_ABI_ALWAYS_INLINE unsigned act_abi_dimension(const act_abi_invocation *invoc
       return;                                                                                      \
     }                                                                                              \
   } while (0)
+
+#define ACT_ABI_LOAD_INVOCATION32_FROM_RECORD_OR_RETURN(layer_params32, record_index, invocation)  \
+  do {                                                                                             \
+    if (!act_abi_load_invocation32_from_record((layer_params32), (record_index), &(invocation))) { \
+      return;                                                                                      \
+    }                                                                                              \
+  } while (0)
+
+#define ACT_ABI_LOAD_OUTPUT_INVOCATION32_OR_RETURN(layer_params32, input_count, invocation)        \
+  ACT_ABI_LOAD_INVOCATION32_FROM_RECORD_OR_RETURN(layer_params32, input_count, invocation)
 
 #define ACT_ABI_TENSOR_PTR32(type, invocation, record_index)                                       \
   ((type *)act_abi_load_le_u32((invocation).params32 +                                             \

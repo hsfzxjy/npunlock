@@ -179,8 +179,8 @@ Use these C types for the currently validated custom paths:
 | `i32` | `int` | unary and equal-span binary |
 | `i16` | `short` | unary and equal-span binary |
 | `i8` | `signed char` | unary and equal-span binary |
-| `u16` | `unsigned short` | equal-span, scalar-second-input, and one row-broadcast carrier |
-| `u32` | `unsigned int` | equal-span, scalar-second-input, and one row-broadcast carrier |
+| `u16` | `unsigned short` | equal-span, either-position scalar, and one row-broadcast carrier |
+| `u32` | `unsigned int` | equal-span, either-position scalar, and one row-broadcast carrier |
 | `u8` | `unsigned char` input | only the validated U8-to-FP32 conversion |
 
 Stay within the arithmetic range of integer outputs unless you are explicitly
@@ -200,8 +200,8 @@ Use this decision order:
 
 1. Match the number of tensor inputs.
 2. Match every input dtype and the output dtype.
-3. Match the tested shape relationship: equal-span, scalar second input, or
-   the one documented row-broadcast layout.
+3. Match the tested shape relationship: equal-span, one scalar input in the
+   documented position, or the one documented row-broadcast layout.
 4. Prefer a carrier already exercised by a runnable example.
 5. Inspect the compiled ACT groups before binding a complex or conversion
    graph.
@@ -215,6 +215,7 @@ The current carrier recipes are:
 | two equal-span FP16 inputs | `Maximum` | automatic when the graph is unambiguous |
 | two equal-span FP32 inputs | `Subtract` | automatic when the graph is unambiguous |
 | FP16 data plus a one-element second input | `Maximum` | automatic when the exact scalar contract is discovered |
+| FP16, FP32, U16, or U32 scalar first plus `(1,32)` data | `Subtract` | version 2; output shape comes from the data input |
 | FP16 `(4,8)` plus `(1,8)` row input | `Maximum` | only the documented dense `(8,8)->8` invocation layout |
 | FP32 `(4,8)` plus `(1,8)` row input | `Subtract` | only the documented dense `(8,8)->8` invocation layout |
 | two equal-span I32 inputs | `Minimum` | automatic when the graph is unambiguous |
@@ -290,14 +291,29 @@ input read as `input_1[0]`, and the exact `(4,8)` plus `(1,8)` row form read as
 example](../examples/example_unsigned_broadcast_custom.py) chains both forms
 and runs them for both widths.
 
+A scalar may instead be input zero for the exact `[1,1]` minus `[1,32]`
+`Subtract` carrier in FP16, FP32, U16, or U32. Because `custom()` normally
+inherits its output shape from the first input, pass `_shape=data.shape` for
+this form. More importantly, load the invocation extent from output record 2:
+
+```c
+act_abi_invocation invocation;
+ACT_ABI_LOAD_OUTPUT_INVOCATION32_OR_RETURN(layerParams, 2u, invocation);
+```
+
+The ordinary load helper reads dimensions from record zero, which is the
+one-element scalar here and would process only one output. See the
+[scalar-first example](../examples/example_scalar_first_custom.py) for all four
+validated precisions.
+
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input
 example](../examples/example_multilayer_multi_input.py) places this kernel
 between ordinary graph operations and checks the result.
 
-Broadcasting is not inferred from NumPy rules. A one-element second ACT input
-must be read as `input_1[0]`; the validated `(4,8)` plus `(1,8)` row carrier
-instead presents equal eight-element records and uses `input_1[i]`. Follow the
+Broadcasting is not inferred from NumPy rules. A one-element ACT input must be
+read at index zero; the validated `(4,8)` plus `(1,8)` row carrier instead
+presents equal eight-element records and uses `input_1[i]`. Follow the
 [scalar-input example](../examples/example_branched_network.py) or
 [FP16 row-broadcast example](../examples/example_broadcast_custom.py) or
 [FP32 row-broadcast example](../examples/example_f32_broadcast_custom.py) or
@@ -325,6 +341,10 @@ An `ActGroup` describes the actual compiler output: arity, per-tensor dtype,
 invocation/range indices, element counts, byte spans, and observed layout
 flags. `find_group()` requires exactly one match and reports ambiguity instead
 of guessing.
+
+For unequal binary inputs, `group.scalar_input_indices` reports the stable
+one-element positions. Use a filter such as
+`prepared.find_group(scalar_input_indices=(0,))` when operand position matters.
 
 The binding key is the symbolic output returned by `npu.custom()`, not a string
 node name. Native graph blobs do not provide a proven general mapping from an

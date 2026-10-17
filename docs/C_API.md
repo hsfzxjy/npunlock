@@ -253,7 +253,7 @@ a complete destination inside its target section before discovery or patching.
 
 Exactly one of `PATCHBLOB_CONTRACT_FP16` and `PATCHBLOB_CONTRACT_FP32` is
 required. FP32 support is limited to the validated precision-preserved unary
-carrier and same-precision scalar-second-input binary carrier.
+carrier and same-precision scalar binary carriers.
 
 `PATCHBLOB_CONTRACT_INPUT_1_SCALAR` describes the one supported unequal-count
 case. It is valid only for two-input, same-precision targets: input 0 and the
@@ -261,6 +261,12 @@ output use `expected_element_count` and `expected_span_bytes`, while input 1
 must be one element with the corresponding two-byte FP16 or four-byte FP32
 span. Discovery sets this bit only for that exact observed layout. It does not
 enable general broadcasting or arbitrary per-input contracts.
+
+The legacy target cannot represent a scalar in input position zero. Use
+`patchblob_target_v2` for the validated scalar-first FP16/FP32/U16/U32
+`Subtract` carriers. Version 2 records each input independently and accepts at
+most one one-element input in these exact binary contracts; the other input
+and output retain the observed equal invocation-local count and span.
 
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release
@@ -314,13 +320,13 @@ equal element counts and spans. They do not enable scalar/broadcast I16,
 saturation, or mixed integer/float contracts.
 
 The observed U16 contract also uses two-byte spans. It accepts the tested
-equal-span two-input layout and the tested scalar-second-input layout. The
+equal-span two-input layout and one scalar in either input position. The
 exact source-level `[4,8]` plus `[1,8]` row broadcast presents the equal-span
 descriptor form. It does not enable unary, other broadcasts, overflow,
 saturation, or mixed integer/float contracts.
 
 The observed U32 contract uses four-byte spans and accepts the corresponding
-equal-span, scalar-second-input, and exact row-broadcast forms. It does not
+equal-span, either-position scalar, and exact row-broadcast forms. It does not
 enable unary, other broadcasts, overflow, saturation, or mixed integer/float
 contracts.
 
@@ -390,6 +396,6 @@ target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
 unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 and U8-to-FP32
 conversion, and one same-precision unary carrier each for I32, I16, and I8.
 Each signed integer precision also has one equal-span binary carrier. U16 and
-U32 additionally have one scalar-second-input and one exact row-broadcast
-form. Other devices, dtypes, layouts, dynamic shapes, and arbitrary source-node
-mapping are not implied.
+U32 additionally have one scalar in either input position and one exact
+row-broadcast form. Other devices, dtypes, layouts, dynamic shapes, and
+arbitrary source-node mapping are not implied.

@@ -64,6 +64,18 @@ class SymbolicTests(unittest.TestCase):
                 npu.PatchTargetV2(9, 9, scalar_v2_tensors),
             ),
         )
+        scalar_first_v2_tensors = (
+            npu.PatchTensorContract("input", 0, "f16", 1, 2, 0x07),
+            npu.PatchTensorContract("input", 1, "f16", 8, 16, 0x07),
+            npu.PatchTensorContract("output", 0, "f16", 8, 16, 0x0F),
+        )
+        scalar_first_v2 = npu.ActGroup(
+            6,
+            (
+                npu.PatchTargetV2(10, 10, scalar_first_v2_tensors),
+                npu.PatchTargetV2(11, 11, scalar_first_v2_tensors),
+            ),
+        )
 
         self.assertEqual(dense.per_invocation_input_element_counts, (8, 8))
         self.assertEqual(dense.per_invocation_output_element_count, 8)
@@ -76,6 +88,9 @@ class SymbolicTests(unittest.TestCase):
         self.assertEqual(conversion.span_bytes, 64)
         self.assertEqual(conversion.per_invocation_output_element_count, 16)
         self.assertTrue(scalar_v2.input_1_scalar)
+        self.assertEqual(scalar_v2.scalar_input_indices, (1,))
+        self.assertFalse(scalar_first_v2.input_1_scalar)
+        self.assertEqual(scalar_first_v2.scalar_input_indices, (0,))
 
     def test_dynamic_unknown_operator_and_attributes(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
@@ -1655,6 +1670,73 @@ class CompilationFlowTests(unittest.TestCase):
                 program = prepared.build(movi_dll_dir="movi")
                 self.assertEqual(fake.patch_args[2], targets)
                 self.assertEqual(program.graph_blob, b"patched")
+
+    def test_scalar_first_custom_groups_map_automatically(self) -> None:
+        class ScalarFirstNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"scalar-first requires version 2")
+
+        for dtype, span in (("f16", 2), ("f32", 4), ("u16", 2), ("u32", 4)):
+            with self.subTest(dtype=dtype):
+                tensors = (
+                    npu.PatchTensorContract("input", 0, dtype, 1, span, 0x07),
+                    npu.PatchTensorContract("input", 1, dtype, 8, 8 * span, 0x07),
+                    npu.PatchTensorContract("output", 0, dtype, 8, 8 * span, 0x0F),
+                )
+                targets = tuple(npu.PatchTargetV2(index, index, tensors) for index in range(4))
+                fake = ScalarFirstNative()
+                fake.discovery_groups_v2 = (targets,)
+                scalar = npu.input("scalar", shape=(1, 1), dtype=dtype)
+                data = npu.input("data", shape=(1, 32), dtype=dtype)
+                output = npu.custom(
+                    scalar,
+                    data,
+                    source=b"scalar-first kernel",
+                    carrier="Subtract",
+                    _shape=data.shape,
+                )
+
+                prepared = npu.prepare(
+                    npu.Graph([scalar, data], [output], name=f"scalar_first_{dtype}_custom"),
+                    native_dir="unused",
+                    libraries=fake,  # type: ignore[arg-type]
+                )
+
+                self.assertEqual(prepared.mappings[0].status, "automatic")
+                self.assertEqual(prepared.groups[0].scalar_input_indices, (0,))
+                self.assertEqual(prepared.find_group(scalar_input_indices=(0,)).targets, targets)
+                program = prepared.build(movi_dll_dir="movi")
+                self.assertEqual(fake.patch_args[2], targets)
+                self.assertEqual(program.graph_blob, b"patched")
+
+        with self.assertRaisesRegex(ValueError, "scalar_input_indices"):
+            prepared.find_groups(scalar_input_indices=(1, 0))
+
+        wrong_tensors = (
+            npu.PatchTensorContract("input", 0, "f16", 8, 16, 0x07),
+            npu.PatchTensorContract("input", 1, "f16", 1, 2, 0x07),
+            npu.PatchTensorContract("output", 0, "f16", 8, 16, 0x0F),
+        )
+        wrong_native = ScalarFirstNative()
+        wrong_native.discovery_groups_v2 = (
+            tuple(npu.PatchTargetV2(index, index, wrong_tensors) for index in range(4)),
+        )
+        scalar = npu.input("scalar", shape=(1, 1), dtype="f16")
+        data = npu.input("data", shape=(1, 32), dtype="f16")
+        output = npu.custom(
+            scalar,
+            data,
+            source=b"scalar-first kernel",
+            carrier="Subtract",
+            _shape=data.shape,
+        )
+        wrong_prepared = npu.prepare(
+            npu.Graph([scalar, data], [output]),
+            native_dir="unused",
+            libraries=wrong_native,  # type: ignore[arg-type]
+        )
+        self.assertEqual(wrong_prepared.mappings[0].status, "explicit-required")
+        self.assertIn("scalar input positions", wrong_prepared.mappings[0].reason)
 
     def test_mixed_precision_plan_uses_v1_for_losslessly_representable_group(self) -> None:
         class MixedNative(FakeNative):

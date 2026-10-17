@@ -1754,10 +1754,46 @@ for U16 and
 `b06391fdb06876c08d4a6590bba1ca9a4a50a21240af558c83e2ea98e79ca866`
 for U32.
 
-This establishes only U16/U32 `Subtract` carriers for the exact scalar and
-row shapes above on NPU3720/compiler 8.3. It does not establish arbitrary
-broadcasting, another scalar position, other axes/shapes, overflow or
-saturation semantics, another compiler, or another device.
+By itself, this established only U16/U32 `Subtract` carriers for the exact
+scalar-second and row shapes above on NPU3720/compiler 8.3. It did not
+establish the scalar-first path tested later, arbitrary broadcasting, other
+axes/shapes, overflow or saturation semantics, another compiler, or another
+device.
+
+## 58. Scalar-first binary custom-kernel execution
+
+On 2026-10-17, graph compiler 8.3 compiled the non-commutative `[1,1]` minus
+`[1,32]` `Subtract` form for FP16, accuracy-mode FP32, U16, and U32. Every
+unmodified graph matched an exact NumPy oracle. Each graph contains one ACT
+group with four invocations whose records are `(1,8)->8`: scalar input zero at
+`+0x00`, data input one at `+0x28`, and the disjoint output at `+0x50`.
+
+The first substituted FP16 attempt exposed a kernel-helper assumption rather
+than a graph ABI failure. `ACT_ABI_LOAD_INVOCATION32_OR_RETURN` read dimensions
+from record zero, reported one element, and left most of the output unwritten.
+The new record-selecting loader keeps the parameter-block base for pointer
+macros while taking rank and dimensions from a caller-selected record.
+`ACT_ABI_LOAD_OUTPUT_INVOCATION32_OR_RETURN(layerParams, 2u, invocation)` then
+used the eight-element output extent.
+
+Custom `scalar[0] - data[i]` kernels matched all 32 FP16, FP32, U16, and U32
+outputs through both copied and explicitly shared buffers. Python discovery
+now reports `scalar_input_indices == (0,)`, automatic mapping cross-checks the
+symbolic scalar position, and version-2 native validation permits at most one
+scalar in either binary input position for these exact precision families.
+Legacy `PATCHBLOB_CONTRACT_INPUT_1_SCALAR` remains second-input-only.
+
+All four generated carriers are 77,640 bytes. Their SHA-256 values are:
+
+- FP16: `2c9393942c8948ae3165806b77c38f0073a16190b15325c0d8ed7325079281f0`;
+- FP32: `5e3891eb53e915ff3e24b707f7f911aa12a83ce4ae755e461913eb270ab8321d`;
+- U16: `83ca9cdd813352ae32493f93023faae56ace44ebe78c68669fc110435d98d6a0`;
+- U32: `4f7efe949f0f37612c0194fece22a5c09f977c8dd69f1dbbfea14ed0a4df9789`.
+
+This establishes one scalar in either operand position only for the documented
+binary carriers and shapes. It does not establish two scalar inputs, signed
+integer scalar contracts, other broadcast axes/shapes, overflow or saturation
+semantics, another compiler, or another device.
 
 ## What remains deliberately unresolved
 

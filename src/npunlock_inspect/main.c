@@ -153,17 +153,31 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
     const patchblob_target_v2 *target = &discovered->target;
     const patchblob_tensor_contract_v2 *output = &target->tensors[target->tensor_count - 1u];
     size_t tensor_index;
-    bool input_1_scalar = target->tensor_count == 3u && target->tensors[1].element_count == 1u;
+    bool first_scalar = true;
+    bool input_1_scalar = target->tensor_count == 3u && output->element_count > 1u &&
+                          target->tensors[1].element_count == 1u;
     if (fprintf(stream,
                 "%s    {\"group_index\": %u, \"invocation_index\": %u, "
                 "\"range_index\": %u, \"input_count\": %u, \"element_count\": "
                 "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_version\": 2, "
                 "\"target_flags\": %u, \"precision\": \"%s\", "
-                "\"input_1_scalar\": %s, \"tensors\": [",
+                "\"input_1_scalar\": %s, \"scalar_input_indices\": [",
                 index == 0 ? "" : ",\n", discovered->group_index, target->invocation_index,
                 target->range_index, target->tensor_count - 1u, output->element_count,
                 output->span_bytes, target->target_flags, target_precision_name(target),
                 input_1_scalar ? "true" : "false") < 0) {
+      return 0;
+    }
+    for (tensor_index = 0; tensor_index + 1u < target->tensor_count; ++tensor_index) {
+      const patchblob_tensor_contract_v2 *tensor = &target->tensors[tensor_index];
+      if (output->element_count > 1u && tensor->element_count == 1u) {
+        if (fprintf(stream, "%s%u", first_scalar ? "" : ", ", tensor->tensor_index) < 0) {
+          return 0;
+        }
+        first_scalar = false;
+      }
+    }
+    if (fprintf(stream, "], \"tensors\": [") < 0) {
       return 0;
     }
     for (tensor_index = 0; tensor_index < target->tensor_count; ++tensor_index) {

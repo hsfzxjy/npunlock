@@ -1141,9 +1141,9 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
   size_t invocation_offset;
   size_t range_offset;
   size_t input_count;
+  size_t scalar_input_count = 0u;
   size_t index;
   bool mixed_precision = false;
-  bool input_1_scalar = false;
   bool supported_unary_conversion;
   const uint32_t input_flags =
       PATCHBLOB_TENSOR_STATIC_V2 | PATCHBLOB_TENSOR_DENSE_V2 | PATCHBLOB_TENSOR_CMX_V2;
@@ -1194,25 +1194,28 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
                          "U8-to-FP32 conversion contracts");
     }
   } else {
-    if (target->target_flags != 0u || target->tensors[0].element_count != output->element_count ||
-        target->tensors[0].span_bytes != output->span_bytes) {
+    if (target->target_flags != 0u) {
       return unsupported(diagnostic, "version 2 same-precision tensor contract is unsupported");
     }
-    for (index = 1; index < input_count; ++index) {
+    for (index = 0; index < input_count; ++index) {
       const patchblob_tensor_contract_v2 *input = &target->tensors[index];
-      bool observed_scalar = input_count == 2u && index == 1u && input->element_count == 1u;
-      if (!observed_scalar && (input->element_count != output->element_count ||
-                               input->span_bytes != output->span_bytes)) {
+      bool observed_scalar =
+          input_count == 2u && output->element_count > 1u && input->element_count == 1u;
+      if (observed_scalar) {
+        ++scalar_input_count;
+      } else if (input->element_count != output->element_count ||
+                 input->span_bytes != output->span_bytes) {
         return unsupported(diagnostic, "version 2 input tensor shape is unsupported");
       }
     }
-    input_1_scalar = input_count == 2u && target->tensors[1].element_count == 1u;
+    if (scalar_input_count > 1u) {
+      return unsupported(diagnostic,
+                         "version 2 binary contracts allow at most one observed scalar input");
+    }
     if ((output->precision == PATCHBLOB_TENSOR_PRECISION_I32_V2 ||
          output->precision == PATCHBLOB_TENSOR_PRECISION_I16_V2 ||
          output->precision == PATCHBLOB_TENSOR_PRECISION_I8_V2) &&
-        (input_count > 2u ||
-         (input_count == 2u && (target->tensors[1].element_count != output->element_count ||
-                                target->tensors[1].span_bytes != output->span_bytes)))) {
+        (input_count > 2u || scalar_input_count != 0u)) {
       return unsupported(diagnostic,
                          "signed integer custom kernels are limited to observed unary or "
                          "equal-span binary contracts");
@@ -1221,23 +1224,15 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
       return unsupported(diagnostic,
                          "U8 custom kernels are limited to the observed U8-to-FP32 conversion");
     }
-    if (output->precision == PATCHBLOB_TENSOR_PRECISION_U16_V2 &&
-        (input_count != 2u ||
-         (!input_1_scalar && (target->tensors[1].element_count != output->element_count ||
-                              target->tensors[1].span_bytes != output->span_bytes)))) {
+    if (output->precision == PATCHBLOB_TENSOR_PRECISION_U16_V2 && input_count != 2u) {
       return unsupported(
           diagnostic,
-          "U16 custom kernels are limited to observed equal-span or scalar-second-input binary "
-          "contracts");
+          "U16 custom kernels are limited to observed equal-span or one-scalar binary contracts");
     }
-    if (output->precision == PATCHBLOB_TENSOR_PRECISION_U32_V2 &&
-        (input_count != 2u ||
-         (!input_1_scalar && (target->tensors[1].element_count != output->element_count ||
-                              target->tensors[1].span_bytes != output->span_bytes)))) {
+    if (output->precision == PATCHBLOB_TENSOR_PRECISION_U32_V2 && input_count != 2u) {
       return unsupported(
           diagnostic,
-          "U32 custom kernels are limited to observed equal-span or scalar-second-input binary "
-          "contracts");
+          "U32 custom kernels are limited to observed equal-span or one-scalar binary contracts");
     }
   }
 

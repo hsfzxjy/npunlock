@@ -1,6 +1,6 @@
 # NPU3720 ACT kernel ELF: observed ABI
 
-Status: experimental. Last updated 2026-09-21.
+Status: experimental. Last updated 2026-10-17.
 
 This document describes the standalone SHAVE executable produced by
 `shavecc`, and the C entry convention used when that code runs as an ACT
@@ -219,6 +219,20 @@ beside a one-element scalar input; reading `input_b[0]` for every output
 matched the host oracle. A separate `[4,8]` plus `[1,8]` carrier presented the
 row bias as a dense eight-element operand to each invocation; this establishes
 the descriptor view, not physical copying of the bias.
+
+`ACT_ABI_LOAD_INVOCATION32_OR_RETURN` derives rank, dimensions, and
+`element_count` from tensor record zero. That is sufficient when record zero
+has the output extent. For scalar-first or future unequal-count contracts, use
+`ACT_ABI_LOAD_INVOCATION32_FROM_RECORD_OR_RETURN` with an explicitly reviewed
+record, or use `ACT_ABI_LOAD_OUTPUT_INVOCATION32_OR_RETURN(layerParams,
+input_count, invocation)` to derive the loop extent from the output record.
+Both helpers keep `invocation.params32` anchored at the original parameter
+block, so input/output pointer macros retain their normal record indices.
+
+The output-record helper was execution-tested on FP16, FP32, U16, and U32
+`(1,8)->8` scalar-first carriers. Loading record zero instead produced a count
+of one and left most output elements unwritten; kernel writers must select the
+record whose shape controls their loop.
 
 One `FakeQuantize` carrier exposed five independently bound, equal-sized FP16
 input records followed by one output record. Four invocations each advertised
