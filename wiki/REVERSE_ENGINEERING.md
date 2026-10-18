@@ -1828,10 +1828,39 @@ All eight generated carriers are 77,760 bytes. Their SHA-256 values are:
 
 This establishes one per-row scalar shape and axis on NPU3720/compiler 8.3.
 It does not establish `[N,1]` generally, other ranks or axes, signed integer
-scalars, multiple scalar inputs, overflow or saturation semantics, another
-compiler, or another device. Descriptor inspection alone cannot distinguish
-a graph-global scalar from a row-specific scalar; the source graph and mapping
-proof remain part of the contract.
+scalars, multiple scalar inputs within this binary carrier family, overflow or
+saturation semantics, another compiler, or another device. Descriptor
+inspection alone cannot distinguish a graph-global scalar from a row-specific
+scalar; the source graph and mapping proof remain part of the contract.
+
+## 60. Five-input multi-scalar custom-kernel execution
+
+On 2026-10-19, graph compiler 8.3 compiled an FP16 `FakeQuantize(levels=16)`
+graph with one independently bound `[1,32]` data input and four independently
+bound `[1,1]` inputs. The unmodified graph matched an exact host oracle,
+including both clipping ends and the interior quantization values.
+
+Discovery found one ACT group with four invocations. Every invocation exposed
+the exact record sequence `(16,1,1,1,1)->16`: input 0 and the output used
+32-byte FP16 spans, while inputs 1 through 4 each used a two-byte span. The
+native target therefore reports `scalar_input_indices == (1, 2, 3, 4)`.
+
+A substituted kernel weighted all five inputs differently, reading each
+scalar record only at index zero. It matched all 32 host-oracle outputs through
+both copied and explicitly shared buffers. A separate public affine-and-clamp
+kernel using the scalars as scale, bias, lower, and upper parameters also
+matched both execution modes exactly.
+
+The 95,080-byte carrier has SHA-256
+`da246c676537003598f3cfb1b1adba7595fad74dcabba462f40f055b8bc5ad3c`.
+The exploratory patched graph was 96,104 bytes with SHA-256
+`cd4fd6a57f3bff7e8a7305dadc4a0a2ef2d0849d8138f32eec289788f4083ad1`.
+The retained carrier is now an offline version-2 discovery and patch fixture.
+
+This establishes only FP16 input positions 1 through 4 as scalars for this
+source shape, carrier, compiler, and device. It does not establish arbitrary
+high arity, different scalar positions/counts, per-row parameters, FP32 or
+integer equivalents, another compiler, or another NPU generation.
 
 ## What remains deliberately unresolved
 

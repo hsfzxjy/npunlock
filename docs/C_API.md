@@ -275,6 +275,13 @@ describes invocation-local tensors and cannot distinguish that source shape
 from a graph-global `[1,1]` scalar; callers must validate the graph-to-group
 mapping before patching.
 
+The one validated higher-arity scalar contract is FP16-only: five inputs and
+one output, with input 0 and the output containing 16 elements/32 bytes per
+invocation and inputs 1 through 4 containing one element/two bytes each. It is
+produced by the exact `[1,32]` plus four `[1,1]` `FakeQuantize` carrier on graph
+compiler 8.3. Version 2 rejects other multi-scalar counts, positions,
+precisions, and spans.
+
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release
 the result with `patchblob_discovery_result_release()`. Discovery is based on a
@@ -405,5 +412,6 @@ unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 and U8-to-FP32
 conversion, and one same-precision unary carrier each for I32, I16, and I8.
 Each signed integer precision also has one equal-span binary carrier. U16 and
 U32 additionally have a global or per-row scalar in either input position and
-one exact dense row-broadcast form. Other devices, dtypes, layouts, dynamic
+one exact dense row-broadcast form. FP16 additionally has one five-input
+carrier with four scalar parameters. Other devices, dtypes, layouts, dynamic
 shapes, and arbitrary source-node mapping are not implied.

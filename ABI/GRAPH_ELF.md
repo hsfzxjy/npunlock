@@ -581,7 +581,8 @@ FP16, FP32, U16, and U32 kernels matched copied and shared host oracles. The
 native descriptor alone does not say whether its scalar is graph-global or
 row-specific; that meaning comes from the caller's source graph and validated
 positional mapping. This does not establish multiple scalars, other shapes or
-axes, signed integer scalar inputs, or general broadcasting.
+axes, signed integer scalar inputs, or general broadcasting within this binary
+carrier family.
 
 ### Mixed-precision conversion
 
@@ -639,6 +640,27 @@ configuration, so this is custom-entry ABI evidence rather than a claim that
 the carrier operator itself works. The public patch target intentionally
 rejects this mixed two-input I32 descriptor even though it accepts the separate
 same-precision I32 contracts above.
+
+### Five-input multi-scalar FP16 contract
+
+An FP16 `FakeQuantize` carrier with `[1,32]` data and four independently bound
+`[1,1]` inputs produced one ACT group with four invocations. Every invocation
+uses six consecutive records:
+
+| Parameter offset | Role | Count | Span |
+| ---: | --- | ---: | ---: |
+| `+0x00` | data input | 16 | 32 bytes |
+| `+0x28` | scalar input 1 | 1 | 2 bytes |
+| `+0x50` | scalar input 2 | 1 | 2 bytes |
+| `+0x78` | scalar input 3 | 1 | 2 bytes |
+| `+0xa0` | scalar input 4 | 1 | 2 bytes |
+| `+0xc8` | output | 16 | 32 bytes |
+
+The unmodified graph matched its `FakeQuantize` host oracle. A substituted
+kernel then used all four scalar records at index zero and matched all 32
+logical outputs through copied and shared buffers. This confirms only these
+positions, counts, precision, source shapes, and compiler/device combination;
+it does not establish arbitrary high arity or multi-scalar layouts.
 
 ### Experimental scalar-broadcast input
 

@@ -385,6 +385,12 @@ contract, but each invocation receives its row's scalar. Python automatic
 mapping recognizes only this validated source shape in addition to a
 graph-global scalar; other broadcast shapes still require new evidence.
 
+The exact FP16 five-input multi-scalar carrier reports
+`scalar_input_indices == (1, 2, 3, 4)`. Its symbolic inputs are one `(1,32)`
+data tensor followed by four `(1,1)` tensors, and its discovered invocation
+contract is `(16,1,1,1,1)->16`. Automatic mapping accepts that complete
+version-2 contract; other higher-arity scalar layouts remain unsupported.
+
 ### Review a multi-kernel build plan
 
 For a graph with several custom kernels, separate validation from compiler
@@ -825,6 +831,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [U16/U32 scalar and row-broadcast custom kernels](../examples/example_unsigned_broadcast_custom.py)
 - [scalar-first FP16/FP32/U16/U32 custom kernels](../examples/example_scalar_first_custom.py)
 - [per-row scalar FP16/FP32/U16/U32 custom kernels](../examples/example_per_row_scalar_custom.py)
+- [five-input FP16 kernel with four scalar parameters](../examples/example_multi_scalar_custom.py)
 - [U8 Gather with I64 indices](../examples/example_u8_gather_i64.py)
 - [U8 unequal VariadicSplit graph](../examples/example_u8_variadic_split.py)
 - [U8 multi-axis Slice graph](../examples/example_u8_slice.py)

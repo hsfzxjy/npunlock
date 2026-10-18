@@ -174,7 +174,7 @@ Use these C types for the currently validated custom paths:
 
 | Graph dtype | Kernel pointer type | Current custom scope |
 | --- | --- | --- |
-| `f16` | `__fp16` | unary, selected binary/broadcast, and one five-input carrier |
+| `f16` | `__fp16` | unary, selected binary/broadcast, and equal-span or multi-scalar five-input carriers |
 | `f32` | `float` | unary, scalar/equal-span binary, and exact row/per-row broadcasts |
 | `i32` | `int` | unary and equal-span binary |
 | `i16` | `short` | unary and equal-span binary |
@@ -227,6 +227,7 @@ The current carrier recipes are:
 | U16 or U32 data plus a one-element second input | `Subtract` | automatic when the exact scalar contract is discovered |
 | U16 or U32 `(4,8)` plus `(1,8)` row input | `Subtract` | only the documented dense `(8,8)->8` invocation layout |
 | five equal-span FP16 inputs | `FakeQuantize`, `levels=256` | automatic for the documented carrier |
+| FP16 `(1,32)` data plus four `(1,1)` scalar parameters | `FakeQuantize`, `levels=16` | automatic only for the documented `(16,1,1,1,1)->16` layout |
 | FP32→FP16, FP16→FP32, or U8→FP32 | `Convert`, matching `destination_type` | explicit prepared-group binding |
 
 These rows are verified recipes, not a general operator compatibility matrix.
@@ -312,6 +313,23 @@ supplies a different scalar to each row invocation. Both operand orders are
 validated for FP16, FP32, U16, and U32. Read the scalar record only at index
 zero; use the output-record loader when that scalar is input zero. See the
 [per-row scalar example](../examples/example_per_row_scalar_custom.py).
+
+One higher-arity recipe combines FP16 `(1,32)` data with four independently
+bound `(1,1)` parameters. Use `FakeQuantize(levels=16)` as the five-input
+carrier. Record zero and output record five contain 16 elements per
+invocation; records 1 through 4 contain one element each and must be read only
+at index zero:
+
+```c
+const __fp16 *data = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
+const __fp16 *parameter_3 = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 3u);
+__fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 5u);
+```
+
+The [multi-scalar example](../examples/example_multi_scalar_custom.py) uses
+the four parameters as scale, bias, lower, and upper bounds. This exact FP16
+contract is distinct from the equal-span five-input carrier. It does not
+establish arbitrary parameter counts, positions, shapes, or precisions.
 
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input

@@ -1145,6 +1145,7 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
   size_t index;
   bool mixed_precision = false;
   bool supported_unary_conversion;
+  bool supported_multi_scalar_fp16;
   const uint32_t input_flags =
       PATCHBLOB_TENSOR_STATIC_V2 | PATCHBLOB_TENSOR_DENSE_V2 | PATCHBLOB_TENSOR_CMX_V2;
   const uint32_t output_flags = input_flags | PATCHBLOB_TENSOR_DISJOINT_FROM_INPUTS_V2;
@@ -1199,8 +1200,7 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
     }
     for (index = 0; index < input_count; ++index) {
       const patchblob_tensor_contract_v2 *input = &target->tensors[index];
-      bool observed_scalar =
-          input_count == 2u && output->element_count > 1u && input->element_count == 1u;
+      bool observed_scalar = output->element_count > 1u && input->element_count == 1u;
       if (observed_scalar) {
         ++scalar_input_count;
       } else if (input->element_count != output->element_count ||
@@ -1208,9 +1208,19 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
         return unsupported(diagnostic, "version 2 input tensor shape is unsupported");
       }
     }
-    if (scalar_input_count > 1u) {
+    supported_multi_scalar_fp16 =
+        output->precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2 && input_count == 5u &&
+        output->element_count == 16u && output->span_bytes == 32u &&
+        target->tensors[0].element_count == output->element_count && scalar_input_count == 4u;
+    if (input_count == 2u && scalar_input_count > 1u) {
       return unsupported(diagnostic,
                          "version 2 binary contracts allow at most one observed scalar input");
+    }
+    if (scalar_input_count != 0u && !(input_count == 2u && scalar_input_count == 1u) &&
+        !supported_multi_scalar_fp16) {
+      return unsupported(diagnostic,
+                         "version 2 scalar inputs do not match an observed binary or FP16 "
+                         "five-input contract");
     }
     if ((output->precision == PATCHBLOB_TENSOR_PRECISION_I32_V2 ||
          output->precision == PATCHBLOB_TENSOR_PRECISION_I16_V2 ||

@@ -950,10 +950,18 @@ def _custom_scalar_input_indices(node: Node) -> tuple[int, ...]:
     output_shape = node.outputs[0].shape
     if prod(output_shape) <= 1:
         return ()
+    if len(node.inputs) == 5:
+        return (
+            (1, 2, 3, 4)
+            if output_shape == (1, 32)
+            and node.inputs[0].shape == (1, 32)
+            and all(value.shape == (1, 1) for value in node.inputs[1:])
+            else ()
+        )
     return tuple(
         index
         for index, value in enumerate(node.inputs)
-        if prod(value.shape) == 1 or (output_shape == (4, 8) and value.shape == (4, 1))
+        if len(node.inputs) == 2 and (prod(value.shape) == 1 or (output_shape == (4, 8) and value.shape == (4, 1)))
     )
 
 

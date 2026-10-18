@@ -243,6 +243,14 @@ input records followed by one output record. Four invocations each advertised
 matched its host oracle. This establishes one five-input layout, not arbitrary
 input counts or general `FakeQuantize` semantics.
 
+A second exact `FakeQuantize` carrier retained input 0 as a 16-element FP16
+data record and exposed inputs 1 through 4 as one-element FP16 records. The
+output record also contained 16 elements. A kernel used record zero for its
+loop extent, read the other four records only at index zero, and matched all
+32 graph outputs in copied and shared modes. Kernel authors must not index
+these scalar records with `i`, and must not infer other scalar positions or
+counts from this result.
+
 ## Invocation-local execution
 
 The graph scheduler divides a tensor into invocation-local chunks. A custom
@@ -256,6 +264,7 @@ Confirmed FP16 kernels include:
 - FP32 intermediate arithmetic with FP16 output;
 - two-input arithmetic with independently bound host inputs;
 - five-input arithmetic with independently bound host inputs;
+- five-input arithmetic with one data chunk and four scalar parameters;
 - a fused five-input residual/RMS/affine/gate pipeline using `sqrtf`;
 - a distinct same-file non-inlined helper with a data-dependent branch;
 - a source-level 128-byte volatile local scratch array;
