@@ -1795,6 +1795,44 @@ binary carriers and shapes. It does not establish two scalar inputs, signed
 integer scalar contracts, other broadcast axes/shapes, overflow or saturation
 semantics, another compiler, or another device.
 
+## 59. Per-row scalar-broadcast custom-kernel execution
+
+On 2026-10-19, graph compiler 8.3 compiled the exact `[4,8]` with `[4,1]`
+`Subtract` form for FP16, accuracy-mode FP32, U16, and U32, with the smaller
+input tested in both operand positions. All eight compiler-produced graphs
+matched exact host broadcast oracles.
+
+Every graph contains one ACT group with four invocations. With data first, the
+records are `(8,1)->8`; with the `[4,1]` input first, they are `(1,8)->8`.
+This is descriptor-identical to the established graph-global scalar forms,
+but distinct values in all four source rows proved that each invocation
+receives its corresponding row scalar. Range scheduling produced the complete
+logical row order correctly.
+
+Substituted kernels used the scalar only at index zero and distinguished both
+operands. Scalar-first kernels derived their loop extent from output record 2.
+FP16, FP32, U16, and U32 all matched every one of 32 outputs through both
+copied and explicitly shared buffers, in both operand orders. The high-level
+frontend now recognizes only this exact `[4,8]`/`[4,1]` per-row relationship;
+binary custom nodes also infer the compatible broadcast output shape, so the
+scalar-first form does not require a manual `_shape` override.
+
+All eight generated carriers are 77,760 bytes. Their SHA-256 values are:
+
+| Precision | `[4,8] - [4,1]` | `[4,1] - [4,8]` |
+| --- | --- | --- |
+| FP16 | `733e092218365b76c1c81d35f58a0c9440fc31a91c7894cec3fc3d3abed3edd3` | `3d01a47d67a1bc78dd5f09a180c10a853f391a7f26b869c1a3c57b61dc0f20ee` |
+| FP32 | `b86895025e89fad8d7c60a2d52a979a48e885b8f96f2f2364e30de12746675af` | `f7c30c0b60ef8a2a55d6ceb4f888a1740f52d145bba07d45e6610da8e8114da6` |
+| U16 | `a909d079d6534f4d5c5243717de0958ff47b9b78a55f5c35061dee813b5fb50f` | `64c76a331f342b1fc688820493e4a799093467afa7f21ceaf2510a5478246c2d` |
+| U32 | `fd71c8a361ad1c4b0caa0e75b9bbe085a6721bbc66e0da40355f64f618e620ed` | `fbecebffdd8e2fc8d97a5a6cc46216f8d09f4effe20ae889ba06d230f6385d5b` |
+
+This establishes one per-row scalar shape and axis on NPU3720/compiler 8.3.
+It does not establish `[N,1]` generally, other ranks or axes, signed integer
+scalars, multiple scalar inputs, overflow or saturation semantics, another
+compiler, or another device. Descriptor inspection alone cannot distinguish
+a graph-global scalar from a row-specific scalar; the source graph and mapping
+proof remain part of the contract.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -38,6 +38,21 @@ _SAME_SPEC_BINARY = {
 }
 
 
+def _broadcast_shape(left: tuple[int, ...], right: tuple[int, ...]) -> tuple[int, ...]:
+    """Return the NumPy-style broadcast shape for two static tensor shapes."""
+
+    result: list[int] = []
+    for offset in range(1, max(len(left), len(right)) + 1):
+        left_dimension = left[-offset] if offset <= len(left) else 1
+        right_dimension = right[-offset] if offset <= len(right) else 1
+        if left_dimension != right_dimension and left_dimension != 1 and right_dimension != 1:
+            raise ValueError(
+                f"custom() cannot infer a broadcast output shape from {left!r} and {right!r}; pass _shape explicitly"
+            )
+        result.append(max(left_dimension, right_dimension))
+    return tuple(reversed(result))
+
+
 @dataclass(slots=True, eq=False)
 class Node:
     op: str
@@ -441,6 +456,8 @@ def custom(
         raise TypeError("custom() kernel must be a KernelSpec or CompiledKernel")
 
     carrier_name = _validate_operator_name(carrier)
+    if any(not isinstance(value, Tensor) for value in inputs):
+        raise TypeError("custom() inputs must be symbolic Tensor objects")
     metadata: dict[str, object] = {
         "_kernel": kernel if kernel is not None else source,
         "_carrier": carrier_name,
@@ -452,10 +469,12 @@ def custom(
         if _shape is None or _dtype is None:
             if not inputs:
                 raise ValueError("custom() requires an input to infer omitted _shape or _dtype")
-            if not isinstance(inputs[0], Tensor):
-                raise TypeError("custom() inputs must be symbolic Tensor objects")
             if _shape is None:
-                _shape = inputs[0].shape
+                _shape = (
+                    _broadcast_shape(inputs[0].shape, inputs[1].shape)
+                    if carrier_name in _SAME_SPEC_BINARY and len(inputs) == 2
+                    else inputs[0].shape
+                )
             if _dtype is None:
                 _dtype = (
                     normalize_dtype(attributes["destination_type"])

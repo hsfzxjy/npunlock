@@ -1,6 +1,6 @@
 # NPU3720 ACT kernel ELF: observed ABI
 
-Status: experimental. Last updated 2026-10-17.
+Status: experimental. Last updated 2026-10-19.
 
 This document describes the standalone SHAVE executable produced by
 `shavecc`, and the C entry convention used when that code runs as an ACT
@@ -230,9 +230,12 @@ Both helpers keep `invocation.params32` anchored at the original parameter
 block, so input/output pointer macros retain their normal record indices.
 
 The output-record helper was execution-tested on FP16, FP32, U16, and U32
-`(1,8)->8` scalar-first carriers. Loading record zero instead produced a count
-of one and left most output elements unwritten; kernel writers must select the
-record whose shape controls their loop.
+`(1,8)->8` scalar-first carriers, including the exact source-level `[4,1]`
+minus `[4,8]` per-row form. Loading record zero instead produced a count of one
+and left most output elements unwritten; kernel writers must select the record
+whose shape controls their loop. In the reverse `(8,1)->8` form, the ordinary
+record-zero loader retains the output extent and input record one is read at
+index zero for each invocation.
 
 One `FakeQuantize` carrier exposed five independently bound, equal-sized FP16
 input records followed by one output record. Four invocations each advertised

@@ -268,6 +268,13 @@ The legacy target cannot represent a scalar in input position zero. Use
 most one one-element input in these exact binary contracts; the other input
 and output retain the observed equal invocation-local count and span.
 
+The same one-element invocation descriptor also appears for the exact
+source-level `[4,8]` with `[4,1]` per-row broadcast, in either input position.
+Each of four invocations receives the scalar for its own row. The C target ABI
+describes invocation-local tensors and cannot distinguish that source shape
+from a graph-global `[1,1]` scalar; callers must validate the graph-to-group
+mapping before patching.
+
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release
 the result with `patchblob_discovery_result_release()`. Discovery is based on a
@@ -321,7 +328,8 @@ saturation, or mixed integer/float contracts.
 
 The observed U16 contract also uses two-byte spans. It accepts the tested
 equal-span two-input layout and one scalar in either input position. The
-exact source-level `[4,8]` plus `[1,8]` row broadcast presents the equal-span
+exact source-level `[4,8]` plus `[4,1]` per-row scalar broadcast presents the
+one-scalar descriptor form, while `[4,8]` plus `[1,8]` presents the equal-span
 descriptor form. It does not enable unary, other broadcasts, overflow,
 saturation, or mixed integer/float contracts.
 
@@ -396,6 +404,6 @@ target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
 unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 and U8-to-FP32
 conversion, and one same-precision unary carrier each for I32, I16, and I8.
 Each signed integer precision also has one equal-span binary carrier. U16 and
-U32 additionally have one scalar in either input position and one exact
-row-broadcast form. Other devices, dtypes, layouts, dynamic shapes, and
-arbitrary source-node mapping are not implied.
+U32 additionally have a global or per-row scalar in either input position and
+one exact dense row-broadcast form. Other devices, dtypes, layouts, dynamic
+shapes, and arbitrary source-node mapping are not implied.

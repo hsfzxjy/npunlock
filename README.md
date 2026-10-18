@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-17:** FP16, FP32, U16, and U32 custom kernels can now use a scalar in either binary input position. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#58-scalar-first-binary-custom-kernel-execution).
+> **Latest breakthrough — 2026-10-19:** FP16, FP32, U16, and U32 custom kernels can now consume one independently bound scalar per row, in either binary input position. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#59-per-row-scalar-broadcast-custom-kernel-execution).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,
@@ -77,7 +77,7 @@ The same code is available as the runnable
 [FP32 GELU example](examples/example_gelu_f32.py). See also:
 
 - [multi-layer, two-input custom kernels](examples/example_multilayer_multi_input.py)
-- [an FP32 row-broadcast custom kernel](examples/example_f32_broadcast_custom.py)
+- [per-row scalar custom kernels](examples/example_per_row_scalar_custom.py)
 - [a mixed DPU/custom-kernel network](examples/example_branched_network.py)
 
 ## Why npunlock?

@@ -29,7 +29,6 @@ def run(dtype: str, numpy_dtype: type[np.generic], c_type: str, scalar_value: ob
         data,
         source=kernel(c_type),
         carrier="Subtract",
-        _shape=data.shape,
         _name="output",
     )
     program = npu.compile(npu.Graph([scalar, data], [output], name=f"{dtype}_scalar_first"))

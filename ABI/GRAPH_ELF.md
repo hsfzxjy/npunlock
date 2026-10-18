@@ -1,6 +1,6 @@
 # NPU3720 native graph ELF: observed ABI
 
-Status: experimental. Last updated 2026-10-17.
+Status: experimental. Last updated 2026-10-19.
 
 This document explains the part of an Intel NPU3720 native graph blob that
 `npunlock` reads and modifies. It is written for readers who know ordinary ELF
@@ -572,7 +572,15 @@ A later non-commutative `[1,1]` minus `[1,32]` probe preserved the scalar as
 input record zero and the data as record one. Each FP16, FP32, U16, and U32
 carrier exposed four `(1,8)->8` invocations. Custom kernels using output-record
 dimensions matched all copied and shared outputs. Together these probes
-establish one scalar in either position, not multiple scalars, other shapes or
+establish one graph-global scalar in either position.
+
+The exact `[4,8]` with `[4,1]` per-row form produces the same four one-scalar
+descriptors: `(8,1)->8` or `(1,8)->8`, depending on operand order. Distinct
+values in all four rows reached their corresponding invocation, and custom
+FP16, FP32, U16, and U32 kernels matched copied and shared host oracles. The
+native descriptor alone does not say whether its scalar is graph-global or
+row-specific; that meaning comes from the caller's source graph and validated
+positional mapping. This does not establish multiple scalars, other shapes or
 axes, signed integer scalar inputs, or general broadcasting.
 
 ### Mixed-precision conversion

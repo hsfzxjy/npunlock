@@ -120,7 +120,9 @@ two-input layouts have been executed successfully.
 
 FP32 custom execution includes the validated unary accuracy-mode path, exact
 scalar-input `Subtract` carriers for either binary position, and one
-equal-span two-input `Subtract` carrier. The equal-span `[1,32]` carrier has
+equal-span two-input `Subtract` carrier. Scalar inputs include the exact
+graph-global `[1,1]` forms and `[4,1]` per-row forms beside `[4,8]` data. The
+equal-span `[1,32]` carrier has
 four invocations; each exposes two eight-element FP32 inputs and one disjoint
 output. A non-commutative `3*a - 2*b + 7` kernel using `float` pointers matched
 all 32 outputs exactly. The Python frontend adds the required
@@ -152,19 +154,20 @@ pointers matched all 32 outputs. This does not establish scalar/broadcast I16,
 other binary layouts, saturation, or mixed integer/float contracts.
 
 U16 custom execution uses one tested `Subtract` carrier for equal-span inputs,
-a one-element input in either position, and the exact `[4,8]` plus `[1,8]`
-row-broadcast form. Scalar descriptors must be read at index zero; the row
-form presents an expanded eight-element descriptor and is indexed normally.
-Bounded kernels using `unsigned short` pointers matched all copied and shared
-outputs. This does not establish unary, other broadcast shapes, saturation,
-overflow, or mixed-precision U16 behavior.
+a one-element invocation input in either position, and the exact `[4,8]` plus
+`[1,8]` row-broadcast form. The scalar descriptor covers both graph-global
+`[1,1]` and per-row `[4,1]` source inputs. Scalar descriptors must be read at
+index zero; the row form presents an expanded eight-element descriptor and is
+indexed normally. Bounded kernels using `unsigned short` pointers matched all
+copied and shared outputs. This does not establish unary, other broadcast
+shapes, saturation, overflow, or mixed-precision U16 behavior.
 
 U32 custom execution uses the corresponding `Subtract` carrier for the same
-four exact shape relationships. Bounded kernels using `unsigned int`
-pointers matched equal-span, either scalar position, and `(4,8)` plus `(1,8)`
-row cases through copied and shared buffers. This does not establish unary,
-other broadcast shapes, overflow, saturation, or mixed-precision U32
-behavior.
+exact shape relationships, including global and per-row scalars. Bounded
+kernels using `unsigned int` pointers matched equal-span, either scalar
+position, and `(4,8)` plus `(1,8)` row cases through copied and shared buffers.
+This does not establish unary, other broadcast shapes, overflow, saturation,
+or mixed-precision U32 behavior.
 
 U8 custom execution is limited to one unary U8-to-FP32 `Convert` carrier. Its
 two invocations each expose a 32-element/32-byte U8 input and a
@@ -361,22 +364,23 @@ y = npu.custom(
 )
 ```
 
-For a single-output custom operation, omitted `_shape` and `_dtype` values are
-inherited from the first input. Supply either override only when that part of
-the output contract differs and the carrier layout has been independently
-validated, or use `_outputs` to describe multiple outputs. The established
-automatic path normally remains same-shape and same-dtype. When input zero is
-a scalar and input one supplies the output shape, pass `_shape=input_1.shape`;
-the exact validated exception is described below.
+For a single-output custom operation, omitted `_dtype` is inherited from the
+first input. Omitted `_shape` is inherited for unary and other carriers; for a
+two-input same-dtype elementwise carrier, Python infers the NumPy-style
+broadcast shape. Supply an override only when that output contract differs and
+the carrier layout has been independently validated, or use `_outputs` to
+describe multiple outputs. Shape inference does not expand the supported
+native carrier set; the exact validated exceptions are described below.
 
 The carrier's compiled arity and tensor layout must match the C entry. `Abs`
 is used by the validated unary examples. `Maximum` is used by the validated
 two-input carriers.
 
-Two narrow broadcasting families are execution-tested. The first
-unequal-count layout has an ordinary first input and output plus a one-element
-second input of the same precision. Its C loop uses the output chunk's
-`invocation.element_count`, but reads the second input only at index zero:
+Two descriptor families cover the execution-tested broadcast cases. The
+one-scalar family may have an ordinary first input and output plus a
+one-element second input of the same precision. Its C loop uses the output
+chunk's `invocation.element_count`, but reads the second input only at index
+zero:
 
 ```c
 for (unsigned i = 0; i < invocation.element_count; ++i) {
@@ -402,6 +406,15 @@ float *output = ACT_ABI_OUTPUT_PTR32(float, invocation, 2u);
 for compatibility. Using it here yields `element_count == 1`; the
 output-record helper retains the base parameter pointer while taking rank and
 dimensions from record 2.
+
+The exact source-level `[4,8]` with `[4,1]` per-row broadcast exposes the same
+one-scalar descriptor in every invocation, in either operand order. Unlike a
+graph-global `[1,1]` input, each invocation receives the scalar for its own
+row. The custom C access pattern is unchanged: read the scalar record at index
+zero and the data record at `i`. Distinct values for all four rows matched
+copied and shared host oracles for FP16, FP32, U16, and U32. Use the
+[per-row scalar example](../examples/example_per_row_scalar_custom.py) as the
+exact recipe; other shapes and axes remain unsupported.
 
 Separately, graph compiler 8.3 presents one row broadcast as dense ACT operands
 in FP16, precision-preserved FP32, U16, and U32. Host inputs shaped `(4, 8)`
@@ -601,6 +614,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Two-input U32 unsigned-arithmetic kernel](../examples/example_u32_binary_custom.py)
 - [Chained U16/U32 scalar and row broadcasts](../examples/example_unsigned_broadcast_custom.py)
 - [Scalar-first FP16/FP32/U16/U32 subtraction](../examples/example_scalar_first_custom.py)
+- [Per-row scalar FP16/FP32/U16/U32 kernels](../examples/example_per_row_scalar_custom.py)
 - [U8-to-FP32 custom conversion kernel](../examples/example_u8_to_f32_custom.py)
 - [Multi-layer, two-input custom kernel](../examples/example_multilayer_multi_input.py)
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)

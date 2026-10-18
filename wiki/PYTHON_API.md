@@ -84,11 +84,14 @@ underscore keyword arguments   npunlock metadata
 - `Convert` preserves shape and uses its normalized `destination_type` as the
   output dtype.
 
-This is frontend convenience, not general graph or broadcasting inference.
-Unknown operations, mismatched elementwise inputs, batched/broadcast MatMul,
-and other shape-changing operations still require both `_shape` and `_dtype`.
-Explicit metadata remains available as an override. Multiple outputs use
-`_outputs`:
+This is frontend convenience, not general graph support. `custom()` also
+infers a NumPy-style broadcast output shape for two inputs when its carrier is
+one of the same-dtype elementwise binary operators. That inference only sets
+symbolic output metadata; it does not make an unvalidated carrier shape
+patchable. Unknown operations, mismatched ordinary elementwise inputs,
+batched/broadcast MatMul, and other shape-changing operations still require
+both `_shape` and `_dtype`. Explicit metadata remains available as an
+override. Multiple outputs use `_outputs`:
 
 ```python
 a, b = npu.SomeOp(
@@ -377,7 +380,10 @@ version-2 groups, and `find_group(scalar_input_indices=(0,))` can select the
 validated scalar-first carriers. `ActGroup.input_1_scalar` and the matching
 legacy filter remain available for second-input scalar groups. Scalar position
 comes from the per-tensor `(1,N)->N` or `(N,1)->N` contract, not an operator
-name.
+name. The exact `[4,8]` with `[4,1]` per-row carriers use that same descriptor
+contract, but each invocation receives its row's scalar. Python automatic
+mapping recognizes only this validated source shape in addition to a
+graph-global scalar; other broadcast shapes still require new evidence.
 
 ### Review a multi-kernel build plan
 
@@ -525,6 +531,9 @@ also chains the scalar and exact row-broadcast forms for both widths.
 The [scalar-first example](../examples/example_scalar_first_custom.py) uses
 version 2 for FP16, FP32, U16, and U32 and demonstrates the output-record
 invocation loader.
+The [per-row scalar example](../examples/example_per_row_scalar_custom.py)
+uses the exact `[4,8]`/`[4,1]` broadcast in either operand position and relies
+on automatic custom-output shape inference.
 
 For a single set of kernel-build settings, pass them to `prepared.build()` in
 the same way as `npu.compile()`:
@@ -815,6 +824,7 @@ OpenVINO. Python never parses or modifies the native graph blob itself.
 - [U32 two-input custom kernel](../examples/example_u32_binary_custom.py)
 - [U16/U32 scalar and row-broadcast custom kernels](../examples/example_unsigned_broadcast_custom.py)
 - [scalar-first FP16/FP32/U16/U32 custom kernels](../examples/example_scalar_first_custom.py)
+- [per-row scalar FP16/FP32/U16/U32 custom kernels](../examples/example_per_row_scalar_custom.py)
 - [U8 Gather with I64 indices](../examples/example_u8_gather_i64.py)
 - [U8 unequal VariadicSplit graph](../examples/example_u8_variadic_split.py)
 - [U8 multi-axis Slice graph](../examples/example_u8_slice.py)

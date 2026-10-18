@@ -154,11 +154,12 @@ equal-element unary FP32-to-FP16, FP16-to-FP32, and U8-to-FP32 conversion
 groups, plus the same-precision unary I32, I16, and I8 carriers and equal-span
 binary I32, I16, and I8 carriers, plus equal-span and either-position scalar
 U16 and U32 carriers. Scalar-first FP16/FP32 also uses version 2. The
-documented unsigned row broadcasts expose equal-span
-invocation descriptors. Conversion groups require explicit
-binding; the same-precision integer groups can use the normal unambiguous
-positional mapping. Replicated invocations are patched together and are not
-assumed to be output partitions.
+exact `[4,8]` with `[4,1]` per-row broadcast uses the same one-scalar
+invocation descriptors in either operand position; the documented `[1,8]`
+row broadcasts instead expose equal-span invocation descriptors. Conversion
+groups require explicit binding; the same-precision integer groups can use the
+normal unambiguous positional mapping. Replicated invocations are patched
+together and are not assumed to be output partitions.
 
 ## 5. Substitute the executable image
 
@@ -208,9 +209,9 @@ carrier, one dense descriptor-level FP32 row-broadcast carrier,
 same-precision unary I32/I16/I8 paths, and static dense FP16, I32, I16, and I8
 binary carriers with independently bound host inputs. It also includes one
 equal-span and one row-broadcast U16/U32 carrier, scalar inputs in either
-position for FP16/FP32/U16/U32 through exact carriers, and one explicitly
-bound U8-to-FP32 unary conversion carrier. The exact layouts used by these
-cases are execution-tested.
+position for FP16/FP32/U16/U32 through exact global and per-row carriers, and
+one explicitly bound U8-to-FP32 unary conversion carrier. The exact layouts
+used by these cases are execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic

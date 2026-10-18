@@ -175,12 +175,12 @@ Use these C types for the currently validated custom paths:
 | Graph dtype | Kernel pointer type | Current custom scope |
 | --- | --- | --- |
 | `f16` | `__fp16` | unary, selected binary/broadcast, and one five-input carrier |
-| `f32` | `float` | unary, scalar/equal-span binary, and one row-broadcast carrier |
+| `f32` | `float` | unary, scalar/equal-span binary, and exact row/per-row broadcasts |
 | `i32` | `int` | unary and equal-span binary |
 | `i16` | `short` | unary and equal-span binary |
 | `i8` | `signed char` | unary and equal-span binary |
-| `u16` | `unsigned short` | equal-span, either-position scalar, and one row-broadcast carrier |
-| `u32` | `unsigned int` | equal-span, either-position scalar, and one row-broadcast carrier |
+| `u16` | `unsigned short` | equal-span, either-position scalar, and exact row/per-row broadcasts |
+| `u32` | `unsigned int` | equal-span, either-position scalar, and exact row/per-row broadcasts |
 | `u8` | `unsigned char` input | only the validated U8-to-FP32 conversion |
 
 Stay within the arithmetic range of integer outputs unless you are explicitly
@@ -215,7 +215,8 @@ The current carrier recipes are:
 | two equal-span FP16 inputs | `Maximum` | automatic when the graph is unambiguous |
 | two equal-span FP32 inputs | `Subtract` | automatic when the graph is unambiguous |
 | FP16 data plus a one-element second input | `Maximum` | automatic when the exact scalar contract is discovered |
-| FP16, FP32, U16, or U32 scalar first plus `(1,32)` data | `Subtract` | version 2; output shape comes from the data input |
+| FP16, FP32, U16, or U32 scalar first plus `(1,32)` data | `Subtract` | version 2; broadcast output shape inferred automatically |
+| FP16, FP32, U16, or U32 `(4,8)` data plus `(4,1)` per-row scalars, either position | `Subtract` | automatic for this exact shape; one scalar per invocation |
 | FP16 `(4,8)` plus `(1,8)` row input | `Maximum` | only the documented dense `(8,8)->8` invocation layout |
 | FP32 `(4,8)` plus `(1,8)` row input | `Subtract` | only the documented dense `(8,8)->8` invocation layout |
 | two equal-span I32 inputs | `Minimum` | automatic when the graph is unambiguous |
@@ -292,9 +293,9 @@ example](../examples/example_unsigned_broadcast_custom.py) chains both forms
 and runs them for both widths.
 
 A scalar may instead be input zero for the exact `[1,1]` minus `[1,32]`
-`Subtract` carrier in FP16, FP32, U16, or U32. Because `custom()` normally
-inherits its output shape from the first input, pass `_shape=data.shape` for
-this form. More importantly, load the invocation extent from output record 2:
+`Subtract` carrier in FP16, FP32, U16, or U32. `custom()` infers the broadcast
+output shape from these two compatible binary inputs. More importantly, load
+the invocation extent from output record 2:
 
 ```c
 act_abi_invocation invocation;
@@ -306,15 +307,25 @@ one-element scalar here and would process only one output. See the
 [scalar-first example](../examples/example_scalar_first_custom.py) for all four
 validated precisions.
 
+The exact `[4,8]` data with `[4,1]` input follows the same pointer rule but
+supplies a different scalar to each row invocation. Both operand orders are
+validated for FP16, FP32, U16, and U32. Read the scalar record only at index
+zero; use the output-record loader when that scalar is input zero. See the
+[per-row scalar example](../examples/example_per_row_scalar_custom.py).
+
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input
 example](../examples/example_multilayer_multi_input.py) places this kernel
 between ordinary graph operations and checks the result.
 
-Broadcasting is not inferred from NumPy rules. A one-element ACT input must be
-read at index zero; the validated `(4,8)` plus `(1,8)` row carrier instead
-presents equal eight-element records and uses `input_1[i]`. Follow the
+For two-input elementwise carriers, `custom()` infers the symbolic NumPy-style
+broadcast output shape. This is shape convenience, not general carrier
+support: only the exact layouts listed above are validated. A one-element ACT
+input must be read at index zero; the validated `(4,8)` plus `(1,8)` row
+carrier instead presents equal eight-element records and uses `input_1[i]`.
+Follow the
 [scalar-input example](../examples/example_branched_network.py) or
+[per-row scalar example](../examples/example_per_row_scalar_custom.py) or
 [FP16 row-broadcast example](../examples/example_broadcast_custom.py) or
 [FP32 row-broadcast example](../examples/example_f32_broadcast_custom.py) or
 [unsigned broadcast example](../examples/example_unsigned_broadcast_custom.py)

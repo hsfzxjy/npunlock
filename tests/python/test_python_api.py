@@ -419,7 +419,7 @@ class SymbolicTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "require both _shape and _dtype"):
             npu.Abs(x, _shape=x.shape)
 
-    def test_custom_infers_single_output_contract_from_first_input(self) -> None:
+    def test_custom_infers_single_output_contract_and_binary_broadcast_shape(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         inherited = npu.custom(x, source=b"kernel", carrier="Abs")
         shape_override = npu.custom(
@@ -440,6 +440,16 @@ class SymbolicTests(unittest.TestCase):
         self.assertEqual(shape_override.dtype, "f16")
         self.assertEqual(dtype_override.shape, (1, 32))
         self.assertEqual(dtype_override.dtype, "f32")
+
+        row_scalar = npu.input("row_scalar", shape=(4, 1), dtype="f16")
+        matrix = npu.input("matrix", shape=(4, 8), dtype="f16")
+        scalar_first = npu.custom(row_scalar, matrix, source=b"kernel", carrier="Subtract")
+        scalar_second = npu.custom(matrix, row_scalar, source=b"kernel", carrier="Subtract")
+        self.assertEqual(scalar_first.shape, (4, 8))
+        self.assertEqual(scalar_second.shape, (4, 8))
+        incompatible = npu.input("incompatible", shape=(3, 2), dtype="f16")
+        with self.assertRaisesRegex(ValueError, "cannot infer a broadcast output shape"):
+            npu.custom(x, incompatible, source=b"kernel", carrier="Subtract")
 
         source_free = npu.custom(x, carrier="Abs", _name="compiled_later")
         self.assertIsNone(source_free.producer.metadata["_kernel"])
@@ -1693,7 +1703,6 @@ class CompilationFlowTests(unittest.TestCase):
                     data,
                     source=b"scalar-first kernel",
                     carrier="Subtract",
-                    _shape=data.shape,
                 )
 
                 prepared = npu.prepare(
@@ -1728,7 +1737,6 @@ class CompilationFlowTests(unittest.TestCase):
             data,
             source=b"scalar-first kernel",
             carrier="Subtract",
-            _shape=data.shape,
         )
         wrong_prepared = npu.prepare(
             npu.Graph([scalar, data], [output]),
@@ -1737,6 +1745,69 @@ class CompilationFlowTests(unittest.TestCase):
         )
         self.assertEqual(wrong_prepared.mappings[0].status, "explicit-required")
         self.assertIn("scalar input positions", wrong_prepared.mappings[0].reason)
+
+    def test_exact_per_row_scalar_groups_map_in_either_input_position(self) -> None:
+        class PerRowNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"requires version 2")
+
+        for dtype, span in (("f16", 2), ("f32", 4), ("u16", 2), ("u32", 4)):
+            for scalar_index in (0, 1):
+                with self.subTest(dtype=dtype, scalar_index=scalar_index):
+                    input_counts = (1, 8) if scalar_index == 0 else (8, 1)
+                    tensors = (
+                        npu.PatchTensorContract("input", 0, dtype, input_counts[0], input_counts[0] * span, 0x07),
+                        npu.PatchTensorContract("input", 1, dtype, input_counts[1], input_counts[1] * span, 0x07),
+                        npu.PatchTensorContract("output", 0, dtype, 8, 8 * span, 0x0F),
+                    )
+                    targets = tuple(npu.PatchTargetV2(index, index, tensors) for index in range(4))
+                    fake = PerRowNative()
+                    fake.discovery_groups_v2 = (targets,)
+                    row_scalar = npu.input("row_scalar", shape=(4, 1), dtype=dtype)
+                    matrix = npu.input("matrix", shape=(4, 8), dtype=dtype)
+                    inputs = (row_scalar, matrix) if scalar_index == 0 else (matrix, row_scalar)
+                    output = npu.custom(*inputs, source=b"per-row kernel", carrier="Subtract")
+
+                    prepared = npu.prepare(
+                        npu.Graph([row_scalar, matrix], [output]),
+                        native_dir="unused",
+                        libraries=fake,  # type: ignore[arg-type]
+                    )
+
+                    self.assertEqual(output.shape, (4, 8))
+                    self.assertEqual(prepared.mappings[0].status, "automatic")
+                    self.assertEqual(prepared.groups[0].scalar_input_indices, (scalar_index,))
+                    prepared.build(movi_dll_dir="movi")
+                    patched_targets = fake.patch_args[2]
+                    if dtype in {"f16", "f32"} and scalar_index == 1:
+                        self.assertTrue(all(isinstance(target, npu.PatchTarget) for target in patched_targets))
+                        self.assertTrue(all(target.contract_flags & 0x40 for target in patched_targets))
+                    else:
+                        self.assertEqual(patched_targets, targets)
+
+        unsupported_tensors = (
+            npu.PatchTensorContract("input", 0, "u32", 1, 4, 0x07),
+            npu.PatchTensorContract("input", 1, "u32", 8, 32, 0x07),
+            npu.PatchTensorContract("output", 0, "u32", 8, 32, 0x0F),
+        )
+        unsupported_targets = tuple(npu.PatchTargetV2(index, index, unsupported_tensors) for index in range(4))
+        unsupported_fake = PerRowNative()
+        unsupported_fake.discovery_groups_v2 = (unsupported_targets,)
+        untested_scalar = npu.input("untested_scalar", shape=(2, 1), dtype="u32")
+        untested_matrix = npu.input("untested_matrix", shape=(2, 16), dtype="u32")
+        untested_output = npu.custom(
+            untested_scalar,
+            untested_matrix,
+            source=b"untested broadcast",
+            carrier="Subtract",
+        )
+        unsupported = npu.prepare(
+            npu.Graph([untested_scalar, untested_matrix], [untested_output]),
+            native_dir="unused",
+            libraries=unsupported_fake,  # type: ignore[arg-type]
+        )
+        self.assertEqual(unsupported.mappings[0].status, "explicit-required")
+        self.assertIn("scalar input positions", unsupported.mappings[0].reason)
 
     def test_mixed_precision_plan_uses_v1_for_losslessly_representable_group(self) -> None:
         class MixedNative(FakeNative):

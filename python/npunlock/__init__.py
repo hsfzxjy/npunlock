@@ -944,6 +944,19 @@ def _legacy_target_dtype(target: PatchTarget) -> str | None:
     return "f16" if fp16 else "f32"
 
 
+def _custom_scalar_input_indices(node: Node) -> tuple[int, ...]:
+    """Return scalar descriptor positions established for this symbolic shape."""
+
+    output_shape = node.outputs[0].shape
+    if prod(output_shape) <= 1:
+        return ()
+    return tuple(
+        index
+        for index, value in enumerate(node.inputs)
+        if prod(value.shape) == 1 or (output_shape == (4, 8) and value.shape == (4, 1))
+    )
+
+
 def _custom_targets_mismatch(
     node: Node,
     targets: tuple[PatchTargetContract, ...],
@@ -954,10 +967,7 @@ def _custom_targets_mismatch(
         return "custom mapping requires one output and at least one ACT target"
     expected_inputs = tuple(value.dtype for value in node.inputs)
     expected_output = node.outputs[0].dtype
-    output_elements = prod(node.outputs[0].shape)
-    expected_scalar_inputs = (
-        tuple(index for index, value in enumerate(node.inputs) if prod(value.shape) == 1) if output_elements > 1 else ()
-    )
+    expected_scalar_inputs = _custom_scalar_input_indices(node)
     if all(isinstance(target, PatchTarget) for target in targets):
         legacy = tuple(target for target in targets if isinstance(target, PatchTarget))
         dtypes = {_legacy_target_dtype(target) for target in legacy}
