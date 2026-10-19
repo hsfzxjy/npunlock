@@ -208,6 +208,63 @@ static int test_output_cover_observations(void) {
   return 0;
 }
 
+static int test_replica_candidate_bijection(void) {
+  npunlock_invocation_routing_observation invocations[4];
+  npunlock_act_output_slice_candidate_observation slices[2] = {0};
+  npunlock_act_replica_group_observation *groups = NULL;
+  npunlock_act_replica_candidate_observation *candidates = NULL;
+  size_t group_count = 0;
+  size_t candidate_count = 0;
+  npunlock_diagnostic diagnostic = {0};
+
+  configure_edge_invocation(&invocations[0], 0, 0, 0, 64, 1, 2);
+  configure_edge_invocation(&invocations[1], 1, 0, 100, 164, 1, 2);
+  configure_edge_invocation(&invocations[2], 2, 0, 16, 80, 1, 2);
+  configure_edge_invocation(&invocations[3], 3, 0, 116, 180, 1, 2);
+  invocations[0].tile_candidate_raw = 0;
+  invocations[1].tile_candidate_raw = 1;
+  invocations[2].tile_candidate_raw = 0;
+  invocations[3].tile_candidate_raw = 1;
+  slices[0].act_invocation_index = 0;
+  slices[0].route_candidate_count = 1;
+  slices[0].output_symbol_raw = 1;
+  slices[0].act_span_bytes = 16;
+  slices[1].act_invocation_index = 2;
+  slices[1].route_candidate_count = 1;
+  slices[1].output_symbol_raw = 1;
+  slices[1].output_slice_addend_candidate = 16;
+  slices[1].act_span_bytes = 16;
+
+  CHECK(npunlock_derive_act_replica_candidates(invocations, 4, 1, slices, 2, &groups, &group_count,
+                                               &candidates, &candidate_count,
+                                               &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(group_count == 1);
+  CHECK(groups[0].translation_solution_count == 1);
+  CHECK(groups[0].cmx_translation_candidate == 100);
+  CHECK(candidate_count == 2);
+  CHECK(candidates[0].unrouted_invocation_index == 1);
+  CHECK(candidates[0].routed_invocation_index == 0);
+  CHECK(candidates[1].unrouted_invocation_index == 3);
+  CHECK(candidates[1].routed_invocation_index == 2);
+  free(groups);
+  free(candidates);
+  groups = NULL;
+  candidates = NULL;
+
+  invocations[3].tensors[0].data_addend = 100;
+  invocations[3].tensors[1].data_addend = 164;
+  CHECK(npunlock_derive_act_replica_candidates(invocations, 4, 1, slices, 2, &groups, &group_count,
+                                               &candidates, &candidate_count,
+                                               &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(group_count == 1);
+  CHECK(groups[0].translation_solution_count == 0);
+  CHECK(candidate_count == 0);
+  free(groups);
+  free(candidates);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
 int main(void) {
   uint8_t graph[201];
   const uint8_t image[] = {1, 2, 3, 4};
@@ -219,6 +276,7 @@ int main(void) {
   CHECK(test_edge_candidate_ambiguity() == 0);
   CHECK(test_edge_candidate_transitive_schedule() == 0);
   CHECK(test_output_cover_observations() == 0);
+  CHECK(test_replica_candidate_bijection() == 0);
 
   target.struct_size = sizeof(target);
   target.invocation_index = 0;

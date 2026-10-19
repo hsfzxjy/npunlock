@@ -13,7 +13,7 @@ if(NOT result EQUAL 0)
 endif()
 
 foreach(expected
-    "\"schema\": \"npunlock.porting.inspect.v12\""
+    "\"schema\": \"npunlock.porting.inspect.v13\""
     "\"invocation_index\": 0"
     "\"wait_mask_raw\": 1, \"post_mask_raw\": 2"
     "\"data_addend_raw\": 64"
@@ -27,6 +27,16 @@ foreach(expected
   string(FIND "${report}" "${expected}" expected_offset)
   if(expected_offset EQUAL -1)
     message(FATAL_ERROR "ACT schedule inspection changed a retained observation: ${expected}")
+  endif()
+endforeach()
+
+foreach(expected
+    "\"act_group_index\": 1, \"routed_invocation_count\": 2, \"unrouted_invocation_count\": 2, \"translation_solution_count\": 1, \"cmx_translation_candidate\": 2097152"
+    "\"unrouted_invocation_index\": 5, \"routed_invocation_index\": 4, \"unrouted_tile_candidate_raw\": 1, \"routed_tile_candidate_raw\": 0, \"output_symbol_raw\": 1, \"output_slice_addend_candidate\": 0, \"output_slice_span_bytes\": 32"
+    "\"unrouted_invocation_index\": 7, \"routed_invocation_index\": 6, \"unrouted_tile_candidate_raw\": 1, \"routed_tile_candidate_raw\": 0, \"output_symbol_raw\": 1, \"output_slice_addend_candidate\": 32, \"output_slice_span_bytes\": 32")
+  string(FIND "${report}" "${expected}" expected_offset)
+  if(expected_offset EQUAL -1)
+    message(FATAL_ERROR "replica correlation changed a retained observation: ${expected}")
   endif()
 endforeach()
 

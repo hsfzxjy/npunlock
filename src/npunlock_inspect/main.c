@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v12\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v13\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -316,6 +316,42 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"replica_group_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_replica_group_count; ++index) {
+    const npunlock_act_replica_group_observation *group = &routing->act_replica_groups[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"routed_invocation_count\": %u, "
+                "\"unrouted_invocation_count\": %u, \"translation_solution_count\": %u, "
+                "\"cmx_translation_candidate\": %" PRId64 "}",
+                index == 0 ? "" : ",\n", group->act_group_index, group->routed_invocation_count,
+                group->unrouted_invocation_count, group->translation_solution_count,
+                group->cmx_translation_candidate) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"replica_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_replica_candidate_count; ++index) {
+    const npunlock_act_replica_candidate_observation *candidate =
+        &routing->act_replica_candidates[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"unrouted_invocation_index\": %u, "
+                "\"routed_invocation_index\": %u, \"unrouted_tile_candidate_raw\": %u, "
+                "\"routed_tile_candidate_raw\": %u, \"output_symbol_raw\": %u, "
+                "\"output_slice_addend_candidate\": %" PRIu64
+                ", \"output_slice_span_bytes\": %" PRIu64
+                ", \"cmx_translation_candidate\": %" PRId64 "}",
+                index == 0 ? "" : ",\n", candidate->act_group_index,
+                candidate->unrouted_invocation_index, candidate->routed_invocation_index,
+                candidate->unrouted_tile_candidate_raw, candidate->routed_tile_candidate_raw,
+                candidate->output_symbol_raw, candidate->output_slice_addend_candidate,
+                candidate->output_slice_span_bytes, candidate->cmx_translation_candidate) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ]},\n  \"dpu\": {\"invariant_count\": %zu, \"invariants\": [\n",
               routing->dpu_invariant_count) < 0) {
     return 0;
@@ -416,6 +452,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "candidates translate only ACT output subranges contained by validated "
                  "network-output DMA routes; output-cover observations require unique, "
                  "non-overlapping slices with the same interval union as the output routes; "
+                 "replica candidates require a unique complete CMX-translation bijection; "
                  "DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
                  "intervals; candidates do not classify unrouted invocations as replicas; "

@@ -116,6 +116,26 @@ typedef struct npunlock_act_output_cover_observation {
   bool exact_cover;
 } npunlock_act_output_cover_observation;
 
+typedef struct npunlock_act_replica_group_observation {
+  uint32_t act_group_index;
+  uint32_t routed_invocation_count;
+  uint32_t unrouted_invocation_count;
+  uint32_t translation_solution_count;
+  int64_t cmx_translation_candidate;
+} npunlock_act_replica_group_observation;
+
+typedef struct npunlock_act_replica_candidate_observation {
+  uint32_t act_group_index;
+  uint32_t unrouted_invocation_index;
+  uint32_t routed_invocation_index;
+  uint32_t unrouted_tile_candidate_raw;
+  uint32_t routed_tile_candidate_raw;
+  uint32_t output_symbol_raw;
+  uint64_t output_slice_addend_candidate;
+  uint64_t output_slice_span_bytes;
+  int64_t cmx_translation_candidate;
+} npunlock_act_replica_candidate_observation;
+
 typedef struct npunlock_act_edge_candidate_observation {
   uint32_t producer_group_index;
   uint32_t producer_invocation_index;
@@ -195,6 +215,10 @@ typedef struct npunlock_graph_routing_observations {
   size_t act_output_slice_candidate_count;
   npunlock_act_output_cover_observation *act_output_covers;
   size_t act_output_cover_count;
+  npunlock_act_replica_group_observation *act_replica_groups;
+  size_t act_replica_group_count;
+  npunlock_act_replica_candidate_observation *act_replica_candidates;
+  size_t act_replica_candidate_count;
   npunlock_act_edge_candidate_observation *act_edge_candidates;
   size_t act_edge_candidate_count;
   npunlock_dpu_invariant_observation *dpu_invariants;
@@ -237,6 +261,12 @@ npunlock_status npunlock_derive_act_output_cover_observations(
     const npunlock_act_output_slice_candidate_observation *slice_candidates,
     size_t slice_candidate_count, npunlock_act_output_cover_observation **covers,
     size_t *cover_count, npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_derive_act_replica_candidates(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, const npunlock_act_output_slice_candidate_observation *slice_candidates,
+    size_t slice_candidate_count, npunlock_act_replica_group_observation **groups,
+    size_t *replica_group_count, npunlock_act_replica_candidate_observation **candidates,
+    size_t *replica_candidate_count, npunlock_diagnostic *diagnostic);
 void npunlock_graph_routing_observations_release(npunlock_graph_routing_observations *observations);
 
 #endif

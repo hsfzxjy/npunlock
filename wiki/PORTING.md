@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 12 JSON report records the blob size and SHA-256 plus every
+The version 13 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -60,7 +60,7 @@ controlled unary carriers, including the two-tile cases where only tile-0
 invocations were host-visible. An invocation without such a route remains
 merely unrouted; the inspector does not call it a replica.
 
-Schema v12 also reports an `output_cover_observations` verdict for each graph
+The report also includes an `output_cover_observations` verdict for each graph
 output symbol reached directly from ACT. A cover is exact only when every ACT
 slice has one route, neither the route destinations nor the slices overlap,
 and both merged byte-interval unions are identical. The report keeps the
@@ -68,6 +68,16 @@ number of participating ACT groups and the routed/unrouted invocation counts.
 This allows a four-group per-row lowering to prove complete output coverage
 without claiming that the groups correspond to one source node or that the
 unrouted invocations are replicas.
+
+Schema v13 adds a guarded replica correlation for groups containing both routed
+and unrouted invocations. It does not hard-code a tile stride. Instead, it
+requires the complete tensor contract, shape/stride pattern, runtime symbols,
+and scheduling fields to agree, then searches for a single CMX translation
+that creates a one-to-one mapping between every routed and unrouted invocation
+in the group. Only one complete solution emits `replica_candidates`; zero or
+multiple solutions remain unresolved. The candidate inherits the routed
+graph-output interval as a proposed replica-class identity, not as permission
+for automatic patch selection.
 
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant

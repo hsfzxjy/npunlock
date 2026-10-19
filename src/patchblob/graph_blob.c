@@ -3035,6 +3035,323 @@ npunlock_status npunlock_derive_act_output_cover_observations(
   return NPUNLOCK_STATUS_OK;
 }
 
+static size_t invocation_slice_candidate_count(
+    const npunlock_act_output_slice_candidate_observation *slice_candidates,
+    size_t slice_candidate_count, uint32_t invocation_index,
+    const npunlock_act_output_slice_candidate_observation **unique_candidate) {
+  size_t count = 0u;
+  size_t index;
+  *unique_candidate = NULL;
+  for (index = 0; index < slice_candidate_count; ++index) {
+    if (slice_candidates[index].act_invocation_index == invocation_index) {
+      *unique_candidate = &slice_candidates[index];
+      ++count;
+    }
+  }
+  if (count != 1u || (*unique_candidate)->route_candidate_count != 1u) {
+    *unique_candidate = NULL;
+  }
+  return count;
+}
+
+static bool replica_contracts_match(const npunlock_invocation_routing_observation *left,
+                                    const npunlock_invocation_routing_observation *right,
+                                    int64_t *translation) {
+  int64_t result = 0;
+  size_t tensor_index;
+  if (left->tile_candidate_raw == right->tile_candidate_raw ||
+      left->wait_mask_raw != right->wait_mask_raw || left->post_mask_raw != right->post_mask_raw ||
+      left->barrier_group_raw != right->barrier_group_raw ||
+      left->barrier_mask_raw != right->barrier_mask_raw ||
+      left->start_after_raw != right->start_after_raw ||
+      left->clean_after_raw != right->clean_after_raw ||
+      left->target.abi_version != right->target.abi_version ||
+      left->target.tensor_count != right->target.tensor_count ||
+      left->target.target_flags != right->target.target_flags) {
+    return false;
+  }
+  for (tensor_index = 0; tensor_index < left->target.tensor_count; ++tensor_index) {
+    const patchblob_tensor_contract_v2 *left_contract = &left->target.tensors[tensor_index];
+    const patchblob_tensor_contract_v2 *right_contract = &right->target.tensors[tensor_index];
+    const npunlock_tensor_routing_observation *left_routing = &left->tensors[tensor_index];
+    const npunlock_tensor_routing_observation *right_routing = &right->tensors[tensor_index];
+    int64_t current;
+    if (left_contract->role != right_contract->role ||
+        left_contract->tensor_index != right_contract->tensor_index ||
+        left_contract->precision != right_contract->precision ||
+        left_contract->element_count != right_contract->element_count ||
+        left_contract->span_bytes != right_contract->span_bytes ||
+        left_contract->observed_flags != right_contract->observed_flags ||
+        left_routing->data_symbol != right_routing->data_symbol ||
+        left_routing->rank != right_routing->rank ||
+        memcmp(left_routing->dimensions, right_routing->dimensions,
+               left_routing->rank * sizeof(left_routing->dimensions[0])) != 0 ||
+        memcmp(left_routing->strides_bits, right_routing->strides_bits,
+               left_routing->rank * sizeof(left_routing->strides_bits[0])) != 0 ||
+        left_routing->data_addend < 0 || right_routing->data_addend < 0) {
+      return false;
+    }
+    current = left_routing->data_addend >= right_routing->data_addend
+                  ? left_routing->data_addend - right_routing->data_addend
+                  : -(right_routing->data_addend - left_routing->data_addend);
+    if (tensor_index == 0u) {
+      result = current;
+    } else if (current != result) {
+      return false;
+    }
+  }
+  if (result == 0) {
+    return false;
+  }
+  *translation = result;
+  return true;
+}
+
+static bool replica_translation_solves_group(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    const npunlock_act_output_slice_candidate_observation *slice_candidates,
+    size_t slice_candidate_count, uint32_t group_index, int64_t translation) {
+  size_t index;
+  for (index = 0; index < invocation_count; ++index) {
+    const npunlock_act_output_slice_candidate_observation *slice;
+    size_t slice_count;
+    size_t match_count = 0u;
+    size_t other_index;
+    if (invocations[index].group_index != group_index) {
+      continue;
+    }
+    slice_count =
+        invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                         invocations[index].target.invocation_index, &slice);
+    if (slice_count != 0u) {
+      continue;
+    }
+    for (other_index = 0; other_index < invocation_count; ++other_index) {
+      int64_t candidate_translation;
+      if (invocations[other_index].group_index != group_index ||
+          invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                           invocations[other_index].target.invocation_index,
+                                           &slice) != 1u ||
+          slice == NULL) {
+        continue;
+      }
+      if (replica_contracts_match(&invocations[index], &invocations[other_index],
+                                  &candidate_translation) &&
+          candidate_translation == translation) {
+        ++match_count;
+      }
+    }
+    if (match_count != 1u) {
+      return false;
+    }
+  }
+  for (index = 0; index < invocation_count; ++index) {
+    const npunlock_act_output_slice_candidate_observation *slice;
+    size_t match_count = 0u;
+    size_t other_index;
+    if (invocations[index].group_index != group_index ||
+        invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                         invocations[index].target.invocation_index,
+                                         &slice) != 1u ||
+        slice == NULL) {
+      continue;
+    }
+    for (other_index = 0; other_index < invocation_count; ++other_index) {
+      const npunlock_act_output_slice_candidate_observation *other_slice;
+      int64_t candidate_translation;
+      if (invocations[other_index].group_index != group_index ||
+          invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                           invocations[other_index].target.invocation_index,
+                                           &other_slice) != 0u ||
+          !replica_contracts_match(&invocations[other_index], &invocations[index],
+                                   &candidate_translation) ||
+          candidate_translation != translation) {
+        continue;
+      }
+      ++match_count;
+    }
+    if (match_count != 1u) {
+      return false;
+    }
+  }
+  return true;
+}
+
+npunlock_status npunlock_derive_act_replica_candidates(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, const npunlock_act_output_slice_candidate_observation *slice_candidates,
+    size_t slice_candidate_count, npunlock_act_replica_group_observation **groups,
+    size_t *replica_group_count, npunlock_act_replica_candidate_observation **candidates,
+    size_t *replica_candidate_count, npunlock_diagnostic *diagnostic) {
+  npunlock_act_replica_group_observation *group_results = NULL;
+  npunlock_act_replica_candidate_observation *candidate_results = NULL;
+  int64_t *translations = NULL;
+  size_t allocation_size;
+  size_t work_bound;
+  size_t group_result_count = 0u;
+  size_t candidate_result_count = 0u;
+  size_t group_index;
+
+  *groups = NULL;
+  *replica_group_count = 0u;
+  *candidates = NULL;
+  *replica_candidate_count = 0u;
+  if (!npunlock_checked_mul_size(invocation_count, invocation_count, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, group_count, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS ||
+      !npunlock_checked_mul_size(group_count, sizeof(*group_results), &allocation_size)) {
+    return unsupported(diagnostic, "ACT replica analysis exceeds its work bound");
+  }
+  group_results = (npunlock_act_replica_group_observation *)calloc(1u, allocation_size);
+  if (!npunlock_checked_mul_size(invocation_count, sizeof(*candidate_results), &allocation_size)) {
+    free(group_results);
+    return unsupported(diagnostic, "ACT replica candidate allocation overflows");
+  }
+  candidate_results = (npunlock_act_replica_candidate_observation *)calloc(1u, allocation_size);
+  if (!npunlock_checked_mul_size(invocation_count, invocation_count, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, sizeof(*translations), &allocation_size)) {
+    free(group_results);
+    free(candidate_results);
+    return unsupported(diagnostic, "ACT replica translation allocation overflows");
+  }
+  translations = (int64_t *)calloc(1u, allocation_size);
+  if ((group_results == NULL && group_count != 0u) ||
+      (candidate_results == NULL && invocation_count != 0u) ||
+      (translations == NULL && invocation_count != 0u)) {
+    free(group_results);
+    free(candidate_results);
+    free(translations);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT replica observations");
+  }
+
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    size_t routed_count = 0u;
+    size_t unrouted_count = 0u;
+    size_t translation_count = 0u;
+    size_t solution_count = 0u;
+    int64_t solution = 0;
+    size_t index;
+    bool ambiguous_route = false;
+    for (index = 0; index < invocation_count; ++index) {
+      const npunlock_act_output_slice_candidate_observation *slice;
+      size_t count;
+      if (invocations[index].group_index != group_index) {
+        continue;
+      }
+      count = invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                               invocations[index].target.invocation_index, &slice);
+      if (count == 0u) {
+        ++unrouted_count;
+      } else if (count == 1u && slice != NULL) {
+        ++routed_count;
+      } else {
+        ambiguous_route = true;
+      }
+    }
+    if (routed_count == 0u || unrouted_count == 0u) {
+      continue;
+    }
+    for (index = 0; index < invocation_count && !ambiguous_route; ++index) {
+      size_t other_index;
+      const npunlock_act_output_slice_candidate_observation *slice;
+      if (invocations[index].group_index != group_index ||
+          invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                           invocations[index].target.invocation_index,
+                                           &slice) != 0u) {
+        continue;
+      }
+      for (other_index = 0; other_index < invocation_count; ++other_index) {
+        int64_t translation;
+        size_t prior;
+        bool unique = true;
+        if (invocations[other_index].group_index != group_index ||
+            invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                             invocations[other_index].target.invocation_index,
+                                             &slice) != 1u ||
+            slice == NULL ||
+            !replica_contracts_match(&invocations[index], &invocations[other_index],
+                                     &translation)) {
+          continue;
+        }
+        for (prior = 0; prior < translation_count; ++prior) {
+          if (translations[prior] == translation) {
+            unique = false;
+            break;
+          }
+        }
+        if (unique) {
+          translations[translation_count++] = translation;
+        }
+      }
+    }
+    for (index = 0; index < translation_count; ++index) {
+      if (replica_translation_solves_group(invocations, invocation_count, slice_candidates,
+                                           slice_candidate_count, (uint32_t)group_index,
+                                           translations[index])) {
+        ++solution_count;
+        solution = translations[index];
+      }
+    }
+    group_results[group_result_count].act_group_index = (uint32_t)group_index;
+    group_results[group_result_count].routed_invocation_count = (uint32_t)routed_count;
+    group_results[group_result_count].unrouted_invocation_count = (uint32_t)unrouted_count;
+    group_results[group_result_count].translation_solution_count = (uint32_t)solution_count;
+    group_results[group_result_count].cmx_translation_candidate =
+        solution_count == 1u ? solution : 0;
+    ++group_result_count;
+    if (solution_count != 1u) {
+      continue;
+    }
+    for (index = 0; index < invocation_count; ++index) {
+      const npunlock_act_output_slice_candidate_observation *slice;
+      size_t other_index;
+      if (invocations[index].group_index != group_index ||
+          invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                           invocations[index].target.invocation_index,
+                                           &slice) != 0u) {
+        continue;
+      }
+      for (other_index = 0; other_index < invocation_count; ++other_index) {
+        int64_t translation;
+        if (invocations[other_index].group_index != group_index ||
+            invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                             invocations[other_index].target.invocation_index,
+                                             &slice) != 1u ||
+            slice == NULL ||
+            !replica_contracts_match(&invocations[index], &invocations[other_index],
+                                     &translation) ||
+            translation != solution) {
+          continue;
+        }
+        candidate_results[candidate_result_count].act_group_index = (uint32_t)group_index;
+        candidate_results[candidate_result_count].unrouted_invocation_index =
+            invocations[index].target.invocation_index;
+        candidate_results[candidate_result_count].routed_invocation_index =
+            invocations[other_index].target.invocation_index;
+        candidate_results[candidate_result_count].unrouted_tile_candidate_raw =
+            invocations[index].tile_candidate_raw;
+        candidate_results[candidate_result_count].routed_tile_candidate_raw =
+            invocations[other_index].tile_candidate_raw;
+        candidate_results[candidate_result_count].output_symbol_raw = slice->output_symbol_raw;
+        candidate_results[candidate_result_count].output_slice_addend_candidate =
+            slice->output_slice_addend_candidate;
+        candidate_results[candidate_result_count].output_slice_span_bytes = slice->act_span_bytes;
+        candidate_results[candidate_result_count].cmx_translation_candidate = solution;
+        ++candidate_result_count;
+        break;
+      }
+    }
+  }
+  free(translations);
+  *groups = group_results;
+  *replica_group_count = group_result_count;
+  *candidates = candidate_results;
+  *replica_candidate_count = candidate_result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 void npunlock_graph_routing_observations_release(
     npunlock_graph_routing_observations *observations) {
   if (observations == NULL) {
@@ -3044,6 +3361,8 @@ void npunlock_graph_routing_observations_release(
   free(observations->network_output_routes);
   free(observations->act_output_slice_candidates);
   free(observations->act_output_covers);
+  free(observations->act_replica_groups);
+  free(observations->act_replica_candidates);
   free(observations->act_edge_candidates);
   free(observations->dpu_invariants);
   free(observations->act_dpu_edge_candidates);
@@ -3059,6 +3378,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_network_output_route_observation *network_output_routes = NULL;
   npunlock_act_output_slice_candidate_observation *act_output_slice_candidates = NULL;
   npunlock_act_output_cover_observation *act_output_covers = NULL;
+  npunlock_act_replica_group_observation *act_replica_groups = NULL;
+  npunlock_act_replica_candidate_observation *act_replica_candidates = NULL;
   npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
   npunlock_dpu_invariant_observation *dpu_invariants = NULL;
   npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates = NULL;
@@ -3069,6 +3390,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t network_output_route_count = 0;
   size_t act_output_slice_candidate_count = 0;
   size_t act_output_cover_count = 0;
+  size_t act_replica_group_count = 0;
+  size_t act_replica_candidate_count = 0;
   size_t act_edge_candidate_count = 0;
   size_t dpu_invariant_count = 0;
   size_t act_dpu_edge_candidate_count = 0;
@@ -3169,6 +3492,13 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = npunlock_derive_act_replica_candidates(
+      invocations, invocation_count, group_count, act_output_slice_candidates,
+      act_output_slice_candidate_count, &act_replica_groups, &act_replica_group_count,
+      &act_replica_candidates, &act_replica_candidate_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
   status = derive_act_dpu_edge_candidates(invocations, invocation_count, dpu_invariants,
                                           dpu_invariant_count, &act_dpu_edge_candidates,
                                           &act_dpu_edge_candidate_count, diagnostic);
@@ -3189,6 +3519,10 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->act_output_slice_candidate_count = act_output_slice_candidate_count;
   observations->act_output_covers = act_output_covers;
   observations->act_output_cover_count = act_output_cover_count;
+  observations->act_replica_groups = act_replica_groups;
+  observations->act_replica_group_count = act_replica_group_count;
+  observations->act_replica_candidates = act_replica_candidates;
+  observations->act_replica_candidate_count = act_replica_candidate_count;
   observations->act_edge_candidates = act_edge_candidates;
   observations->act_edge_candidate_count = act_edge_candidate_count;
   observations->dpu_invariants = dpu_invariants;
@@ -3202,6 +3536,8 @@ fail:
   free(network_output_routes);
   free(act_output_slice_candidates);
   free(act_output_covers);
+  free(act_replica_groups);
+  free(act_replica_candidates);
   free(act_edge_candidates);
   free(dpu_invariants);
   free(act_dpu_edge_candidates);
