@@ -393,6 +393,13 @@ The exact FP16 five-input multi-scalar carriers report
 source-shape and version-2 contracts; other higher-arity scalar layouts remain
 unsupported.
 
+The exact hybrid five-input form uses `(4,8)` data, a second `(4,8)` tensor,
+and three `(4,1)` parameters. Compiler 8.3 exposes four positional groups of
+four `(4,4,1,1,1)->4` invocations. Python recognizes only this complete
+source/descriptor pattern and automatically selects all four groups; selecting
+only two groups updates exactly half the logical output and is rejected as an
+incomplete binding.
+
 ### Review a multi-kernel build plan
 
 For a graph with several custom kernels, separate validation from compiler

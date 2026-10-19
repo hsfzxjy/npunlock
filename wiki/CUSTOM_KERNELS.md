@@ -460,6 +460,15 @@ and [per-row multi-scalar example](../examples/example_per_row_multi_scalar_cust
 Other scalar counts, positions, shapes, axes, and precisions remain
 unsupported.
 
+An exact hybrid form uses two `(4,8)` inputs followed by three `(4,1)`
+parameters. It exposes four positional row groups, each with four
+`(4,4,1,1,1) -> 4` invocations. Records 0 and 1 are indexed by `i`; records 2
+through 4 are read at index zero. Controlled two-group patches changed exactly
+half the output, while all four groups produced the complete result, so Python
+accepts only the full ordered group set. See the
+[hybrid five-input example](../examples/example_hybrid_five_input_custom.py).
+Other mixtures and multi-group layouts remain unsupported.
+
 The same carrier also runs a composed multi-pass kernel using all five inputs:
 data, residual, scale, bias, and gate. The entry adds data and residual into
 FP32 scratch, accumulates an invocation-local sum of squares, calls `sqrtf` for
@@ -634,6 +643,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
 - [Five-input FP16 kernel with four scalar parameters](../examples/example_multi_scalar_custom.py)
 - [Five-input FP16 kernel with four parameters per row](../examples/example_per_row_multi_scalar_custom.py)
+- [Five-input FP16 kernel with two row tensors and three row parameters](../examples/example_hybrid_five_input_custom.py)
 - [Fused five-input invocation-local RMS normalization](../examples/example_fused_rmsnorm.py)
 - [Dimension-aware local transform](../examples/example_dimension_aware.py)
 - [Runtime dispatch through a bounded same-file function pointer](../examples/example_function_dispatch.py)

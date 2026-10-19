@@ -1918,6 +1918,48 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(unsupported.mappings[0].status, "explicit-required")
         self.assertIn("scalar input positions", unsupported.mappings[0].reason)
 
+    def test_exact_fp16_hybrid_five_input_groups_map_automatically(self) -> None:
+        class HybridNative(FakeNative):
+            def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
+                raise npu.NativeError("patchblob discovery", 5, "unsupported", b"requires version 2")
+
+        tensors = (
+            npu.PatchTensorContract("input", 0, "f16", 4, 8, 0x07),
+            npu.PatchTensorContract("input", 1, "f16", 4, 8, 0x07),
+            npu.PatchTensorContract("input", 2, "f16", 1, 2, 0x07),
+            npu.PatchTensorContract("input", 3, "f16", 1, 2, 0x07),
+            npu.PatchTensorContract("input", 4, "f16", 1, 2, 0x07),
+            npu.PatchTensorContract("output", 0, "f16", 4, 8, 0x0F),
+        )
+        targets = tuple(npu.PatchTargetV2(index, index, tensors) for index in range(16))
+        fake = HybridNative()
+        fake.discovery_groups_v2 = tuple(tuple(targets[group * 4 : group * 4 + 4]) for group in range(4))
+        data = npu.input("data", shape=(4, 8), dtype="f16")
+        auxiliary = npu.input("auxiliary", shape=(4, 8), dtype="f16")
+        parameters = tuple(npu.input(f"parameter_{index}", shape=(4, 1), dtype="f16") for index in range(3))
+        output = npu.custom(
+            data,
+            auxiliary,
+            *parameters,
+            source=b"hybrid five-input kernel",
+            carrier="FakeQuantize",
+            levels=16,
+        )
+        prepared = npu.prepare(
+            npu.Graph([data, auxiliary, *parameters], [output]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(prepared.mappings[0].status, "automatic")
+        self.assertEqual(prepared.mappings[0].group_indices, (0, 1, 2, 3))
+        self.assertEqual(prepared.groups[0].scalar_input_indices, (2, 3, 4))
+        prepared.build(movi_dll_dir="movi")
+        self.assertEqual(fake.patch_args[2], targets)
+
+        with self.assertRaisesRegex(ValueError, "compatible validated multi-group mapping"):
+            prepared.plan(bindings={output: prepared.groups[:2]})
+
     def test_mixed_precision_plan_uses_v1_for_losslessly_representable_group(self) -> None:
         class MixedNative(FakeNative):
             def discover_patch_targets(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTarget, ...], ...]:
@@ -1982,7 +2024,7 @@ class CompilationFlowTests(unittest.TestCase):
             (npu.PatchTarget(1, 1, 1, 8, 32, 0x3B),),
         )
 
-        with self.assertRaisesRegex(ValueError, "unique exact-cover partition mapping"):
+        with self.assertRaisesRegex(ValueError, "unique validated multi-group mapping"):
             npu.compile(
                 npu.Graph([x], [y]),
                 native_dir="unused",

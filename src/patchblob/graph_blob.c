@@ -1146,6 +1146,7 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
   bool mixed_precision = false;
   bool supported_unary_conversion;
   bool supported_multi_scalar_fp16;
+  bool supported_hybrid_scalar_fp16;
   const uint32_t input_flags =
       PATCHBLOB_TENSOR_STATIC_V2 | PATCHBLOB_TENSOR_DENSE_V2 | PATCHBLOB_TENSOR_CMX_V2;
   const uint32_t output_flags = input_flags | PATCHBLOB_TENSOR_DISJOINT_FROM_INPUTS_V2;
@@ -1214,12 +1215,19 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
          (output->element_count == 8u && output->span_bytes == 16u)) &&
         target->tensors[0].element_count == output->element_count &&
         target->tensors[0].span_bytes == output->span_bytes && scalar_input_count == 4u;
+    supported_hybrid_scalar_fp16 =
+        output->precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2 && input_count == 5u &&
+        output->element_count == 4u && output->span_bytes == 8u &&
+        target->tensors[0].element_count == output->element_count &&
+        target->tensors[0].span_bytes == output->span_bytes &&
+        target->tensors[1].element_count == output->element_count &&
+        target->tensors[1].span_bytes == output->span_bytes && scalar_input_count == 3u;
     if (input_count == 2u && scalar_input_count > 1u) {
       return unsupported(diagnostic,
                          "version 2 binary contracts allow at most one observed scalar input");
     }
     if (scalar_input_count != 0u && !(input_count == 2u && scalar_input_count == 1u) &&
-        !supported_multi_scalar_fp16) {
+        !supported_multi_scalar_fp16 && !supported_hybrid_scalar_fp16) {
       return unsupported(diagnostic,
                          "version 2 scalar inputs do not match an observed binary or FP16 "
                          "five-input contract");

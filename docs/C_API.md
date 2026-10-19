@@ -285,6 +285,13 @@ does not encode whether a scalar is graph-global or row-local, so callers must
 retain that source mapping proof. Version 2 rejects other multi-scalar counts,
 positions, precisions, and spans.
 
+A separate exact FP16 hybrid contract has five inputs and one output with
+`(4,4,1,1,1)->4` records: inputs 0 and 1 plus the output each span eight
+bytes, while inputs 2 through 4 each span two bytes. The validated `[4,8]`
+source graph produces four positional groups of four invocations; all 16
+targets must be patched together. This does not establish other mixtures of
+equal-span and scalar records or a general multi-group mapping rule.
+
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release
 the result with `patchblob_discovery_result_release()`. Discovery is based on a

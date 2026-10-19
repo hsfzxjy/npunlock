@@ -196,6 +196,16 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
     PROPERTIES PASS_REGULAR_EXPRESSION "\"element_count\": 8"
   )
   add_test(
+    NAME porting_inspect_hybrid_scalar_fp16_fixture
+    COMMAND npunlock_inspect
+      --graph
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/fake-quantize-hybrid-per-row-fp16-4x8.blob
+  )
+  set_tests_properties(
+    porting_inspect_hybrid_scalar_fp16_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION "\"group_count\": 4"
+  )
+  add_test(
     NAME porting_inspect_rejects_empty
     COMMAND npunlock_inspect
       --graph ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs.bin

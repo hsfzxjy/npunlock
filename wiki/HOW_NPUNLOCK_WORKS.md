@@ -164,6 +164,13 @@ scalars. The same-precision integer and exact multi-scalar groups can use the
 normal unambiguous positional mapping. Replicated invocations are patched
 together and are not assumed to be output partitions.
 
+One exact hybrid five-input source layout is a validated exception to the
+usual one-group mapping: two `(4,8)` FP16 tensors followed by three `(4,1)`
+parameters compile into four row-ordered groups, each containing four
+`(4,4,1,1,1)->4` invocations. Controlled partial patches showed that each
+group owns one logical row, so the frontend accepts only the complete ordered
+four-group selection for this source and descriptor pattern.
+
 ## 5. Substitute the executable image
 
 `patchblob` extracts `.text` from the validated SHAVE ELF, appends it to the
@@ -215,7 +222,8 @@ equal-span and one row-broadcast U16/U32 carrier, scalar inputs in either
 position for FP16/FP32/U16/U32 through exact global and per-row carriers, and
 one explicitly bound U8-to-FP32 unary conversion carrier. It also includes one
 FP16 five-input data-plus-four-scalars carrier in both graph-global and exact
-per-row forms. The exact layouts used by these cases are execution-tested.
+per-row forms, plus the exact two-vector/three-row-parameter hybrid. The exact
+layouts used by these cases are execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic

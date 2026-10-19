@@ -961,7 +961,15 @@ def _custom_scalar_input_indices(node: Node) -> tuple[int, ...]:
             and node.inputs[0].shape == (4, 8)
             and all(value.shape == (4, 1) for value in node.inputs[1:])
         )
-        return (1, 2, 3, 4) if graph_global or per_row else ()
+        hybrid_per_row = (
+            output_shape == (4, 8)
+            and node.inputs[0].shape == (4, 8)
+            and node.inputs[1].shape == (4, 8)
+            and all(value.shape == (4, 1) for value in node.inputs[2:])
+        )
+        if graph_global or per_row:
+            return (1, 2, 3, 4)
+        return (2, 3, 4) if hybrid_per_row else ()
     return tuple(
         index
         for index, value in enumerate(node.inputs)
@@ -1046,9 +1054,49 @@ def _combined_custom_targets(
         range(first_invocation, first_invocation + len(targets))
     ):
         return None
+    first_range = targets[0].range_index
+    if tuple(target.range_index for target in targets) != tuple(range(first_range, first_range + len(targets))):
+        return None
     if len({(target.invocation_index, target.range_index) for target in targets}) != len(targets):
         return None
     if _custom_targets_mismatch(node, targets, require_partition_cover=True) is not None:
+        return None
+    return targets
+
+
+def _combined_hybrid_per_row_targets_v2(
+    node: Node,
+    groups: tuple[tuple[PatchTargetV2, ...], ...],
+) -> tuple[PatchTargetV2, ...] | None:
+    """Validate the exact compiler-8.3 four-row hybrid five-input layout."""
+
+    if (
+        len(groups) != 4
+        or len(node.outputs) != 1
+        or node.outputs[0].shape != (4, 8)
+        or node.outputs[0].dtype != "f16"
+        or tuple(value.shape for value in node.inputs) != ((4, 8), (4, 8), (4, 1), (4, 1), (4, 1))
+        or any(value.dtype != "f16" for value in node.inputs)
+        or any(len(group) != 4 for group in groups)
+    ):
+        return None
+    expected_tensors = (
+        PatchTensorContract("input", 0, "f16", 4, 8, 0x07),
+        PatchTensorContract("input", 1, "f16", 4, 8, 0x07),
+        PatchTensorContract("input", 2, "f16", 1, 2, 0x07),
+        PatchTensorContract("input", 3, "f16", 1, 2, 0x07),
+        PatchTensorContract("input", 4, "f16", 1, 2, 0x07),
+        PatchTensorContract("output", 0, "f16", 4, 8, 0x0F),
+    )
+    targets = tuple(target for group in groups for target in group)
+    if any(target.target_flags != 0 or target.tensors != expected_tensors for target in targets):
+        return None
+    first_invocation = targets[0].invocation_index
+    if tuple(target.invocation_index for target in targets) != tuple(
+        range(first_invocation, first_invocation + len(targets))
+    ):
+        return None
+    if len({(target.invocation_index, target.range_index) for target in targets}) != len(targets):
         return None
     return targets
 
@@ -1107,12 +1155,18 @@ def _automatic_group_indices(
                 ):
                     continue
             else:
-                if not all(isinstance(target, PatchTarget) for group in groups for target in group):
-                    continue
-                legacy_groups = tuple(
-                    tuple(target for target in group if isinstance(target, PatchTarget)) for group in groups
-                )
-                targets = _combined_custom_targets(node, legacy_groups)
+                if all(isinstance(target, PatchTarget) for group in groups for target in group):
+                    legacy_groups = tuple(
+                        tuple(target for target in group if isinstance(target, PatchTarget)) for group in groups
+                    )
+                    targets = _combined_custom_targets(node, legacy_groups)
+                elif all(isinstance(target, PatchTargetV2) for group in groups for target in group):
+                    versioned_groups = tuple(
+                        tuple(target for target in group if isinstance(target, PatchTargetV2)) for group in groups
+                    )
+                    targets = _combined_hybrid_per_row_targets_v2(node, versioned_groups)
+                else:
+                    targets = None
                 if targets is None:
                     continue
             if node in custom_nodes:
@@ -1127,9 +1181,9 @@ def _automatic_group_indices(
             f"native graph has {len(discovered_groups)} positional ACT groups for "
             f"{len(computational_nodes)} computational nodes and {reason} valid mapping; "
             "automatic selection requires a one-to-one positional mapping or one unique "
-            "exact-cover partition mapping"
+            "validated multi-group mapping"
         )
-    return tuple(solutions[0][node] for node in custom_nodes), "unique exact-cover partition mapping"
+    return tuple(solutions[0][node] for node in custom_nodes), "unique validated multi-group mapping"
 
 
 PatchTargetContract = PatchTarget | PatchTargetV2
@@ -1723,12 +1777,21 @@ class PreparedGraph:
                         if legacy_targets is not None:
                             targets = legacy_targets
                 else:
-                    if any(isinstance(target, PatchTargetV2) for group in groups for target in group):
-                        raise ValueError("version 2 per-tensor ACT contracts require one explicit group")
-                    combined = _combined_custom_targets(node, groups)
+                    if all(isinstance(target, PatchTarget) for group in groups for target in group):
+                        legacy_groups = tuple(
+                            tuple(target for target in group if isinstance(target, PatchTarget)) for group in groups
+                        )
+                        combined = _combined_custom_targets(node, legacy_groups)
+                    elif all(isinstance(target, PatchTargetV2) for group in groups for target in group):
+                        versioned_groups = tuple(
+                            tuple(target for target in group if isinstance(target, PatchTargetV2)) for group in groups
+                        )
+                        combined = _combined_hybrid_per_row_targets_v2(node, versioned_groups)
+                    else:
+                        combined = None
                     if combined is None:
                         raise ValueError(
-                            f"ACT groups {indices!r} do not form a compatible exact cover for "
+                            f"ACT groups {indices!r} do not form a compatible validated multi-group mapping for "
                             f"custom node {node.name or '<unnamed>'!r}"
                         )
                     targets = combined

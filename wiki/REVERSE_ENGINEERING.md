@@ -1890,6 +1890,38 @@ descriptor does not by itself distinguish row-local values from graph-global
 scalars. It does not establish arbitrary row counts or widths, axes, parameter
 positions/counts, other precisions, compilers, or NPU generations.
 
+## 62. Hybrid five-input multi-group execution
+
+On 2026-10-19, graph compiler 8.3 compiled an FP16
+`FakeQuantize(levels=16)` graph with two independently bound `[4,8]` inputs
+followed by three independently bound `[4,1]` inputs. Element-varying second
+input values and distinct parameters in every row made the unmodified graph
+match an exact host oracle at all 32 outputs.
+
+Unlike the preceding five-input layouts, discovery produced four positional
+ACT groups. Each group contains four `(4,4,1,1,1)->4` invocations: inputs 0
+and 1 plus the output use eight-byte FP16 spans, while inputs 2 through 4 each
+use one two-byte value. The 16 invocation and range indices are consecutive
+and unique.
+
+All six possible two-group substitutions were executed with a kernel that
+weighted every input differently. Every pair changed exactly 16 of 32 outputs,
+and the changed rows corresponded exactly to the selected group indices.
+Selecting all four groups matched all 32 outputs. The complete selection also
+matched through explicitly shared buffers. This establishes that the four
+groups are row partitions for this carrier rather than interchangeable
+replicas.
+
+The retained 115,608-byte carrier has SHA-256
+`da004b1675952220cea108eafe3fa1dd317a9ef245170a4ee976e0ba50c0aac8`.
+The automatically patched graph was 116,632 bytes with SHA-256
+`7a7f61166457bd0a67b27fb284cfb2994d323f2b38e2e95340df4a0a17c32403`.
+
+This establishes only the exact FP16 two-`[4,8]` plus three-`[4,1]` source
+layout, record positions, four-group ordering, carrier, compiler, and device.
+It does not establish arbitrary vector/scalar mixtures, shapes, axes, group
+counts, precisions, compilers, or NPU generations.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -320,6 +320,77 @@ static int check_multi_scalar_fp16_carrier(npunlock_view carrier, npunlock_view 
   return 0;
 }
 
+static int check_hybrid_scalar_fp16_carrier(npunlock_view carrier, npunlock_view elf) {
+  patchblob_discovery_result discovery = {0};
+  patchblob_discovery_result_v2 discovery_v2 = {0};
+  patchblob_target_v2 targets[16] = {{0}};
+  patchblob_options options = {0};
+  patchblob_result result = {0};
+  npunlock_status status;
+  size_t index;
+  size_t tensor_index;
+
+  status = patchblob_discover_targets(carrier, &discovery);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  patchblob_discovery_result_release(&discovery);
+  status = patchblob_discover_targets_v2(carrier, &discovery_v2);
+  if (status != NPUNLOCK_STATUS_OK && discovery_v2.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)discovery_v2.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(discovery_v2.group_count == 4);
+  CHECK(discovery_v2.target_count == 16);
+  for (index = 0; index < discovery_v2.target_count; ++index) {
+    const patchblob_target_v2 *target = &discovery_v2.targets[index].target;
+    CHECK(discovery_v2.targets[index].group_index == index / 4u);
+    CHECK(target->invocation_index == index);
+    CHECK(target->range_index == index);
+    CHECK(target->target_flags == 0);
+    CHECK(target->tensor_count == 6);
+    for (tensor_index = 0; tensor_index < 2; ++tensor_index) {
+      CHECK(target->tensors[tensor_index].precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2);
+      CHECK(target->tensors[tensor_index].element_count == 4);
+      CHECK(target->tensors[tensor_index].span_bytes == 8);
+    }
+    for (tensor_index = 2; tensor_index < 5; ++tensor_index) {
+      CHECK(target->tensors[tensor_index].precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2);
+      CHECK(target->tensors[tensor_index].element_count == 1);
+      CHECK(target->tensors[tensor_index].span_bytes == 2);
+    }
+    CHECK(target->tensors[5].precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2);
+    CHECK(target->tensors[5].element_count == 4);
+    CHECK(target->tensors[5].span_bytes == 8);
+    targets[index] = *target;
+  }
+  patchblob_discovery_result_v2_release(&discovery_v2);
+
+  options.struct_size = sizeof(options);
+  options.image_alignment = 0x400;
+  options.tail_padding = 0x80;
+  status = patchblob_patch_v2(&options, carrier, elf, targets, 16, &result);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(result.graph_blob.size > carrier.size);
+  CHECK(strstr((const char *)result.report_json.data, "\"invocation_index\":15") != NULL);
+  patchblob_result_release(&result);
+
+  targets[0].tensors[2].element_count = 2;
+  targets[0].tensors[2].span_bytes = 4;
+  status = patchblob_patch_v2(&options, carrier, elf, targets, 16, &result);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "shape is unsupported") != NULL);
+  patchblob_result_release(&result);
+
+  targets[0].tensors[2].element_count = 1;
+  targets[0].tensors[2].span_bytes = 2;
+  targets[0].tensors[1].element_count = 1;
+  targets[0].tensors[1].span_bytes = 2;
+  status = patchblob_patch_v2(&options, carrier, elf, targets, 16, &result);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  CHECK(strstr((const char *)result.diagnostic.json.data, "FP16 five-input") != NULL);
+  patchblob_result_release(&result);
+  return 0;
+}
+
 int main(void) {
   npunlock_buffer carrier;
   npunlock_buffer two_operation_carrier;
@@ -342,6 +413,7 @@ int main(void) {
   npunlock_buffer binary_f32_carrier;
   npunlock_buffer multi_scalar_fp16_carrier;
   npunlock_buffer per_row_multi_scalar_fp16_carrier;
+  npunlock_buffer hybrid_scalar_fp16_carrier;
   npunlock_buffer elf;
   npunlock_buffer expected;
   npunlock_buffer unsupported_header = {0};
@@ -390,6 +462,7 @@ int main(void) {
   multi_scalar_fp16_carrier = read_file(FIXTURE_ROOT "fake-quantize-multi-scalar-fp16-1x32.blob");
   per_row_multi_scalar_fp16_carrier =
       read_file(FIXTURE_ROOT "fake-quantize-per-row-multi-scalar-fp16-4x8.blob");
+  hybrid_scalar_fp16_carrier = read_file(FIXTURE_ROOT "fake-quantize-hybrid-per-row-fp16-4x8.blob");
   elf = read_file(FIXTURE_ROOT "add1-fp16.elf");
   expected = read_file(FIXTURE_ROOT "add1-shared-1x16.blob");
   CHECK(carrier.data != NULL && two_operation_carrier.data != NULL &&
@@ -402,7 +475,7 @@ int main(void) {
         binary_u32_carrier.data != NULL && scalar_u32_carrier.data != NULL &&
         scalar_first_u32_carrier.data != NULL && binary_f32_carrier.data != NULL &&
         multi_scalar_fp16_carrier.data != NULL && per_row_multi_scalar_fp16_carrier.data != NULL &&
-        elf.data != NULL && expected.data != NULL);
+        hybrid_scalar_fp16_carrier.data != NULL && elf.data != NULL && expected.data != NULL);
 
   CHECK(check_scalar_carrier((npunlock_view){scalar_u16_carrier.data, scalar_u16_carrier.size},
                              (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U16_V2,
@@ -424,6 +497,9 @@ int main(void) {
   CHECK(check_multi_scalar_fp16_carrier((npunlock_view){per_row_multi_scalar_fp16_carrier.data,
                                                         per_row_multi_scalar_fp16_carrier.size},
                                         (npunlock_view){elf.data, elf.size}, 8u) == 0);
+  CHECK(check_hybrid_scalar_fp16_carrier(
+            (npunlock_view){hybrid_scalar_fp16_carrier.data, hybrid_scalar_fp16_carrier.size},
+            (npunlock_view){elf.data, elf.size}) == 0);
   unsupported_header.data = (uint8_t *)malloc(carrier.size);
   CHECK(unsupported_header.data != NULL);
   unsupported_header.size = carrier.size;
@@ -1231,6 +1307,7 @@ int main(void) {
   free(binary_f32_carrier.data);
   free(multi_scalar_fp16_carrier.data);
   free(per_row_multi_scalar_fp16_carrier.data);
+  free(hybrid_scalar_fp16_carrier.data);
   free(two_operation_carrier.data);
   free(carrier.data);
   return 0;
