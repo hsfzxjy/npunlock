@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v9\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v10\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -334,11 +334,38 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"act_dpu_edge_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dpu_edge_candidate_count; ++index) {
+    const npunlock_act_dpu_edge_candidate_observation *candidate =
+        &routing->act_dpu_edge_candidates[index];
+    const char *direction =
+        candidate->direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ? "act_to_dpu" : "dpu_to_act";
+    if (fprintf(stream,
+                "%s    {\"direction\": \"%s\", \"act_group_index\": %u, "
+                "\"act_invocation_index\": %u, \"act_tensor_record_index\": %u, "
+                "\"dpu_invariant_index\": %u, \"dpu_field_mask_raw\": %u, "
+                "\"act_candidate_count\": %u, \"match_observation\": "
+                "{\"data_symbol_raw\": %u, \"act_data_addend_raw\": %" PRId64
+                ", \"act_span_bytes\": %" PRIu64 ", \"dpu_data_addend_raw\": %" PRId64
+                ", \"dpu_span_bytes\": %" PRIu64 ", \"barrier_intersection_raw\": %" PRIu64 "}}",
+                index == 0 ? "" : ",\n", direction, candidate->act_group_index,
+                candidate->act_invocation_index, candidate->act_tensor_record_index,
+                candidate->dpu_invariant_index, candidate->dpu_field_mask_raw,
+                candidate->act_candidate_count, candidate->data_symbol_raw,
+                candidate->act_data_addend_raw, candidate->act_span_bytes,
+                candidate->dpu_data_addend_raw, candidate->dpu_span_bytes,
+                candidate->barrier_intersection_raw) < 0) {
+      return 0;
+    }
+  }
   return fprintf(stream,
                  "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
                  "and network-output DMA contract; routing and scheduling fields are raw "
                  "validated observations; ACT edge candidates are exact interval/ACT-schedule "
-                 "correlations, including bounded transitive wait/post paths; DPU CMX "
+                 "correlations, including bounded transitive wait/post paths; ACT/DPU candidates "
+                 "require interval containment and a direct schedule dependency; DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
                  "intervals, not semantic graph edges, logical offsets, partitions, or replicas; "
                  "discovery is not proof of execution compatibility\"\n}\n") >= 0;

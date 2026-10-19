@@ -51,7 +51,7 @@ FP16/FP32/U16/U32 carriers, and uniform float groups. Each target reports
 `scalar_input_indices` explicitly; `input_1_scalar` remains for compatibility.
 
 The report also lists validated network-output DMA routes: the raw CMX source,
-the destination output symbol/addend, and the transfer length. Schema v9 adds
+the destination output symbol/addend, and the transfer length. Schema v10 adds
 the exact compiler-8.3/NPU3720 DPU invariant form. For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for
 the architectural input-address and output-multicast register fields. It also
@@ -67,6 +67,15 @@ output address fields have appeared in the retained fixtures so far. Internal
 DMA paths, address reuse, and ambiguous schedules remain unresolved, and the
 inspector does not promote a matching address/schedule chain into a semantic
 edge or automatic patch target.
+
+The `act_dpu_edge_candidates` list performs the next bounded correlation. An
+ACT tensor must be fully contained in a DPU dense CMX interval with the same
+runtime symbol, and the producer's post mask must directly intersect the
+consumer's wait mask. Identical DPU register relocations are represented once
+with a raw field mask. Every candidate includes the count for its ACT tensor;
+non-unique matches remain visibly ambiguous. These are native interval and
+schedule candidates, not semantic graph edges and not permission to select a
+patch target.
 That includes the documented equal-span binary FP32 `Subtract` carrier.
 It also recognizes the structurally identical dense FP32 `(8,8)->8`
 invocations emitted for the documented row-broadcast carrier; inspection alone

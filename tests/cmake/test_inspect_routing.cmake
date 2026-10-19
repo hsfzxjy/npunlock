@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v9\""
+    "\"schema\": \"npunlock.porting.inspect.v10\""
     "\"tile_count_observed\""
     "\"tile_candidate_raw\""
     "\"parameter_base\""
@@ -50,6 +50,9 @@ foreach(required
     "\"input_tensor_observation\""
     "\"output_tensor_observation\""
     "\"dimensions_xyz\""
+    "\"act_dpu_edge_candidates\""
+    "\"dpu_field_mask_raw\""
+    "\"act_candidate_count\""
     "not semantic graph edges, logical offsets, partitions, or replicas")
   if(NOT first_output MATCHES "${required}")
     message(FATAL_ERROR "routing inspection omitted required observation: ${required}")
@@ -66,6 +69,17 @@ foreach(expected
   string(FIND "${first_output}" "${expected}" expected_offset)
   if(expected_offset EQUAL -1)
     message(FATAL_ERROR "DPU invariant routing changed a retained observation: ${expected}")
+  endif()
+endforeach()
+
+foreach(expected
+    "\"direction\": \"dpu_to_act\", \"act_group_index\": 0, \"act_invocation_index\": 0, \"act_tensor_record_index\": 0, \"dpu_invariant_index\": 0, \"dpu_field_mask_raw\": 3, \"act_candidate_count\": 1"
+    "\"act_data_addend_raw\": 832, \"act_span_bytes\": 16, \"dpu_data_addend_raw\": 832, \"dpu_span_bytes\": 32, \"barrier_intersection_raw\": 2"
+    "\"direction\": \"dpu_to_act\", \"act_group_index\": 0, \"act_invocation_index\": 1, \"act_tensor_record_index\": 0, \"dpu_invariant_index\": 0, \"dpu_field_mask_raw\": 3, \"act_candidate_count\": 1"
+    "\"act_data_addend_raw\": 848, \"act_span_bytes\": 16, \"dpu_data_addend_raw\": 832, \"dpu_span_bytes\": 32, \"barrier_intersection_raw\": 2")
+  string(FIND "${first_output}" "${expected}" expected_offset)
+  if(expected_offset EQUAL -1)
+    message(FATAL_ERROR "ACT/DPU candidate changed a retained observation: ${expected}")
   endif()
 endforeach()
 

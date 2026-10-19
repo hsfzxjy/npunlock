@@ -2371,6 +2371,218 @@ npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observatio
   return NPUNLOCK_STATUS_OK;
 }
 
+static bool dpu_address_is_first(const npunlock_dpu_cmx_address_observation *addresses,
+                                 size_t address_index) {
+  size_t index;
+  for (index = 0; index < address_index; ++index) {
+    if (addresses[index].data_symbol_raw == addresses[address_index].data_symbol_raw &&
+        addresses[index].data_addend_raw == addresses[address_index].data_addend_raw) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static uint32_t dpu_address_field_mask(const npunlock_dpu_cmx_address_observation *addresses,
+                                       size_t address_count, size_t address_index) {
+  uint32_t mask = 0u;
+  size_t index;
+  for (index = 0; index < address_count; ++index) {
+    if (addresses[index].data_symbol_raw == addresses[address_index].data_symbol_raw &&
+        addresses[index].data_addend_raw == addresses[address_index].data_addend_raw) {
+      mask |= UINT32_C(1) << addresses[index].field_index;
+    }
+  }
+  return mask;
+}
+
+static bool act_dpu_candidate_matches(const npunlock_invocation_routing_observation *act,
+                                      size_t tensor_index,
+                                      const npunlock_dpu_invariant_observation *dpu,
+                                      const npunlock_dpu_cmx_address_observation *dpu_address,
+                                      uint32_t direction, uint64_t *barrier_intersection) {
+  const npunlock_tensor_routing_observation *routing = &act->tensors[tensor_index];
+  const patchblob_tensor_contract_v2 *tensor = &act->target.tensors[tensor_index];
+  uint64_t act_start;
+  uint64_t dpu_start;
+  uint64_t dpu_span;
+  uint64_t intersection;
+
+  if (routing->data_addend < 0 || dpu_address->data_addend_raw < 0 || tensor->span_bytes == 0u) {
+    return false;
+  }
+  act_start = (uint64_t)routing->data_addend;
+  dpu_start = (uint64_t)dpu_address->data_addend_raw;
+  dpu_span = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ? dpu->input_span_bytes
+                                                                : dpu->output_span_bytes;
+  intersection = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                     ? act->post_mask_raw & dpu->wait_mask_raw
+                     : dpu->post_mask_raw & act->wait_mask_raw;
+  *barrier_intersection = intersection;
+  return routing->data_symbol == dpu_address->data_symbol_raw && dpu_span != 0u &&
+         intersection != 0u && act_start >= dpu_start &&
+         act_start <= UINT64_MAX - tensor->span_bytes && dpu_start <= UINT64_MAX - dpu_span &&
+         act_start + tensor->span_bytes <= dpu_start + dpu_span;
+}
+
+static npunlock_status derive_act_dpu_edge_candidates(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    const npunlock_dpu_invariant_observation *dpu_invariants, size_t dpu_invariant_count,
+    npunlock_act_dpu_edge_candidate_observation **candidates, size_t *candidate_count,
+    npunlock_diagnostic *diagnostic) {
+  npunlock_act_dpu_edge_candidate_observation *result = NULL;
+  size_t comparisons = 0u;
+  size_t result_count = 0u;
+  size_t result_index = 0u;
+  size_t allocation_size;
+  size_t act_index;
+  uint32_t direction;
+
+  *candidates = NULL;
+  *candidate_count = 0u;
+  for (act_index = 0; act_index < invocation_count; ++act_index) {
+    const npunlock_invocation_routing_observation *act = &invocations[act_index];
+    for (direction = NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU;
+         direction <= NPUNLOCK_ACT_DPU_DIRECTION_DPU_TO_ACT; ++direction) {
+      size_t tensor_begin =
+          direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ? act->target.tensor_count - 1u : 0u;
+      size_t tensor_end = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                              ? act->target.tensor_count
+                              : act->target.tensor_count - 1u;
+      size_t tensor_index;
+      for (tensor_index = tensor_begin; tensor_index < tensor_end; ++tensor_index) {
+        size_t dpu_index;
+        for (dpu_index = 0; dpu_index < dpu_invariant_count; ++dpu_index) {
+          const npunlock_dpu_invariant_observation *dpu = &dpu_invariants[dpu_index];
+          const npunlock_dpu_cmx_address_observation *addresses =
+              direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ? dpu->inputs : dpu->outputs;
+          size_t address_count = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                                     ? dpu->input_count
+                                     : dpu->output_count;
+          size_t address_index;
+          for (address_index = 0; address_index < address_count; ++address_index) {
+            uint64_t barrier_intersection;
+            if (!dpu_address_is_first(addresses, address_index)) {
+              continue;
+            }
+            if (comparisons == ACT_EDGE_MAX_COMPARISONS) {
+              return unsupported(diagnostic,
+                                 "ACT/DPU edge candidate analysis exceeds its work bound");
+            }
+            ++comparisons;
+            if (act_dpu_candidate_matches(act, tensor_index, dpu, &addresses[address_index],
+                                          direction, &barrier_intersection)) {
+              if (result_count == SIZE_MAX) {
+                return unsupported(diagnostic, "ACT/DPU edge candidate count overflows");
+              }
+              ++result_count;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (result_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (!npunlock_checked_mul_size(result_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT/DPU edge candidate allocation overflows");
+  }
+  result = (npunlock_act_dpu_edge_candidate_observation *)calloc(1u, allocation_size);
+  if (result == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT/DPU edge candidates");
+  }
+
+  for (act_index = 0; act_index < invocation_count; ++act_index) {
+    const npunlock_invocation_routing_observation *act = &invocations[act_index];
+    for (direction = NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU;
+         direction <= NPUNLOCK_ACT_DPU_DIRECTION_DPU_TO_ACT; ++direction) {
+      size_t tensor_begin =
+          direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ? act->target.tensor_count - 1u : 0u;
+      size_t tensor_end = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                              ? act->target.tensor_count
+                              : act->target.tensor_count - 1u;
+      size_t tensor_index;
+      for (tensor_index = tensor_begin; tensor_index < tensor_end; ++tensor_index) {
+        size_t local_count = 0u;
+        size_t dpu_index;
+        for (dpu_index = 0; dpu_index < dpu_invariant_count; ++dpu_index) {
+          const npunlock_dpu_invariant_observation *dpu = &dpu_invariants[dpu_index];
+          const npunlock_dpu_cmx_address_observation *addresses =
+              direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ? dpu->inputs : dpu->outputs;
+          size_t address_count = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                                     ? dpu->input_count
+                                     : dpu->output_count;
+          size_t address_index;
+          for (address_index = 0; address_index < address_count; ++address_index) {
+            uint64_t barrier_intersection;
+            if (dpu_address_is_first(addresses, address_index) &&
+                act_dpu_candidate_matches(act, tensor_index, dpu, &addresses[address_index],
+                                          direction, &barrier_intersection)) {
+              ++local_count;
+            }
+          }
+        }
+        if (local_count > UINT32_MAX) {
+          free(result);
+          return unsupported(diagnostic,
+                             "ACT/DPU edge ambiguity count exceeds the supported range");
+        }
+        for (dpu_index = 0; dpu_index < dpu_invariant_count; ++dpu_index) {
+          const npunlock_dpu_invariant_observation *dpu = &dpu_invariants[dpu_index];
+          const npunlock_dpu_cmx_address_observation *addresses =
+              direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ? dpu->inputs : dpu->outputs;
+          size_t address_count = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                                     ? dpu->input_count
+                                     : dpu->output_count;
+          size_t address_index;
+          for (address_index = 0; address_index < address_count; ++address_index) {
+            const npunlock_dpu_cmx_address_observation *address = &addresses[address_index];
+            npunlock_act_dpu_edge_candidate_observation *candidate;
+            uint64_t barrier_intersection;
+            if (!dpu_address_is_first(addresses, address_index) ||
+                !act_dpu_candidate_matches(act, tensor_index, dpu, address, direction,
+                                           &barrier_intersection)) {
+              continue;
+            }
+            if (result_index >= result_count) {
+              free(result);
+              return unsupported(diagnostic,
+                                 "ACT/DPU edge candidate count changed during inspection");
+            }
+            candidate = &result[result_index++];
+            candidate->direction = direction;
+            candidate->act_group_index = act->group_index;
+            candidate->act_invocation_index = act->target.invocation_index;
+            candidate->act_tensor_record_index = (uint32_t)tensor_index;
+            candidate->dpu_invariant_index = dpu->invariant_index;
+            candidate->dpu_field_mask_raw =
+                dpu_address_field_mask(addresses, address_count, address_index);
+            candidate->act_candidate_count = (uint32_t)local_count;
+            candidate->data_symbol_raw = address->data_symbol_raw;
+            candidate->act_data_addend_raw = act->tensors[tensor_index].data_addend;
+            candidate->act_span_bytes = act->target.tensors[tensor_index].span_bytes;
+            candidate->dpu_data_addend_raw = address->data_addend_raw;
+            candidate->dpu_span_bytes = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                                            ? dpu->input_span_bytes
+                                            : dpu->output_span_bytes;
+            candidate->barrier_intersection_raw = barrier_intersection;
+          }
+        }
+      }
+    }
+  }
+  if (result_index != result_count) {
+    free(result);
+    return unsupported(diagnostic, "ACT/DPU edge candidate count changed during inspection");
+  }
+  *candidates = result;
+  *candidate_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 void npunlock_graph_routing_observations_release(
     npunlock_graph_routing_observations *observations) {
   if (observations == NULL) {
@@ -2380,6 +2592,7 @@ void npunlock_graph_routing_observations_release(
   free(observations->network_output_routes);
   free(observations->act_edge_candidates);
   free(observations->dpu_invariants);
+  free(observations->act_dpu_edge_candidates);
   memset(observations, 0, sizeof(*observations));
 }
 
@@ -2392,6 +2605,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_network_output_route_observation *network_output_routes = NULL;
   npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
   npunlock_dpu_invariant_observation *dpu_invariants = NULL;
+  npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates = NULL;
   uint64_t *parameter_bases = NULL;
   size_t target_count = 0;
   size_t group_count = 0;
@@ -2399,6 +2613,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t network_output_route_count = 0;
   size_t act_edge_candidate_count = 0;
   size_t dpu_invariant_count = 0;
+  size_t act_dpu_edge_candidate_count = 0;
   size_t index;
   uint32_t tile_count_observed = 0;
   npunlock_status status;
@@ -2483,6 +2698,12 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = derive_act_dpu_edge_candidates(invocations, invocation_count, dpu_invariants,
+                                          dpu_invariant_count, &act_dpu_edge_candidates,
+                                          &act_dpu_edge_candidate_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
 
   free(discovered);
   free(parameter_bases);
@@ -2497,6 +2718,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->act_edge_candidate_count = act_edge_candidate_count;
   observations->dpu_invariants = dpu_invariants;
   observations->dpu_invariant_count = dpu_invariant_count;
+  observations->act_dpu_edge_candidates = act_dpu_edge_candidates;
+  observations->act_dpu_edge_candidate_count = act_dpu_edge_candidate_count;
   return NPUNLOCK_STATUS_OK;
 
 fail:
@@ -2504,6 +2727,7 @@ fail:
   free(network_output_routes);
   free(act_edge_candidates);
   free(dpu_invariants);
+  free(act_dpu_edge_candidates);
   free(discovered);
   free(parameter_bases);
   graph_layout_release(&layout);

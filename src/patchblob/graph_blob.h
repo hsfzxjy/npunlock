@@ -129,6 +129,25 @@ typedef struct npunlock_dpu_invariant_observation {
   uint32_t output_count;
 } npunlock_dpu_invariant_observation;
 
+#define NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU 1u
+#define NPUNLOCK_ACT_DPU_DIRECTION_DPU_TO_ACT 2u
+
+typedef struct npunlock_act_dpu_edge_candidate_observation {
+  uint32_t direction;
+  uint32_t act_group_index;
+  uint32_t act_invocation_index;
+  uint32_t act_tensor_record_index;
+  uint32_t dpu_invariant_index;
+  uint32_t dpu_field_mask_raw;
+  uint32_t act_candidate_count;
+  uint32_t data_symbol_raw;
+  int64_t act_data_addend_raw;
+  uint64_t act_span_bytes;
+  int64_t dpu_data_addend_raw;
+  uint64_t dpu_span_bytes;
+  uint64_t barrier_intersection_raw;
+} npunlock_act_dpu_edge_candidate_observation;
+
 typedef struct npunlock_graph_routing_observations {
   npunlock_invocation_routing_observation *invocations;
   size_t invocation_count;
@@ -140,6 +159,8 @@ typedef struct npunlock_graph_routing_observations {
   size_t act_edge_candidate_count;
   npunlock_dpu_invariant_observation *dpu_invariants;
   size_t dpu_invariant_count;
+  npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates;
+  size_t act_dpu_edge_candidate_count;
 } npunlock_graph_routing_observations;
 
 npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,

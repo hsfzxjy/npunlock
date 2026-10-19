@@ -51,7 +51,7 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   )
   set_tests_properties(
     porting_inspect_fixture
-    PROPERTIES PASS_REGULAR_EXPRESSION "npunlock.porting.inspect.v9"
+    PROPERTIES PASS_REGULAR_EXPRESSION "npunlock.porting.inspect.v10"
   )
   add_test(
     NAME porting_inspect_routing_report
