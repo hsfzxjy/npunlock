@@ -1898,6 +1898,56 @@ inspect_network_output_routes(const graph_layout *layout,
   return NPUNLOCK_STATUS_OK;
 }
 
+static uint32_t dpu_input_element_size(uint32_t dtype) {
+  switch (dtype) {
+  case 0u: /* FP16 */
+  case 5u: /* BF16 */
+    return 2u;
+  case 1u: /* U8 */
+  case 2u: /* I8 */
+  case 8u: /* FP8 */
+    return 1u;
+  default:
+    return 0u;
+  }
+}
+
+static uint32_t dpu_output_element_size(uint32_t dtype) {
+  switch (dtype) {
+  case 0u: /* FP16/BF16 */
+    return 2u;
+  case 1u: /* U8F */
+  case 2u: /* G8 */
+  case 3u: /* I8 */
+    return 1u;
+  case 4u: /* I32/FP32 */
+    return 4u;
+  default:
+    return 0u;
+  }
+}
+
+static bool dpu_dense_tensor_span(const uint32_t dimensions[3], uint32_t element_size,
+                                  uint64_t *element_count, uint64_t *span_bytes) {
+  uint64_t count = 1u;
+  size_t index;
+  if (element_size == 0u) {
+    return false;
+  }
+  for (index = 0; index < 3u; ++index) {
+    if (dimensions[index] == 0u || count > UINT64_MAX / dimensions[index]) {
+      return false;
+    }
+    count *= dimensions[index];
+  }
+  if (count > UINT64_MAX / element_size) {
+    return false;
+  }
+  *element_count = count;
+  *span_bytes = count * element_size;
+  return true;
+}
+
 static npunlock_status inspect_dpu_invariants(const graph_layout *layout,
                                               npunlock_dpu_invariant_observation **observations_out,
                                               size_t *observation_count_out,
@@ -1967,6 +2017,15 @@ static npunlock_status inspect_dpu_invariants(const graph_layout *layout,
   for (index = 0; index < invariant_count; ++index) {
     const uint8_t *record = layout->blob.data + invariants->offset + index * DPU_INVARIANT_SIZE;
     npunlock_dpu_invariant_observation *observation = &observations[index];
+    uint32_t tensor_size0 = read_u32(record + 0x40u);
+    uint32_t tensor_size1 = read_u32(record + 0x44u);
+    uint32_t tensor_mode = read_u32(record + 0x4cu);
+    uint32_t kernel_pad_cfg = read_u32(record + 0x30u);
+    uint32_t output_cfg = read_u32(record + 0x78u);
+    uint32_t output_dim0 = read_u32(record + 0x88u);
+    uint32_t output_dim1 = read_u32(record + 0x8cu);
+    uint32_t input_element_size;
+    uint32_t output_element_size;
     observation->section_index = (uint32_t)invariant_section_index;
     observation->invariant_index = (uint32_t)index;
     observation->wait_mask_raw = read_u64(record + 0x108u);
@@ -1977,11 +2036,36 @@ static npunlock_status inspect_dpu_invariants(const graph_layout *layout,
     observation->clean_after_raw = read_u32(record + 0x124u);
     observation->variant_count_raw = read_u16(record + 0x128u);
     observation->cluster_raw = record[0x12au];
+    observation->input_dimensions_xyz[0] = tensor_size0 & 0x3fffu;
+    observation->input_dimensions_xyz[1] = (tensor_size0 >> 14u) & 0x3fffu;
+    observation->input_dimensions_xyz[2] = tensor_size1 & 0x3fffu;
+    observation->input_dtype_raw = (tensor_mode >> 4u) & 0xfu;
+    observation->input_dense_raw = (kernel_pad_cfg >> 15u) & 1u;
+    observation->output_dimensions_xyz[0] = (output_dim1 & 0x1fffu) + 1u;
+    observation->output_dimensions_xyz[1] = (output_dim0 & 0x1fffu) + 1u;
+    observation->output_dimensions_xyz[2] = ((output_dim0 >> 13u) & 0x1fffu) + 1u;
+    observation->output_dtype_raw = output_cfg & 0xfu;
+    observation->output_sparse_raw = ((output_cfg >> 13u) & 1u) | ((output_cfg >> 15u) & 1u);
+    input_element_size = dpu_input_element_size(observation->input_dtype_raw);
+    output_element_size = dpu_output_element_size(observation->output_dtype_raw);
     if (observation->variant_count_raw == 0u || observation->cluster_raw >= layout->tile_count) {
       free(observations);
       free(input_fields_seen);
       free(output_fields_seen);
       return unsupported(diagnostic, "DPU invariant scheduling fields are unsupported");
+    }
+    if (observation->input_dense_raw != 1u || observation->output_sparse_raw != 0u ||
+        ((output_cfg >> 17u) & 1u) != 1u ||
+        !dpu_dense_tensor_span(observation->input_dimensions_xyz, input_element_size,
+                               &observation->input_element_count, &observation->input_span_bytes) ||
+        !dpu_dense_tensor_span(observation->output_dimensions_xyz, output_element_size,
+                               &observation->output_element_count,
+                               &observation->output_span_bytes)) {
+      free(observations);
+      free(input_fields_seen);
+      free(output_fields_seen);
+      return unsupported(diagnostic,
+                         "DPU invariant tensor extent is not static dense and byte-addressable");
     }
   }
 

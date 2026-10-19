@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v8\""
+    "\"schema\": \"npunlock.porting.inspect.v9\""
     "\"tile_count_observed\""
     "\"tile_candidate_raw\""
     "\"parameter_base\""
@@ -47,6 +47,9 @@ foreach(required
     "\"output_cmx_relocations\""
     "\"register_offset\""
     "\"variant_count_raw\""
+    "\"input_tensor_observation\""
+    "\"output_tensor_observation\""
+    "\"dimensions_xyz\""
     "not semantic graph edges, logical offsets, partitions, or replicas")
   if(NOT first_output MATCHES "${required}")
     message(FATAL_ERROR "routing inspection omitted required observation: ${required}")
@@ -57,7 +60,9 @@ foreach(expected
     "\"register_offset\": 92, \"relocation_type\": 4, \"data_symbol_raw\": 0, \"data_addend_raw\": 768"
     "\"register_offset\": 160, \"relocation_type\": 7, \"data_symbol_raw\": 0, \"data_addend_raw\": 832"
     "\"cluster_raw\": 0, \"wait_mask_raw\": 1, \"post_mask_raw\": 2"
-    "\"variant_count_raw\": 1")
+    "\"variant_count_raw\": 1"
+    "\"input_tensor_observation\": {\"dimensions_xyz\": [1, 1, 16], \"dtype_raw\": 0, \"dense_raw\": 1, \"element_count\": 16, \"span_bytes\": 32}"
+    "\"output_tensor_observation\": {\"dimensions_xyz\": [1, 1, 16], \"dtype_raw\": 0, \"sparse_raw\": 0, \"element_count\": 16, \"span_bytes\": 32}")
   string(FIND "${first_output}" "${expected}" expected_offset)
   if(expected_offset EQUAL -1)
     message(FATAL_ERROR "DPU invariant routing changed a retained observation: ${expected}")

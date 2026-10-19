@@ -51,11 +51,14 @@ FP16/FP32/U16/U32 carriers, and uniform float groups. Each target reports
 `scalar_input_indices` explicitly; `input_1_scalar` remains for compatibility.
 
 The report also lists validated network-output DMA routes: the raw CMX source,
-the destination output symbol/addend, and the transfer length. Schema v8 adds
+the destination output symbol/addend, and the transfer length. Schema v9 adds
 the exact compiler-8.3/NPU3720 DPU invariant form. For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for
-the architectural input-address and output-multicast register fields. This can
-show a concrete ACT-output -> DPU-input and DPU-output -> ACT-input address
+the architectural input-address and output-multicast register fields. It also
+decodes the raw input/output X/Y/Z and dtype fields and derives checked element
+and byte extents for static dense byte-addressable tensors. Packed or sparse
+forms remain unsupported instead of receiving a guessed physical extent. This
+can show a concrete ACT-output -> DPU-input and DPU-output -> ACT-input interval
 chain in a controlled graph.
 
 These observations are still not a complete route from every native task to a

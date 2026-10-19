@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v8\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v9\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -282,12 +282,25 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 ", \"post_mask_raw\": %" PRIu64
                 ", \"barrier_group_raw\": %u, \"barrier_mask_raw\": %u, "
                 "\"start_after_raw\": %u, \"clean_after_raw\": %u, "
-                "\"variant_count_raw\": %u}, \"input_cmx_relocations\": [",
+                "\"variant_count_raw\": %u}, "
+                "\"input_tensor_observation\": {\"dimensions_xyz\": [%u, %u, %u], "
+                "\"dtype_raw\": %u, \"dense_raw\": %u, \"element_count\": %" PRIu64
+                ", \"span_bytes\": %" PRIu64 "}, "
+                "\"output_tensor_observation\": {\"dimensions_xyz\": [%u, %u, %u], "
+                "\"dtype_raw\": %u, \"sparse_raw\": %u, \"element_count\": %" PRIu64
+                ", \"span_bytes\": %" PRIu64 "}, \"input_cmx_relocations\": [",
                 index == 0 ? "" : ",\n", invariant->section_index, invariant->invariant_index,
                 invariant->cluster_raw, invariant->wait_mask_raw, invariant->post_mask_raw,
                 invariant->barrier_group_raw, invariant->barrier_mask_raw,
                 invariant->start_after_raw, invariant->clean_after_raw,
-                invariant->variant_count_raw) < 0) {
+                invariant->variant_count_raw, invariant->input_dimensions_xyz[0],
+                invariant->input_dimensions_xyz[1], invariant->input_dimensions_xyz[2],
+                invariant->input_dtype_raw, invariant->input_dense_raw,
+                invariant->input_element_count, invariant->input_span_bytes,
+                invariant->output_dimensions_xyz[0], invariant->output_dimensions_xyz[1],
+                invariant->output_dimensions_xyz[2], invariant->output_dtype_raw,
+                invariant->output_sparse_raw, invariant->output_element_count,
+                invariant->output_span_bytes) < 0) {
       return 0;
     }
     for (address_index = 0; address_index < invariant->input_count; ++address_index) {
@@ -326,9 +339,9 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "and network-output DMA contract; routing and scheduling fields are raw "
                  "validated observations; ACT edge candidates are exact interval/ACT-schedule "
                  "correlations, including bounded transitive wait/post paths; DPU CMX "
-                 "relocations identify architectural register fields, not semantic graph edges, "
-                 "logical offsets, partitions, or replicas; discovery is not proof of execution "
-                 "compatibility\"\n}\n") >= 0;
+                 "relocations and dense tensor extents identify architectural fields and byte "
+                 "intervals, not semantic graph edges, logical offsets, partitions, or replicas; "
+                 "discovery is not proof of execution compatibility\"\n}\n") >= 0;
 }
 
 static void print_diagnostic(const npunlock_diagnostic *diagnostic) {

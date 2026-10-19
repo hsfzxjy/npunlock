@@ -113,6 +113,16 @@ typedef struct npunlock_dpu_invariant_observation {
   uint32_t start_after_raw;
   uint32_t clean_after_raw;
   uint32_t variant_count_raw;
+  uint32_t input_dimensions_xyz[3];
+  uint32_t input_dtype_raw;
+  uint32_t input_dense_raw;
+  uint64_t input_element_count;
+  uint64_t input_span_bytes;
+  uint32_t output_dimensions_xyz[3];
+  uint32_t output_dtype_raw;
+  uint32_t output_sparse_raw;
+  uint64_t output_element_count;
+  uint64_t output_span_bytes;
   npunlock_dpu_cmx_address_observation inputs[NPUNLOCK_DPU_MAX_INPUT_ADDRESSES];
   uint32_t input_count;
   npunlock_dpu_cmx_address_observation outputs[NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES];
