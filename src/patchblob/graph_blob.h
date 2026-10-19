@@ -41,6 +41,8 @@ typedef struct npunlock_patch_summary {
 } npunlock_patch_summary;
 
 #define NPUNLOCK_ROUTING_MAX_RANK 15u
+#define NPUNLOCK_DPU_MAX_INPUT_ADDRESSES 4u
+#define NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES 4u
 
 /*
  * Private inspection vocabulary. These are validated native observations,
@@ -93,6 +95,30 @@ typedef struct npunlock_act_edge_candidate_observation {
   uint64_t barrier_intersection_raw;
 } npunlock_act_edge_candidate_observation;
 
+typedef struct npunlock_dpu_cmx_address_observation {
+  uint32_t field_index;
+  uint32_t relocation_type;
+  uint32_t data_symbol_raw;
+  int64_t data_addend_raw;
+} npunlock_dpu_cmx_address_observation;
+
+typedef struct npunlock_dpu_invariant_observation {
+  uint32_t section_index;
+  uint32_t invariant_index;
+  uint32_t cluster_raw;
+  uint64_t wait_mask_raw;
+  uint64_t post_mask_raw;
+  uint32_t barrier_group_raw;
+  uint32_t barrier_mask_raw;
+  uint32_t start_after_raw;
+  uint32_t clean_after_raw;
+  uint32_t variant_count_raw;
+  npunlock_dpu_cmx_address_observation inputs[NPUNLOCK_DPU_MAX_INPUT_ADDRESSES];
+  uint32_t input_count;
+  npunlock_dpu_cmx_address_observation outputs[NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES];
+  uint32_t output_count;
+} npunlock_dpu_invariant_observation;
+
 typedef struct npunlock_graph_routing_observations {
   npunlock_invocation_routing_observation *invocations;
   size_t invocation_count;
@@ -102,6 +128,8 @@ typedef struct npunlock_graph_routing_observations {
   size_t network_output_route_count;
   npunlock_act_edge_candidate_observation *act_edge_candidates;
   size_t act_edge_candidate_count;
+  npunlock_dpu_invariant_observation *dpu_invariants;
+  size_t dpu_invariant_count;
 } npunlock_graph_routing_observations;
 
 npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,

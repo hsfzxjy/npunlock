@@ -13,7 +13,7 @@ if(NOT result EQUAL 0)
 endif()
 
 foreach(expected
-    "\"schema\": \"npunlock.porting.inspect.v7\""
+    "\"schema\": \"npunlock.porting.inspect.v8\""
     "\"invocation_index\": 0"
     "\"wait_mask_raw\": 1, \"post_mask_raw\": 2"
     "\"data_addend_raw\": 64"

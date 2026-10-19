@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v7\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v8\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -269,13 +269,66 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ]},\n  \"dpu\": {\"invariant_count\": %zu, \"invariants\": [\n",
+              routing->dpu_invariant_count) < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->dpu_invariant_count; ++index) {
+    const npunlock_dpu_invariant_observation *invariant = &routing->dpu_invariants[index];
+    size_t address_index;
+    if (fprintf(stream,
+                "%s    {\"section_index\": %u, \"invariant_index\": %u, "
+                "\"routing_observation\": {\"cluster_raw\": %u, \"wait_mask_raw\": %" PRIu64
+                ", \"post_mask_raw\": %" PRIu64
+                ", \"barrier_group_raw\": %u, \"barrier_mask_raw\": %u, "
+                "\"start_after_raw\": %u, \"clean_after_raw\": %u, "
+                "\"variant_count_raw\": %u}, \"input_cmx_relocations\": [",
+                index == 0 ? "" : ",\n", invariant->section_index, invariant->invariant_index,
+                invariant->cluster_raw, invariant->wait_mask_raw, invariant->post_mask_raw,
+                invariant->barrier_group_raw, invariant->barrier_mask_raw,
+                invariant->start_after_raw, invariant->clean_after_raw,
+                invariant->variant_count_raw) < 0) {
+      return 0;
+    }
+    for (address_index = 0; address_index < invariant->input_count; ++address_index) {
+      const npunlock_dpu_cmx_address_observation *address = &invariant->inputs[address_index];
+      if (fprintf(stream,
+                  "%s{\"field_index\": %u, \"register_offset\": %u, "
+                  "\"relocation_type\": %u, \"data_symbol_raw\": %u, "
+                  "\"data_addend_raw\": %" PRId64 "}",
+                  address_index == 0 ? "" : ", ", address->field_index,
+                  0x5cu + address->field_index * 4u, address->relocation_type,
+                  address->data_symbol_raw, address->data_addend_raw) < 0) {
+        return 0;
+      }
+    }
+    if (fprintf(stream, "], \"output_cmx_relocations\": [") < 0) {
+      return 0;
+    }
+    for (address_index = 0; address_index < invariant->output_count; ++address_index) {
+      const npunlock_dpu_cmx_address_observation *address = &invariant->outputs[address_index];
+      if (fprintf(stream,
+                  "%s{\"field_index\": %u, \"register_offset\": %u, "
+                  "\"relocation_type\": %u, \"data_symbol_raw\": %u, "
+                  "\"data_addend_raw\": %" PRId64 "}",
+                  address_index == 0 ? "" : ", ", address->field_index,
+                  0xa0u + address->field_index * 4u, address->relocation_type,
+                  address->data_symbol_raw, address->data_addend_raw) < 0) {
+        return 0;
+      }
+    }
+    if (fprintf(stream, "]}") < 0) {
+      return 0;
+    }
+  }
   return fprintf(stream,
-                 "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT and network-output "
-                 "DMA contract; routing and scheduling fields are raw validated observations; "
-                 "ACT edge candidates are exact interval/ACT-schedule correlations, including "
-                 "bounded transitive wait/post paths, not semantic graph edges, logical offsets, "
-                 "partitions, or replicas; discovery is not proof of "
-                 "execution compatibility\"\n}\n") >= 0;
+                 "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
+                 "and network-output DMA contract; routing and scheduling fields are raw "
+                 "validated observations; ACT edge candidates are exact interval/ACT-schedule "
+                 "correlations, including bounded transitive wait/post paths; DPU CMX "
+                 "relocations identify architectural register fields, not semantic graph edges, "
+                 "logical offsets, partitions, or replicas; discovery is not proof of execution "
+                 "compatibility\"\n}\n") >= 0;
 }
 
 static void print_diagnostic(const npunlock_diagnostic *diagnostic) {

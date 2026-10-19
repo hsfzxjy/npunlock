@@ -15,6 +15,9 @@
 #define ACT_RANGE_SIZE 0x18u
 #define MEMREF_SIZE 0x28u
 #define DMA_TASK_SIZE 0x80u
+#define DPU_INVARIANT_SIZE 0x130u
+#define DPU_INPUT_ADDRESS_OFFSET 0x5cu
+#define DPU_OUTPUT_ADDRESS_OFFSET 0xa0u
 #define ACT_EDGE_MAX_COMPARISONS 16777216u
 #define GRAPH_CODE_ADDRESS 0x1d000000u
 #define SHT_NULL 0u
@@ -30,6 +33,7 @@
 #define R_VPU_64_LSHIFT 3u
 #define R_VPU_32 4u
 #define R_VPU_32_RTM 5u
+#define R_VPU_32_MULTICAST_BASE 7u
 #define VPU_RT_SYMTAB 0xff20u
 #define VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR 0u
 #define VPU_NNRD_SYM_LAST 7u
@@ -1894,6 +1898,192 @@ inspect_network_output_routes(const graph_layout *layout,
   return NPUNLOCK_STATUS_OK;
 }
 
+static npunlock_status inspect_dpu_invariants(const graph_layout *layout,
+                                              npunlock_dpu_invariant_observation **observations_out,
+                                              size_t *observation_count_out,
+                                              npunlock_diagnostic *diagnostic) {
+  const graph_section *invariants = NULL;
+  const graph_section *relocations = NULL;
+  npunlock_dpu_invariant_observation *observations = NULL;
+  uint8_t *input_fields_seen = NULL;
+  uint8_t *output_fields_seen = NULL;
+  size_t invariant_section_count = 0;
+  size_t relocation_section_count = 0;
+  size_t invariant_section_index = SIZE_MAX;
+  size_t invariant_count;
+  size_t allocation_size;
+  size_t section_index;
+  size_t index;
+
+  *observations_out = NULL;
+  *observation_count_out = 0;
+  for (section_index = 0; section_index < layout->section_count; ++section_index) {
+    const graph_section *section = &layout->sections[section_index];
+    if (strcmp(section->name, ".text.DPUInvariants") == 0) {
+      invariants = section;
+      invariant_section_index = section_index;
+      ++invariant_section_count;
+    } else if (strcmp(section->name, ".rlt.text.DPUInvariants") == 0) {
+      relocations = section;
+      ++relocation_section_count;
+    }
+  }
+  if (invariant_section_count == 0u && relocation_section_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (invariant_section_count != 1u || relocation_section_count != 1u || invariants == NULL ||
+      relocations == NULL) {
+    return unsupported(diagnostic, "DPU invariant sections are missing or ambiguous");
+  }
+  if (invariants->type != SHT_PROGBITS || invariants->flags != 0x20000004u ||
+      invariants->address != 0u || invariants->link != 0u || invariants->info != 0u ||
+      invariants->alignment != 64u || invariants->entry_size != 1u || invariants->size == 0u ||
+      invariants->size % DPU_INVARIANT_SIZE != 0u ||
+      invariants->size / DPU_INVARIANT_SIZE > UINT32_MAX) {
+    return unsupported(diagnostic, "DPU invariant section has an unsupported NPU3720 form");
+  }
+  if (relocations->type != SHT_RELA || relocations->flags != 0x40u || relocations->address != 0u ||
+      relocations->link != VPU_RT_SYMTAB || relocations->info != invariant_section_index ||
+      relocations->alignment != 8u || relocations->entry_size != ELF64_RELA_SIZE ||
+      relocations->size == 0u || relocations->size % ELF64_RELA_SIZE != 0u) {
+    return unsupported(diagnostic, "DPU invariant relocations have an unsupported NPU3720 form");
+  }
+
+  invariant_count = invariants->size / DPU_INVARIANT_SIZE;
+  if (!npunlock_checked_mul_size(invariant_count, sizeof(*observations), &allocation_size)) {
+    return malformed(diagnostic, "DPU invariant observation allocation overflows");
+  }
+  observations = (npunlock_dpu_invariant_observation *)calloc(1u, allocation_size);
+  input_fields_seen = (uint8_t *)calloc(invariant_count, sizeof(*input_fields_seen));
+  output_fields_seen = (uint8_t *)calloc(invariant_count, sizeof(*output_fields_seen));
+  if (observations == NULL || input_fields_seen == NULL || output_fields_seen == NULL) {
+    free(observations);
+    free(input_fields_seen);
+    free(output_fields_seen);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate DPU invariant observations");
+  }
+  for (index = 0; index < invariant_count; ++index) {
+    const uint8_t *record = layout->blob.data + invariants->offset + index * DPU_INVARIANT_SIZE;
+    npunlock_dpu_invariant_observation *observation = &observations[index];
+    observation->section_index = (uint32_t)invariant_section_index;
+    observation->invariant_index = (uint32_t)index;
+    observation->wait_mask_raw = read_u64(record + 0x108u);
+    observation->post_mask_raw = read_u64(record + 0x110u);
+    observation->barrier_group_raw = record[0x118u];
+    observation->barrier_mask_raw = record[0x119u];
+    observation->start_after_raw = read_u32(record + 0x120u);
+    observation->clean_after_raw = read_u32(record + 0x124u);
+    observation->variant_count_raw = read_u16(record + 0x128u);
+    observation->cluster_raw = record[0x12au];
+    if (observation->variant_count_raw == 0u || observation->cluster_raw >= layout->tile_count) {
+      free(observations);
+      free(input_fields_seen);
+      free(output_fields_seen);
+      return unsupported(diagnostic, "DPU invariant scheduling fields are unsupported");
+    }
+  }
+
+  for (index = 0; index < relocations->size / ELF64_RELA_SIZE; ++index) {
+    const uint8_t *entry = layout->blob.data + relocations->offset + index * ELF64_RELA_SIZE;
+    uint64_t target_offset_raw = read_u64(entry);
+    uint64_t info = read_u64(entry + 8u);
+    uint32_t relocation_type = (uint32_t)info;
+    uint32_t symbol = (uint32_t)(info >> 32);
+    int64_t addend = read_i64(entry + 16u);
+    size_t target_offset;
+    size_t write_size;
+    size_t invariant_index;
+    size_t field_offset;
+    bool is_input;
+    bool is_output;
+    uint32_t field_index;
+    uint8_t field_bit;
+    npunlock_dpu_invariant_observation *observation;
+    npunlock_dpu_cmx_address_observation *address;
+
+    if (relocation_type == R_VPU_64_LSHIFT) {
+      write_size = 8u;
+    } else if (relocation_type == R_VPU_32 || relocation_type == R_VPU_32_MULTICAST_BASE) {
+      write_size = 4u;
+    } else {
+      free(observations);
+      free(input_fields_seen);
+      free(output_fields_seen);
+      return unsupported(diagnostic, "DPU invariant relocation type is unsupported");
+    }
+    if (symbol > VPU_NNRD_SYM_LAST || !u64_to_size(target_offset_raw, &target_offset) ||
+        target_offset % write_size != 0u ||
+        !range_in_bounds(target_offset, write_size, invariants->size)) {
+      free(observations);
+      free(input_fields_seen);
+      free(output_fields_seen);
+      return malformed(diagnostic, "DPU invariant relocation is outside its target");
+    }
+    invariant_index = target_offset / DPU_INVARIANT_SIZE;
+    field_offset = target_offset % DPU_INVARIANT_SIZE;
+    is_input = field_offset >= DPU_INPUT_ADDRESS_OFFSET &&
+               field_offset < DPU_INPUT_ADDRESS_OFFSET + NPUNLOCK_DPU_MAX_INPUT_ADDRESSES * 4u &&
+               (field_offset - DPU_INPUT_ADDRESS_OFFSET) % 4u == 0u;
+    is_output = field_offset >= DPU_OUTPUT_ADDRESS_OFFSET &&
+                field_offset < DPU_OUTPUT_ADDRESS_OFFSET + NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES * 4u &&
+                (field_offset - DPU_OUTPUT_ADDRESS_OFFSET) % 4u == 0u;
+    if (!is_input && !is_output) {
+      continue;
+    }
+    if (symbol != VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR || addend < 0 ||
+        (is_input && relocation_type != R_VPU_32) ||
+        (is_output && relocation_type != R_VPU_32_MULTICAST_BASE)) {
+      free(observations);
+      free(input_fields_seen);
+      free(output_fields_seen);
+      return unsupported(diagnostic, "DPU CMX address relocation is unsupported");
+    }
+    field_index = (uint32_t)((field_offset -
+                              (is_input ? DPU_INPUT_ADDRESS_OFFSET : DPU_OUTPUT_ADDRESS_OFFSET)) /
+                             4u);
+    field_bit = (uint8_t)(1u << field_index);
+    observation = &observations[invariant_index];
+    if (is_input) {
+      if ((input_fields_seen[invariant_index] & field_bit) != 0u ||
+          observation->input_count == NPUNLOCK_DPU_MAX_INPUT_ADDRESSES) {
+        free(observations);
+        free(input_fields_seen);
+        free(output_fields_seen);
+        return unsupported(diagnostic, "DPU input CMX relocation is duplicated");
+      }
+      input_fields_seen[invariant_index] |= field_bit;
+      address = &observation->inputs[observation->input_count++];
+    } else {
+      if ((output_fields_seen[invariant_index] & field_bit) != 0u ||
+          observation->output_count == NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES) {
+        free(observations);
+        free(input_fields_seen);
+        free(output_fields_seen);
+        return unsupported(diagnostic, "DPU output CMX relocation is duplicated");
+      }
+      output_fields_seen[invariant_index] |= field_bit;
+      address = &observation->outputs[observation->output_count++];
+    }
+    address->field_index = field_index;
+    address->relocation_type = relocation_type;
+    address->data_symbol_raw = symbol;
+    address->data_addend_raw = addend;
+  }
+  free(input_fields_seen);
+  free(output_fields_seen);
+  for (index = 0; index < invariant_count; ++index) {
+    if (observations[index].input_count == 0u || observations[index].output_count == 0u) {
+      free(observations);
+      return unsupported(diagnostic, "DPU invariant has no inspectable input or output CMX route");
+    }
+  }
+  *observations_out = observations;
+  *observation_count_out = invariant_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 static uint32_t act_schedule_hop_count(const npunlock_invocation_routing_observation *invocations,
                                        size_t producer_index, size_t consumer_index) {
   uint32_t barrier_hops[64];
@@ -2105,6 +2295,7 @@ void npunlock_graph_routing_observations_release(
   free(observations->invocations);
   free(observations->network_output_routes);
   free(observations->act_edge_candidates);
+  free(observations->dpu_invariants);
   memset(observations, 0, sizeof(*observations));
 }
 
@@ -2116,12 +2307,14 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_invocation_routing_observation *invocations = NULL;
   npunlock_network_output_route_observation *network_output_routes = NULL;
   npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
+  npunlock_dpu_invariant_observation *dpu_invariants = NULL;
   uint64_t *parameter_bases = NULL;
   size_t target_count = 0;
   size_t group_count = 0;
   size_t invocation_count = 0;
   size_t network_output_route_count = 0;
   size_t act_edge_candidate_count = 0;
+  size_t dpu_invariant_count = 0;
   size_t index;
   uint32_t tile_count_observed = 0;
   npunlock_status status;
@@ -2150,6 +2343,10 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   }
   status = inspect_network_output_routes(&layout, &network_output_routes,
                                          &network_output_route_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
+  status = inspect_dpu_invariants(&layout, &dpu_invariants, &dpu_invariant_count, diagnostic);
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
@@ -2214,12 +2411,15 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->network_output_route_count = network_output_route_count;
   observations->act_edge_candidates = act_edge_candidates;
   observations->act_edge_candidate_count = act_edge_candidate_count;
+  observations->dpu_invariants = dpu_invariants;
+  observations->dpu_invariant_count = dpu_invariant_count;
   return NPUNLOCK_STATUS_OK;
 
 fail:
   free(invocations);
   free(network_output_routes);
   free(act_edge_candidates);
+  free(dpu_invariants);
   free(discovered);
   free(parameter_bases);
   graph_layout_release(&layout);

@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v7\""
+    "\"schema\": \"npunlock.porting.inspect.v8\""
     "\"tile_count_observed\""
     "\"tile_candidate_raw\""
     "\"parameter_base\""
@@ -41,9 +41,26 @@ foreach(required
     "\"cmx_source_addend_raw\""
     "\"output_addend_raw\""
     "\"length_bytes\""
+    "\"dpu\""
+    "\"invariant_count\": 1"
+    "\"input_cmx_relocations\""
+    "\"output_cmx_relocations\""
+    "\"register_offset\""
+    "\"variant_count_raw\""
     "not semantic graph edges, logical offsets, partitions, or replicas")
   if(NOT first_output MATCHES "${required}")
     message(FATAL_ERROR "routing inspection omitted required observation: ${required}")
+  endif()
+endforeach()
+
+foreach(expected
+    "\"register_offset\": 92, \"relocation_type\": 4, \"data_symbol_raw\": 0, \"data_addend_raw\": 768"
+    "\"register_offset\": 160, \"relocation_type\": 7, \"data_symbol_raw\": 0, \"data_addend_raw\": 832"
+    "\"cluster_raw\": 0, \"wait_mask_raw\": 1, \"post_mask_raw\": 2"
+    "\"variant_count_raw\": 1")
+  string(FIND "${first_output}" "${expected}" expected_offset)
+  if(expected_offset EQUAL -1)
+    message(FATAL_ERROR "DPU invariant routing changed a retained observation: ${expected}")
   endif()
 endforeach()
 
