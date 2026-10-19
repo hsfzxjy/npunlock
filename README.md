@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-19:** one FP16 custom kernel can now consume a data tensor plus four independently bound scalar parameters. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#60-five-input-multi-scalar-custom-kernel-execution).
+> **Latest breakthrough — 2026-10-19:** one FP16 custom kernel can now consume four independently bound parameters that change for every tensor row. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#61-per-row-five-input-multi-scalar-execution).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,
@@ -76,7 +76,7 @@ print(f"maximum absolute error: {np.max(np.abs(output - reference)):g}")
 The same code is available as the runnable
 [FP32 GELU example](examples/example_gelu_f32.py). See also:
 
-- [a five-input kernel with four scalar parameters](examples/example_multi_scalar_custom.py)
+- [a five-input kernel with four parameters per row](examples/example_per_row_multi_scalar_custom.py)
 - [per-row scalar custom kernels](examples/example_per_row_scalar_custom.py)
 - [a mixed DPU/custom-kernel network](examples/example_branched_network.py)
 

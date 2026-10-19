@@ -951,13 +951,17 @@ def _custom_scalar_input_indices(node: Node) -> tuple[int, ...]:
     if prod(output_shape) <= 1:
         return ()
     if len(node.inputs) == 5:
-        return (
-            (1, 2, 3, 4)
-            if output_shape == (1, 32)
+        graph_global = (
+            output_shape == (1, 32)
             and node.inputs[0].shape == (1, 32)
             and all(value.shape == (1, 1) for value in node.inputs[1:])
-            else ()
         )
+        per_row = (
+            output_shape == (4, 8)
+            and node.inputs[0].shape == (4, 8)
+            and all(value.shape == (4, 1) for value in node.inputs[1:])
+        )
+        return (1, 2, 3, 4) if graph_global or per_row else ()
     return tuple(
         index
         for index, value in enumerate(node.inputs)

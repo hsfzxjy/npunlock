@@ -1210,8 +1210,10 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
     }
     supported_multi_scalar_fp16 =
         output->precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2 && input_count == 5u &&
-        output->element_count == 16u && output->span_bytes == 32u &&
-        target->tensors[0].element_count == output->element_count && scalar_input_count == 4u;
+        ((output->element_count == 16u && output->span_bytes == 32u) ||
+         (output->element_count == 8u && output->span_bytes == 16u)) &&
+        target->tensors[0].element_count == output->element_count &&
+        target->tensors[0].span_bytes == output->span_bytes && scalar_input_count == 4u;
     if (input_count == 2u && scalar_input_count > 1u) {
       return unsupported(diagnostic,
                          "version 2 binary contracts allow at most one observed scalar input");

@@ -385,11 +385,13 @@ contract, but each invocation receives its row's scalar. Python automatic
 mapping recognizes only this validated source shape in addition to a
 graph-global scalar; other broadcast shapes still require new evidence.
 
-The exact FP16 five-input multi-scalar carrier reports
-`scalar_input_indices == (1, 2, 3, 4)`. Its symbolic inputs are one `(1,32)`
-data tensor followed by four `(1,1)` tensors, and its discovered invocation
-contract is `(16,1,1,1,1)->16`. Automatic mapping accepts that complete
-version-2 contract; other higher-arity scalar layouts remain unsupported.
+The exact FP16 five-input multi-scalar carriers report
+`scalar_input_indices == (1, 2, 3, 4)`. Two symbolic shapes are validated:
+`(1,32)` data plus four `(1,1)` tensors produces `(16,1,1,1,1)->16`, while
+`(4,8)` data plus four `(4,1)` tensors produces four row-specific
+`(8,1,1,1,1)->8` invocations. Automatic mapping accepts only those complete
+source-shape and version-2 contracts; other higher-arity scalar layouts remain
+unsupported.
 
 ### Review a multi-kernel build plan
 

@@ -275,12 +275,15 @@ describes invocation-local tensors and cannot distinguish that source shape
 from a graph-global `[1,1]` scalar; callers must validate the graph-to-group
 mapping before patching.
 
-The one validated higher-arity scalar contract is FP16-only: five inputs and
-one output, with input 0 and the output containing 16 elements/32 bytes per
-invocation and inputs 1 through 4 containing one element/two bytes each. It is
-produced by the exact `[1,32]` plus four `[1,1]` `FakeQuantize` carrier on graph
-compiler 8.3. Version 2 rejects other multi-scalar counts, positions,
-precisions, and spans.
+The validated higher-arity scalar contracts are FP16-only: five inputs and one
+output, with inputs 1 through 4 containing one element/two bytes each. Input 0
+and the output contain either 16 elements/32 bytes or 8 elements/16 bytes per
+invocation. Graph compiler 8.3 produced those descriptors from the exact
+`[1,32]` plus four `[1,1]` and `[4,8]` plus four `[4,1]`
+`FakeQuantize(levels=16)` carriers, respectively. The native descriptor alone
+does not encode whether a scalar is graph-global or row-local, so callers must
+retain that source mapping proof. Version 2 rejects other multi-scalar counts,
+positions, precisions, and spans.
 
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release

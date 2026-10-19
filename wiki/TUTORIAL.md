@@ -228,6 +228,7 @@ The current carrier recipes are:
 | U16 or U32 `(4,8)` plus `(1,8)` row input | `Subtract` | only the documented dense `(8,8)->8` invocation layout |
 | five equal-span FP16 inputs | `FakeQuantize`, `levels=256` | automatic for the documented carrier |
 | FP16 `(1,32)` data plus four `(1,1)` scalar parameters | `FakeQuantize`, `levels=16` | automatic only for the documented `(16,1,1,1,1)->16` layout |
+| FP16 `(4,8)` data plus four `(4,1)` per-row parameters | `FakeQuantize`, `levels=16` | automatic only for the documented four `(8,1,1,1,1)->8` invocations |
 | FP32→FP16, FP16→FP32, or U8→FP32 | `Convert`, matching `destination_type` | explicit prepared-group binding |
 
 These rows are verified recipes, not a general operator compatibility matrix.
@@ -314,11 +315,14 @@ validated for FP16, FP32, U16, and U32. Read the scalar record only at index
 zero; use the output-record loader when that scalar is input zero. See the
 [per-row scalar example](../examples/example_per_row_scalar_custom.py).
 
-One higher-arity recipe combines FP16 `(1,32)` data with four independently
-bound `(1,1)` parameters. Use `FakeQuantize(levels=16)` as the five-input
-carrier. Record zero and output record five contain 16 elements per
-invocation; records 1 through 4 contain one element each and must be read only
-at index zero:
+One higher-arity recipe combines FP16 data with four independently bound
+parameters. Use `FakeQuantize(levels=16)` as the five-input carrier. The
+graph-global form uses `(1,32)` data and four `(1,1)` inputs; record zero and
+output record five contain 16 elements per invocation. The per-row form uses
+`(4,8)` data and four `(4,1)` inputs; each of four invocations receives one
+row's parameters and exposes eight data/output elements. In both forms,
+records 1 through 4 contain one element each and must be read only at index
+zero:
 
 ```c
 const __fp16 *data = ACT_ABI_INPUT_PTR32(const __fp16, invocation, 0u);
@@ -328,8 +332,11 @@ __fp16 *output = ACT_ABI_OUTPUT_PTR32(__fp16, invocation, 5u);
 
 The [multi-scalar example](../examples/example_multi_scalar_custom.py) uses
 the four parameters as scale, bias, lower, and upper bounds. This exact FP16
-contract is distinct from the equal-span five-input carrier. It does not
-establish arbitrary parameter counts, positions, shapes, or precisions.
+graph-global contract is distinct from the equal-span five-input carrier. The
+[per-row multi-scalar example](../examples/example_per_row_multi_scalar_custom.py)
+uses the same computation with four independently bound parameters per row.
+Neither form establishes arbitrary parameter counts, positions, shapes, axes,
+or precisions.
 
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input

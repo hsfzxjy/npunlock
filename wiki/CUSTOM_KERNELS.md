@@ -447,15 +447,18 @@ This is one validated carrier contract, not support for arbitrary arity.
 Compiler 8.3 rejected the corresponding accuracy-mode FP32 carrier with
 `Only supports FP16 in/out`, so five-input FP32 remains unsupported.
 
-The same source-level carrier also has one separately validated multi-scalar
-form: `[1,32]` FP16 data followed by four independently bound `[1,1]` FP16
-parameters with `levels=16`. Each invocation presents
-`(16,1,1,1,1) -> 16`. Read records 1 through 4 only at index zero; record zero
-supplies the loop extent and record 5 remains the output. A substituted affine
-and clamp kernel using all four parameters matched every output through copied
-and shared buffers. See the
-[multi-scalar example](../examples/example_multi_scalar_custom.py). Other
-scalar counts, positions, shapes, and precisions remain unsupported.
+The same source-level carrier also has two separately validated multi-scalar
+forms with `levels=16`. `[1,32]` FP16 data followed by four independently
+bound `[1,1]` parameters presents `(16,1,1,1,1) -> 16`. `[4,8]` data followed
+by four `[4,1]` parameters presents four `(8,1,1,1,1) -> 8` invocations, each
+receiving the parameter values for its row. Read records 1 through 4 only at
+index zero; record zero supplies the loop extent and record 5 remains the
+output. Substituted affine-and-clamp kernels using all four parameters matched
+every output through copied and shared buffers. See the
+[graph-global multi-scalar example](../examples/example_multi_scalar_custom.py)
+and [per-row multi-scalar example](../examples/example_per_row_multi_scalar_custom.py).
+Other scalar counts, positions, shapes, axes, and precisions remain
+unsupported.
 
 The same carrier also runs a composed multi-pass kernel using all five inputs:
 data, residual, scale, bias, and gate. The entry adds data and residual into
@@ -630,6 +633,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Two-input custom kernel with a descriptor-level row broadcast](../examples/example_broadcast_custom.py)
 - [Five-input custom kernel](../examples/example_five_input_custom.py)
 - [Five-input FP16 kernel with four scalar parameters](../examples/example_multi_scalar_custom.py)
+- [Five-input FP16 kernel with four parameters per row](../examples/example_per_row_multi_scalar_custom.py)
 - [Fused five-input invocation-local RMS normalization](../examples/example_fused_rmsnorm.py)
 - [Dimension-aware local transform](../examples/example_dimension_aware.py)
 - [Runtime dispatch through a bounded same-file function pointer](../examples/example_function_dispatch.py)

@@ -1862,6 +1862,34 @@ source shape, carrier, compiler, and device. It does not establish arbitrary
 high arity, different scalar positions/counts, per-row parameters, FP32 or
 integer equivalents, another compiler, or another NPU generation.
 
+## 61. Per-row five-input multi-scalar execution
+
+On 2026-10-19, graph compiler 8.3 compiled an FP16
+`FakeQuantize(levels=16)` graph with one `[4,8]` data input and four
+independently bound `[4,1]` parameter inputs. Distinct values in every row made
+the unmodified carrier match an exact host `FakeQuantize` oracle, proving that
+all four parameter tensors retain their row association.
+
+The custom carrier exposed one ACT group with four invocations. Every
+invocation reported `(8,1,1,1,1)->8`: input 0 and output record 5 used
+16-byte FP16 spans, while input records 1 through 4 each used one two-byte
+value. A substituted affine-and-clamp kernel consumed all five records and
+matched all 32 host-oracle outputs through both copied and explicitly shared
+buffers.
+
+The retained 97,848-byte carrier has SHA-256
+`867bfa5e1cf11704a09a617dad2b020c8699f7ddcb33b9426d869d213f85e43a`.
+The exploratory patched graph was 98,872 bytes with SHA-256
+`c63fb2516884b10297b305b2fb92ab8638001a5ce7432b2e299d2ca2d57a3ca0`.
+The fixture preserves the new descriptor extent for offline discovery and
+patch validation.
+
+This establishes only the exact FP16 `[4,8]` plus four `[4,1]` source layout,
+input positions 1 through 4, carrier, compiler, and device. The native
+descriptor does not by itself distinguish row-local values from graph-global
+scalars. It does not establish arbitrary row counts or widths, axes, parameter
+positions/counts, other precisions, compilers, or NPU generations.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

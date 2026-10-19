@@ -23,7 +23,7 @@ output does not match that contract.
 | U16 | one binary `Subtract` carrier for equal-span, either-position global/per-row scalar, and exact `(4,8)` plus `(1,8)` row-broadcast inputs; no unary carrier |
 | U32 | one binary `Subtract` carrier for equal-span, either-position global/per-row scalar, and exact `(4,8)` plus `(1,8)` row-broadcast inputs; no unary carrier |
 | binary custom kernel | static dense FP16/FP32 carriers with the documented equal-span, scalar, or row-broadcast layouts; one equal-span carrier each for I32, I16, and I8; the three exact unsigned layouts above for U16 and U32 |
-| higher custom arity | one FP16 five-input `FakeQuantize` carrier with either five equal spans or the exact `(16,1,1,1,1)->16` multi-scalar layout; compiler 8.3 rejects its FP32 equivalent |
+| higher custom arity | one FP16 five-input `FakeQuantize` carrier with five equal spans, exact `(16,1,1,1,1)->16` graph-global parameters, or exact `(8,1,1,1,1)->8` per-row parameters; compiler 8.3 rejects its FP32 equivalent |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
 | restricted graph input | I64 only as caller-provided indices for the validated U8 Gather graph |
@@ -166,10 +166,12 @@ One five-input carrier runs a fused residual/RMS/affine/gate kernel with
 not establish standard graph-global RMSNorm semantics, arbitrary five-input
 operators, or other high-arity layouts.
 
-The same FP16 carrier family has one distinct multi-scalar form: `[1,32]`
-data followed by four `[1,1]` parameters, presented as
-`(16,1,1,1,1)->16` per invocation. This does not establish other scalar
-positions, counts, shapes, precisions, or high-arity carriers.
+The same FP16 carrier family has two exact multi-scalar forms: `[1,32]` data
+followed by four `[1,1]` graph-global parameters, presented as
+`(16,1,1,1,1)->16`, and `[4,8]` data followed by four `[4,1]` parameters,
+presented as four row-specific `(8,1,1,1,1)->8` invocations. This does not
+establish other scalar positions, counts, shapes, axes, precisions, or
+high-arity carriers.
 
 `mlibm.a` math functions work only when section garbage collection leaves a
 self-contained code image and no data dependency. Eight FP32 unary functions

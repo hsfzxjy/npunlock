@@ -157,9 +157,10 @@ U16 and U32 carriers. Scalar-first FP16/FP32 also uses version 2. The
 exact `[4,8]` with `[4,1]` per-row broadcast uses the same one-scalar
 invocation descriptors in either operand position; the documented `[1,8]`
 row broadcasts instead expose equal-span invocation descriptors. Conversion
-groups require explicit binding. One FP16 five-input group additionally
-exposes `(16,1,1,1,1)->16`, with the last four inputs recognized as scalar
-records. The same-precision integer and exact multi-scalar groups can use the
+groups require explicit binding. Two exact FP16 five-input source layouts
+additionally expose `(16,1,1,1,1)->16` graph-global or
+`(8,1,1,1,1)->8` per-row records, with the last four inputs recognized as
+scalars. The same-precision integer and exact multi-scalar groups can use the
 normal unambiguous positional mapping. Replicated invocations are patched
 together and are not assumed to be output partitions.
 
@@ -213,8 +214,8 @@ binary carriers with independently bound host inputs. It also includes one
 equal-span and one row-broadcast U16/U32 carrier, scalar inputs in either
 position for FP16/FP32/U16/U32 through exact global and per-row carriers, and
 one explicitly bound U8-to-FP32 unary conversion carrier. It also includes one
-FP16 five-input data-plus-four-scalars carrier. The exact layouts used by these
-cases are execution-tested.
+FP16 five-input data-plus-four-scalars carrier in both graph-global and exact
+per-row forms. The exact layouts used by these cases are execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic
