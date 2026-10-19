@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v3\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v4\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -226,10 +226,26 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"network_output_routes\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->network_output_route_count; ++index) {
+    const npunlock_network_output_route_observation *route = &routing->network_output_routes[index];
+    if (fprintf(stream,
+                "%s    {\"dma_section_index\": %u, \"dma_task_index\": %u, "
+                "\"cmx_source_symbol_raw\": %u, \"cmx_source_addend_raw\": %" PRId64
+                ", \"output_symbol_raw\": %u, \"output_addend_raw\": %" PRId64
+                ", \"length_bytes\": %u}",
+                index == 0 ? "" : ",\n", route->dma_section_index, route->dma_task_index,
+                route->cmx_source_symbol_raw, route->cmx_source_addend_raw,
+                route->output_symbol_raw, route->output_addend_raw, route->length_bytes) < 0) {
+      return 0;
+    }
+  }
   return fprintf(
              stream,
-             "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT contract; "
-             "routing fields are raw validated observations, not logical offsets, "
+             "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT and network-output "
+             "DMA contract; routing fields are raw validated observations, not logical offsets, "
              "partitions, or replicas; discovery is not proof of execution compatibility\"\n}\n") >=
          0;
 }

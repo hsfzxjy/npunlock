@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 3 JSON report records the blob size and SHA-256 plus every
+The version 4 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -47,6 +47,12 @@ FP16/FP32 and U8-to-FP32 conversion carriers, unary I32/I16/I8 carriers, the
 equal-span binary I32/I16/I8/U16/U32 carriers, either-position scalar
 FP16/FP32/U16/U32 carriers, and uniform float groups. Each target reports
 `scalar_input_indices` explicitly; `input_1_scalar` remains for compatibility.
+
+The report also lists validated network-output DMA routes: the raw CMX source,
+the destination output symbol/addend, and the transfer length. This is enough
+to show which CMX ranges are copied to which graph-output byte ranges. It is
+not yet a complete route from every intermediate ACT invocation to a symbolic
+tensor; internal DMA edges and scheduling relationships remain unresolved.
 That includes the documented equal-span binary FP32 `Subtract` carrier.
 It also recognizes the structurally identical dense FP32 `(8,8)->8`
 invocations emitted for the documented row-broadcast carrier; inspection alone

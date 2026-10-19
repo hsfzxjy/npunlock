@@ -14,6 +14,7 @@
 #define ACT_INVOCATION_SIZE 0x40u
 #define ACT_RANGE_SIZE 0x18u
 #define MEMREF_SIZE 0x28u
+#define DMA_TASK_SIZE 0x80u
 #define GRAPH_CODE_ADDRESS 0x1d000000u
 #define SHT_NULL 0u
 #define SHT_PROGBITS 1u
@@ -24,6 +25,7 @@
 #define SHT_NOBITS 8u
 #define SHT_VPU_PLATFORM_INFO 0x8aaaaaafu
 #define SHT_VPU_COMPATIBILITY 0x8aaaaab2u
+#define R_VPU_64 0u
 #define R_VPU_64_LSHIFT 3u
 #define R_VPU_32 4u
 #define R_VPU_32_RTM 5u
@@ -173,6 +175,26 @@ static bool token_starts_with(const uint8_t *token, size_t token_size, const cha
 static bool token_equals(const uint8_t *token, size_t token_size, const char *expected) {
   size_t expected_size = strlen(expected);
   return token_size == expected_size && memcmp(token, expected, expected_size) == 0;
+}
+
+static bool name_has_decimal_suffix(const char *name, const char *prefix) {
+  size_t name_size = strlen(name);
+  size_t prefix_size = strlen(prefix);
+  const char *suffix;
+  if (name_size <= prefix_size || memcmp(name, prefix, prefix_size) != 0) {
+    return false;
+  }
+  suffix = name + prefix_size;
+  if (*suffix == '\0') {
+    return false;
+  }
+  while (*suffix != '\0') {
+    if (*suffix < '0' || *suffix > '9') {
+      return false;
+    }
+    ++suffix;
+  }
+  return true;
 }
 
 static npunlock_status validate_graph_compatibility(graph_layout *layout,
@@ -1684,12 +1706,200 @@ fail:
   return status;
 }
 
+static bool name_matches_suffix(const char *name, const char *prefix, const char *suffix) {
+  size_t name_size = strlen(name);
+  size_t prefix_size = strlen(prefix);
+  size_t suffix_size = strlen(suffix);
+  return name_size == prefix_size + suffix_size && memcmp(name, prefix, prefix_size) == 0 &&
+         memcmp(name + prefix_size, suffix, suffix_size) == 0;
+}
+
+static npunlock_status
+inspect_network_output_routes(const graph_layout *layout,
+                              npunlock_network_output_route_observation **routes_out,
+                              size_t *route_count_out, npunlock_diagnostic *diagnostic) {
+  npunlock_network_output_route_observation *routes = NULL;
+  size_t route_count = 0;
+  size_t route_index = 0;
+  size_t section_index;
+
+  *routes_out = NULL;
+  *route_count_out = 0;
+  for (section_index = 0; section_index < layout->section_count; ++section_index) {
+    const graph_section *section = &layout->sections[section_index];
+    size_t entries;
+    if (!name_has_decimal_suffix(section->name, ".rlt.DMA_NetOutput")) {
+      continue;
+    }
+    if (section->type != SHT_RELA || section->flags != 0x500040u || section->address != 0u ||
+        section->alignment != 8u || section->entry_size != ELF64_RELA_SIZE ||
+        section->size % ELF64_RELA_SIZE != 0u || section->info >= layout->section_count ||
+        section->link >= layout->section_count) {
+      return unsupported(diagnostic, "network-output relocation section is unsupported");
+    }
+    entries = section->size / ELF64_RELA_SIZE;
+    if (entries == 0u) {
+      return unsupported(diagnostic, "network-output relocation section is empty");
+    }
+    if (!npunlock_checked_add_size(route_count, entries, &route_count)) {
+      return malformed(diagnostic, "network-output route count overflows");
+    }
+  }
+  if (route_count == 0u) {
+    return unsupported(diagnostic, "graph has no inspectable network-output DMA route");
+  }
+  if (route_count > SIZE_MAX / sizeof(*routes)) {
+    return malformed(diagnostic, "network-output route allocation size overflows");
+  }
+  routes = (npunlock_network_output_route_observation *)calloc(route_count, sizeof(*routes));
+  if (routes == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate network-output route observations");
+  }
+
+  for (section_index = 0; section_index < layout->section_count; ++section_index) {
+    const graph_section *section = &layout->sections[section_index];
+    const graph_section *target;
+    const graph_section *symbols;
+    const graph_section *strings;
+    const graph_section *runtime_relocations = NULL;
+    const char *suffix;
+    size_t candidate_index;
+    size_t runtime_section_count = 0;
+    size_t entry_index;
+    if (!name_has_decimal_suffix(section->name, ".rlt.DMA_NetOutput")) {
+      continue;
+    }
+    suffix = section->name + strlen(".rlt.DMA_NetOutput");
+    target = &layout->sections[section->info];
+    symbols = &layout->sections[section->link];
+    if (!name_matches_suffix(target->name, ".text.dmaTasks", suffix) ||
+        target->type != SHT_PROGBITS || target->alignment != 64u || target->entry_size != 1u ||
+        target->size == 0u || target->size % DMA_TASK_SIZE != 0u ||
+        target->size / DMA_TASK_SIZE > UINT32_MAX) {
+      free(routes);
+      return unsupported(diagnostic,
+                         "network-output relocation targets an unsupported DMA section");
+    }
+    if (strcmp(symbols->name, ".symtab.output") != 0 || symbols->type != SHT_SYMTAB ||
+        symbols->flags != 0x400000u || symbols->address != 0u || symbols->info != 0u ||
+        symbols->alignment != 8u || symbols->entry_size != ELF64_SYMBOL_SIZE ||
+        symbols->size % ELF64_SYMBOL_SIZE != 0u || symbols->link >= layout->section_count) {
+      free(routes);
+      return unsupported(diagnostic, "network-output relocation symbol table is unsupported");
+    }
+    strings = &layout->sections[symbols->link];
+    if (strcmp(strings->name, ".symstrtab") != 0 || strings->type != SHT_STRTAB ||
+        strings->flags != 0u || strings->address != 0u || strings->link != 0u ||
+        strings->info != 0u || strings->alignment != 4u || strings->entry_size != 0u ||
+        strings->size == 0u || layout->blob.data[strings->offset] != 0u) {
+      free(routes);
+      return unsupported(diagnostic, "network-output symbol strings are unsupported");
+    }
+    for (candidate_index = 0; candidate_index < layout->section_count; ++candidate_index) {
+      const graph_section *candidate = &layout->sections[candidate_index];
+      if (name_matches_suffix(candidate->name, ".rlt.text.dmaTasks", suffix) &&
+          candidate->info == section->info && candidate->link == VPU_RT_SYMTAB) {
+        runtime_relocations = candidate;
+        ++runtime_section_count;
+      }
+    }
+    if (runtime_section_count != 1u || runtime_relocations == NULL ||
+        runtime_relocations->type != SHT_RELA || runtime_relocations->flags != 0x40u ||
+        runtime_relocations->address != 0u || runtime_relocations->link != VPU_RT_SYMTAB ||
+        runtime_relocations->alignment != 8u ||
+        runtime_relocations->entry_size != ELF64_RELA_SIZE ||
+        runtime_relocations->size % ELF64_RELA_SIZE != 0u) {
+      free(routes);
+      return unsupported(diagnostic, "network-output DMA runtime relocations are unsupported");
+    }
+
+    for (entry_index = 0; entry_index < section->size / ELF64_RELA_SIZE; ++entry_index) {
+      const uint8_t *entry = layout->blob.data + section->offset + entry_index * ELF64_RELA_SIZE;
+      uint64_t target_offset = read_u64(entry);
+      uint64_t info = read_u64(entry + 8u);
+      uint32_t symbol_index = (uint32_t)(info >> 32);
+      uint32_t relocation_type = (uint32_t)info;
+      int64_t output_addend = read_i64(entry + 16u);
+      const uint8_t *symbol;
+      uint32_t symbol_name_offset;
+      uint64_t output_size;
+      size_t task_base;
+      uint32_t length;
+      int64_t cmx_addend = 0;
+      uint32_t cmx_symbol = 0;
+      size_t source_matches = 0;
+      size_t source_index;
+
+      if (relocation_type != R_VPU_64 || symbol_index == 0u ||
+          symbol_index >= symbols->size / ELF64_SYMBOL_SIZE || output_addend < 0 ||
+          target_offset > SIZE_MAX || target_offset % DMA_TASK_SIZE != 0x18u ||
+          !range_in_bounds((size_t)target_offset, 8u, target->size)) {
+        free(routes);
+        return unsupported(diagnostic, "network-output DMA destination relocation is unsupported");
+      }
+      symbol = layout->blob.data + symbols->offset + (size_t)symbol_index * ELF64_SYMBOL_SIZE;
+      symbol_name_offset = read_u32(symbol);
+      output_size = read_u64(symbol + 16u);
+      if (symbol[4] != 0u || symbol[5] != 0u || read_u16(symbol + 6u) != 0u ||
+          read_u64(symbol + 8u) != 0u || output_size == 0u || symbol_name_offset >= strings->size ||
+          memchr(layout->blob.data + strings->offset + symbol_name_offset, 0,
+                 strings->size - symbol_name_offset) == NULL) {
+        free(routes);
+        return unsupported(diagnostic, "network-output symbol is unsupported");
+      }
+      task_base = (size_t)target_offset - 0x18u;
+      length = read_u32(layout->blob.data + target->offset + task_base + 0x20u);
+      if (length == 0u || (uint64_t)output_addend > output_size ||
+          (uint64_t)length > output_size - (uint64_t)output_addend) {
+        free(routes);
+        return unsupported(diagnostic, "network-output DMA length exceeds its output tensor");
+      }
+      for (source_index = 0; source_index < runtime_relocations->size / ELF64_RELA_SIZE;
+           ++source_index) {
+        const uint8_t *source_entry =
+            layout->blob.data + runtime_relocations->offset + source_index * ELF64_RELA_SIZE;
+        uint64_t source_offset = read_u64(source_entry);
+        uint64_t source_info = read_u64(source_entry + 8u);
+        if (source_offset == target_offset - 8u && (uint32_t)source_info == R_VPU_64 &&
+            (uint32_t)(source_info >> 32) == VPU_NNRD_SYM_NNCXM_SLICE_BASE_ADDR) {
+          cmx_addend = read_i64(source_entry + 16u);
+          cmx_symbol = (uint32_t)(source_info >> 32);
+          ++source_matches;
+        }
+      }
+      if (source_matches != 1u || cmx_addend < 0 ||
+          (uint64_t)cmx_addend > UINT64_MAX - (uint64_t)length) {
+        free(routes);
+        return unsupported(diagnostic, "network-output DMA CMX source is missing or unsupported");
+      }
+      routes[route_index].dma_section_index = (uint32_t)section->info;
+      routes[route_index].dma_task_index = (uint32_t)(task_base / DMA_TASK_SIZE);
+      routes[route_index].cmx_source_symbol_raw = cmx_symbol;
+      routes[route_index].cmx_source_addend_raw = cmx_addend;
+      routes[route_index].output_symbol_raw = symbol_index;
+      routes[route_index].output_addend_raw = output_addend;
+      routes[route_index].length_bytes = length;
+      ++route_index;
+    }
+  }
+  if (route_index != route_count) {
+    free(routes);
+    return malformed(diagnostic, "network-output route count changed during inspection");
+  }
+  *routes_out = routes;
+  *route_count_out = route_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 void npunlock_graph_routing_observations_release(
     npunlock_graph_routing_observations *observations) {
   if (observations == NULL) {
     return;
   }
   free(observations->invocations);
+  free(observations->network_output_routes);
   memset(observations, 0, sizeof(*observations));
 }
 
@@ -1699,10 +1909,12 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   graph_layout layout;
   patchblob_discovered_target_v2 *discovered = NULL;
   npunlock_invocation_routing_observation *invocations = NULL;
+  npunlock_network_output_route_observation *network_output_routes = NULL;
   uint64_t *parameter_bases = NULL;
   size_t target_count = 0;
   size_t group_count = 0;
   size_t invocation_count = 0;
+  size_t network_output_route_count = 0;
   size_t index;
   uint32_t tile_count_observed = 0;
   npunlock_status status;
@@ -1727,6 +1939,11 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   }
   if (invocation_count != target_count) {
     status = unsupported(diagnostic, "routing observation count does not match ACT discovery");
+    goto fail;
+  }
+  status = inspect_network_output_routes(&layout, &network_output_routes,
+                                         &network_output_route_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
   tile_count_observed = layout.tile_count;
@@ -1775,10 +1992,13 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->invocation_count = invocation_count;
   observations->group_count = group_count;
   observations->tile_count_observed = tile_count_observed;
+  observations->network_output_routes = network_output_routes;
+  observations->network_output_route_count = network_output_route_count;
   return NPUNLOCK_STATUS_OK;
 
 fail:
   free(invocations);
+  free(network_output_routes);
   free(discovered);
   free(parameter_bases);
   graph_layout_release(&layout);

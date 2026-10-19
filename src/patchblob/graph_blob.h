@@ -62,11 +62,23 @@ typedef struct npunlock_invocation_routing_observation {
   npunlock_tensor_routing_observation tensors[PATCHBLOB_TARGET_V2_MAX_TENSORS];
 } npunlock_invocation_routing_observation;
 
+typedef struct npunlock_network_output_route_observation {
+  uint32_t dma_section_index;
+  uint32_t dma_task_index;
+  uint32_t cmx_source_symbol_raw;
+  int64_t cmx_source_addend_raw;
+  uint32_t output_symbol_raw;
+  int64_t output_addend_raw;
+  uint32_t length_bytes;
+} npunlock_network_output_route_observation;
+
 typedef struct npunlock_graph_routing_observations {
   npunlock_invocation_routing_observation *invocations;
   size_t invocation_count;
   size_t group_count;
   uint32_t tile_count_observed;
+  npunlock_network_output_route_observation *network_output_routes;
+  size_t network_output_route_count;
 } npunlock_graph_routing_observations;
 
 npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,
