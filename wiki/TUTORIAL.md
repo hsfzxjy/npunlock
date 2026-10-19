@@ -229,6 +229,7 @@ The current carrier recipes are:
 | five equal-span FP16 inputs | `FakeQuantize`, `levels=256` | automatic for the documented carrier |
 | FP16 `(1,32)` data plus four `(1,1)` scalar parameters | `FakeQuantize`, `levels=16` | automatic only for the documented `(16,1,1,1,1)->16` layout |
 | FP16 `(4,8)` data plus four `(4,1)` per-row parameters | `FakeQuantize`, `levels=16` | automatic only for the documented four `(8,1,1,1,1)->8` invocations |
+| two FP16 `(1,32)` tensors plus three `(1,1)` graph-global parameters | `FakeQuantize`, `levels=16` | automatic only for the documented `(16,16,1,1,1)->16` layout |
 | two FP16 `(4,8)` tensors plus three `(4,1)` per-row parameters | `FakeQuantize`, `levels=16` | automatic only for the documented four-group `(4,4,1,1,1)->4` layout |
 | FP32→FP16, FP16→FP32, or U8→FP32 | `Convert`, matching `destination_type` | explicit prepared-group binding |
 
@@ -339,13 +340,22 @@ uses the same computation with four independently bound parameters per row.
 Neither form establishes arbitrary parameter counts, positions, shapes, axes,
 or precisions.
 
-To combine two row-sized tensors with three row parameters, use the exact
-`(4,8)`, `(4,8)`, `(4,1)`, `(4,1)`, `(4,1)` source shapes. The compiler
+To combine two tensors with three graph-global parameters, use the exact
+`(1,32)`, `(1,32)`, `(1,1)`, `(1,1)`, `(1,1)` source shapes. The compiler
+presents records 0 and 1 as 16-element vectors and records 2 through 4 as
+one-element parameters in each invocation. The
+[graph-global hybrid example](../examples/example_global_hybrid_five_input_custom.py)
+implements residual addition, affine scaling, and an upper clamp.
+
+The per-row alternative uses the exact `(4,8)`, `(4,8)`, `(4,1)`, `(4,1)`,
+`(4,1)` source shapes. The compiler
 presents records 0 and 1 as four-element vectors and records 2 through 4 as
 one-element parameters. This carrier is split into four row groups; npunlock
 selects all four only when the complete source and descriptor pattern matches.
 The [hybrid five-input example](../examples/example_hybrid_five_input_custom.py)
 implements residual addition, per-row affine scaling, and an upper clamp.
+Neither recipe establishes other vector/scalar mixtures, shapes, positions,
+or precisions.
 
 Use independent, non-symmetric test values so the oracle detects swapped or
 ignored inputs. The complete [multi-layer two-input

@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-19:** one custom kernel can now combine two FP16 row tensors with three independently bound parameters per row. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#62-hybrid-five-input-multi-group-execution).
+> **Latest breakthrough — 2026-10-19:** one custom kernel can now combine two FP16 tensors with three independently bound graph-global parameters. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#63-graph-global-hybrid-five-input-execution).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,
@@ -76,7 +76,7 @@ print(f"maximum absolute error: {np.max(np.abs(output - reference)):g}")
 The same code is available as the runnable
 [FP32 GELU example](examples/example_gelu_f32.py). See also:
 
-- [a five-input kernel mixing row tensors and row parameters](examples/example_hybrid_five_input_custom.py)
+- [a five-input kernel mixing two tensors and global parameters](examples/example_global_hybrid_five_input_custom.py)
 - [per-row scalar custom kernels](examples/example_per_row_scalar_custom.py)
 - [a mixed DPU/custom-kernel network](examples/example_branched_network.py)
 

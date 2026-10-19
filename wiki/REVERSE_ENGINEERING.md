@@ -1922,6 +1922,33 @@ layout, record positions, four-group ordering, carrier, compiler, and device.
 It does not establish arbitrary vector/scalar mixtures, shapes, axes, group
 counts, precisions, compilers, or NPU generations.
 
+## 63. Graph-global hybrid five-input execution
+
+On 2026-10-19, graph compiler 8.3 compiled an FP16
+`FakeQuantize(levels=16)` graph with two independently bound `[1,32]` inputs
+followed by three independently bound `[1,1]` inputs. The unmodified graph
+matched an exact 32-element host `FakeQuantize` oracle, including interior
+quantization levels and both clipping ends.
+
+Discovery produced one ACT group with four invocations. Every invocation
+reported `(16,16,1,1,1)->16`: the first two input records and output record 5
+each used a 32-byte FP16 span, while input records 2 through 4 each contained
+one two-byte value. This is the graph-global counterpart to the preceding
+row-partitioned layout; it uses the ordinary one-to-one positional mapping.
+
+A substituted non-commutative kernel weighted both vector records and all
+three scalar records differently. It matched all 32 host-oracle outputs
+exactly through both copied and explicitly shared buffers. The retained
+95,080-byte carrier has SHA-256
+`e8ae09b8fa55b51b9134f62ad3d0acac63ab80878b723dc601d46a8f905e8a2e`.
+The patched graph was 96,104 bytes with SHA-256
+`7940e0431baa23297c88bab6c1c385976681b502292a0baa1ef261770c98755c`.
+
+This establishes only the exact FP16 two-`[1,32]` plus three-`[1,1]` source
+layout, record positions, carrier, compiler, and device. It does not establish
+arbitrary vector/scalar mixtures, shapes, parameter positions/counts, other
+precisions, compilers, or NPU generations.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

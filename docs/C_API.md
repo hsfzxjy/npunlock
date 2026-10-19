@@ -276,14 +276,13 @@ from a graph-global `[1,1]` scalar; callers must validate the graph-to-group
 mapping before patching.
 
 The validated higher-arity scalar contracts are FP16-only: five inputs and one
-output, with inputs 1 through 4 containing one element/two bytes each. Input 0
-and the output contain either 16 elements/32 bytes or 8 elements/16 bytes per
-invocation. Graph compiler 8.3 produced those descriptors from the exact
-`[1,32]` plus four `[1,1]` and `[4,8]` plus four `[4,1]`
+output. One family has scalar inputs 1 through 4, with input 0 and the output
+containing either 16 elements/32 bytes or 8 elements/16 bytes per invocation.
+Graph compiler 8.3 produced those descriptors from the exact `[1,32]` plus
+four `[1,1]` and `[4,8]` plus four `[4,1]`
 `FakeQuantize(levels=16)` carriers, respectively. The native descriptor alone
 does not encode whether a scalar is graph-global or row-local, so callers must
-retain that source mapping proof. Version 2 rejects other multi-scalar counts,
-positions, precisions, and spans.
+retain that source mapping proof.
 
 A separate exact FP16 hybrid contract has five inputs and one output with
 `(4,4,1,1,1)->4` records: inputs 0 and 1 plus the output each span eight
@@ -291,6 +290,12 @@ bytes, while inputs 2 through 4 each span two bytes. The validated `[4,8]`
 source graph produces four positional groups of four invocations; all 16
 targets must be patched together. This does not establish other mixtures of
 equal-span and scalar records or a general multi-group mapping rule.
+
+The graph-global hybrid form is another exact contract: two `[1,32]` source
+inputs followed by three `[1,1]` inputs produce one group of four
+`(16,16,1,1,1)->16` invocations. Inputs 0 and 1 plus the output each span 32
+bytes; inputs 2 through 4 each span two bytes. Version 2 rejects other
+multi-scalar positions, counts, precisions, spans, and source mappings.
 
 `patchblob_discover_targets()` validates the graph's supported ACT carriers and
 returns owned targets grouped by zero-based positional ACT operation. Release
@@ -422,6 +427,7 @@ unary FP32 accuracy-mode carrier, explicit unary FP16/FP32 and U8-to-FP32
 conversion, and one same-precision unary carrier each for I32, I16, and I8.
 Each signed integer precision also has one equal-span binary carrier. U16 and
 U32 additionally have a global or per-row scalar in either input position and
-one exact dense row-broadcast form. FP16 additionally has one five-input
-carrier with four scalar parameters. Other devices, dtypes, layouts, dynamic
-shapes, and arbitrary source-node mapping are not implied.
+one exact dense row-broadcast form. FP16 additionally has exact five-input
+equal-span, multi-scalar, and two-vector/three-scalar carriers. Other devices,
+dtypes, layouts, dynamic shapes, and arbitrary source-node mapping are not
+implied.

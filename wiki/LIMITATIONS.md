@@ -23,7 +23,7 @@ output does not match that contract.
 | U16 | one binary `Subtract` carrier for equal-span, either-position global/per-row scalar, and exact `(4,8)` plus `(1,8)` row-broadcast inputs; no unary carrier |
 | U32 | one binary `Subtract` carrier for equal-span, either-position global/per-row scalar, and exact `(4,8)` plus `(1,8)` row-broadcast inputs; no unary carrier |
 | binary custom kernel | static dense FP16/FP32 carriers with the documented equal-span, scalar, or row-broadcast layouts; one equal-span carrier each for I32, I16, and I8; the three exact unsigned layouts above for U16 and U32 |
-| higher custom arity | one FP16 five-input `FakeQuantize` family with five equal spans, two exact data-plus-four-parameter layouts, or the exact four-group two-vector/three-row-parameter layout; compiler 8.3 rejects its FP32 equivalent |
+| higher custom arity | one FP16 five-input `FakeQuantize` family with five equal spans, two exact data-plus-four-parameter layouts, or exact two-vector/three-parameter graph-global and per-row layouts; compiler 8.3 rejects its FP32 equivalent |
 | kernel image | one linked executable image, shareable by selected ranges |
 | ordinary graph I/O | static dense FP16, FP32, U8, I8, U16, I16, U32, and I32 through copied or shared buffers |
 | restricted graph input | I64 only as caller-provided indices for the validated U8 Gather graph |
@@ -46,8 +46,8 @@ There is no general support for:
   and descriptor-level FP16/FP32/U16/U32 `[4,8]` plus `[1,8]` row broadcasts;
 - arbitrary input/output aliasing;
 - arbitrary tensor arity beyond the validated unary, binary, and five-input
-  layouts, or higher-arity scalar contracts beyond one FP16 data input followed
-  by four scalars; or
+  layouts, or higher-arity vector/scalar mixtures beyond the documented exact
+  FP16 source shapes; or
 - automatic layout conversion inside custom code.
 
 The Python serializer knows more IR dtype names than native execution supports.
@@ -181,6 +181,11 @@ parameters. It compiles into four row groups of four
 `(4,4,1,1,1)->4` invocations, and all four groups are required for the full
 output. This does not establish other vector/scalar mixtures, shapes, group
 counts, or a general way to distinguish partitions from replicas.
+
+The graph-global hybrid uses two `[1,32]` inputs and three `[1,1]` parameters.
+It exposes one group of four `(16,16,1,1,1)->16` invocations and uses scalar
+positions 2 through 4. This does not establish other shapes, scalar positions,
+counts, precisions, carriers, compilers, or devices.
 
 `mlibm.a` math functions work only when section garbage collection leaves a
 self-contained code image and no data dependency. Eight FP32 unary functions

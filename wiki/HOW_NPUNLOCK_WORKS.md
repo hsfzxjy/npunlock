@@ -171,6 +171,11 @@ parameters compile into four row-ordered groups, each containing four
 group owns one logical row, so the frontend accepts only the complete ordered
 four-group selection for this source and descriptor pattern.
 
+The adjacent graph-global hybrid remains a normal one-group mapping. Two
+`(1,32)` FP16 tensors followed by three `(1,1)` parameters produce four
+`(16,16,1,1,1)->16` invocations. The frontend recognizes scalar positions 2
+through 4 only for this exact source shape and native descriptor combination.
+
 ## 5. Substitute the executable image
 
 `patchblob` extracts `.text` from the validated SHAVE ELF, appends it to the
@@ -222,8 +227,8 @@ equal-span and one row-broadcast U16/U32 carrier, scalar inputs in either
 position for FP16/FP32/U16/U32 through exact global and per-row carriers, and
 one explicitly bound U8-to-FP32 unary conversion carrier. It also includes one
 FP16 five-input data-plus-four-scalars carrier in both graph-global and exact
-per-row forms, plus the exact two-vector/three-row-parameter hybrid. The exact
-layouts used by these cases are execution-tested.
+per-row forms, plus exact two-vector/three-scalar graph-global and per-row
+hybrids. The exact layouts used by these cases are execution-tested.
 
 Field names that are not available from a public vendor specification remain
 described as observed values. The project does not generalize them to dynamic

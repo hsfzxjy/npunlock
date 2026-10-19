@@ -967,9 +967,15 @@ def _custom_scalar_input_indices(node: Node) -> tuple[int, ...]:
             and node.inputs[1].shape == (4, 8)
             and all(value.shape == (4, 1) for value in node.inputs[2:])
         )
+        hybrid_graph_global = (
+            output_shape == (1, 32)
+            and node.inputs[0].shape == (1, 32)
+            and node.inputs[1].shape == (1, 32)
+            and all(value.shape == (1, 1) for value in node.inputs[2:])
+        )
         if graph_global or per_row:
             return (1, 2, 3, 4)
-        return (2, 3, 4) if hybrid_per_row else ()
+        return (2, 3, 4) if hybrid_per_row or hybrid_graph_global else ()
     return tuple(
         index
         for index, value in enumerate(node.inputs)

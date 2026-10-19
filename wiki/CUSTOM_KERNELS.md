@@ -469,6 +469,14 @@ accepts only the full ordered group set. See the
 [hybrid five-input example](../examples/example_hybrid_five_input_custom.py).
 Other mixtures and multi-group layouts remain unsupported.
 
+A graph-global hybrid uses exact `(1,32)`, `(1,32)`, `(1,1)`, `(1,1)`,
+`(1,1)` FP16 source shapes with the same `FakeQuantize(levels=16)` carrier.
+Its one group contains four `(16,16,1,1,1) -> 16` invocations. Index records
+0 and 1 by `i`; read records 2 through 4 only at index zero. A substituted
+residual/affine/clamp kernel matched copied and explicitly shared execution.
+See the [graph-global hybrid example](../examples/example_global_hybrid_five_input_custom.py).
+This exact proof does not allow other shapes, scalar positions, or dtypes.
+
 The same carrier also runs a composed multi-pass kernel using all five inputs:
 data, residual, scale, bias, and gate. The entry adds data and residual into
 FP32 scratch, accumulates an invocation-local sum of squares, calls `sqrtf` for
@@ -644,6 +652,7 @@ provide `KernelSpec` or `CompiledKernel` again after loading. See
 - [Five-input FP16 kernel with four scalar parameters](../examples/example_multi_scalar_custom.py)
 - [Five-input FP16 kernel with four parameters per row](../examples/example_per_row_multi_scalar_custom.py)
 - [Five-input FP16 kernel with two row tensors and three row parameters](../examples/example_hybrid_five_input_custom.py)
+- [Five-input FP16 kernel with two tensors and three graph-global parameters](../examples/example_global_hybrid_five_input_custom.py)
 - [Fused five-input invocation-local RMS normalization](../examples/example_fused_rmsnorm.py)
 - [Dimension-aware local transform](../examples/example_dimension_aware.py)
 - [Runtime dispatch through a bounded same-file function pointer](../examples/example_function_dispatch.py)

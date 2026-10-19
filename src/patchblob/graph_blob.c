@@ -1217,7 +1217,8 @@ static npunlock_status validate_target_v2(const graph_layout *layout,
         target->tensors[0].span_bytes == output->span_bytes && scalar_input_count == 4u;
     supported_hybrid_scalar_fp16 =
         output->precision == PATCHBLOB_TENSOR_PRECISION_FP16_V2 && input_count == 5u &&
-        output->element_count == 4u && output->span_bytes == 8u &&
+        ((output->element_count == 4u && output->span_bytes == 8u) ||
+         (output->element_count == 16u && output->span_bytes == 32u)) &&
         target->tensors[0].element_count == output->element_count &&
         target->tensors[0].span_bytes == output->span_bytes &&
         target->tensors[1].element_count == output->element_count &&
