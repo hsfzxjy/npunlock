@@ -1965,6 +1965,12 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
     observation->group_index = discovered[index].group_index;
     observation->tile_candidate_raw = read_u32(record + 0x34u);
     observation->parameter_base = parameter_bases[index];
+    observation->wait_mask_raw = read_u64(record + 0x10u);
+    observation->post_mask_raw = read_u64(record + 0x18u);
+    observation->barrier_group_raw = record[0x20u];
+    observation->barrier_mask_raw = record[0x21u];
+    observation->start_after_raw = read_u32(record + 0x28u);
+    observation->clean_after_raw = read_u32(record + 0x2cu);
     observation->target = discovered[index].target;
     for (tensor_index = 0; tensor_index < observation->target.tensor_count; ++tensor_index) {
       memref_contract contract;

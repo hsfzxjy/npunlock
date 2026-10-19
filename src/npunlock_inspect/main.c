@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v4\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v5\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -164,13 +164,18 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_version\": 2, "
                 "\"target_flags\": %u, \"precision\": \"%s\", "
                 "\"input_1_scalar\": %s, \"routing_observation\": "
-                "{\"tile_candidate_raw\": %u, \"parameter_base\": %" PRIu64 "}, "
+                "{\"tile_candidate_raw\": %u, \"parameter_base\": %" PRIu64
+                ", \"wait_mask_raw\": %" PRIu64 ", \"post_mask_raw\": %" PRIu64
+                ", \"barrier_group_raw\": %u, \"barrier_mask_raw\": %u, "
+                "\"start_after_raw\": %u, \"clean_after_raw\": %u}, "
                 "\"scalar_input_indices\": [",
                 index == 0 ? "" : ",\n", observation->group_index, target->invocation_index,
                 target->range_index, target->tensor_count - 1u, output->element_count,
                 output->span_bytes, target->target_flags, target_precision_name(target),
                 input_1_scalar ? "true" : "false", observation->tile_candidate_raw,
-                observation->parameter_base) < 0) {
+                observation->parameter_base, observation->wait_mask_raw, observation->post_mask_raw,
+                observation->barrier_group_raw, observation->barrier_mask_raw,
+                observation->start_after_raw, observation->clean_after_raw) < 0) {
       return 0;
     }
     for (tensor_index = 0; tensor_index + 1u < target->tensor_count; ++tensor_index) {
@@ -242,12 +247,11 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
-  return fprintf(
-             stream,
-             "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT and network-output "
-             "DMA contract; routing fields are raw validated observations, not logical offsets, "
-             "partitions, or replicas; discovery is not proof of execution compatibility\"\n}\n") >=
-         0;
+  return fprintf(stream,
+                 "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT and network-output "
+                 "DMA contract; routing and scheduling fields are raw validated observations, not "
+                 "logical offsets, semantic graph edges, partitions, or replicas; discovery is not "
+                 "proof of execution compatibility\"\n}\n") >= 0;
 }
 
 static void print_diagnostic(const npunlock_diagnostic *diagnostic) {

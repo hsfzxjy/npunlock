@@ -58,6 +58,12 @@ typedef struct npunlock_invocation_routing_observation {
   uint32_t group_index;
   uint32_t tile_candidate_raw;
   uint64_t parameter_base;
+  uint64_t wait_mask_raw;
+  uint64_t post_mask_raw;
+  uint32_t barrier_group_raw;
+  uint32_t barrier_mask_raw;
+  uint32_t start_after_raw;
+  uint32_t clean_after_raw;
   patchblob_target_v2 target;
   npunlock_tensor_routing_observation tensors[PATCHBLOB_TARGET_V2_MAX_TENSORS];
 } npunlock_invocation_routing_observation;

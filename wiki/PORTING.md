@@ -35,13 +35,15 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 4 JSON report records the blob size and SHA-256 plus every
+The version 5 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
 candidate, KernelParams base, and each tensor's CMX relocation symbol/addend,
-rank, dimensions, and bit strides. These routing fields are observations, not
-logical tensor offsets or a partition/replica classification. The report can
+rank, dimensions, and bit strides. Raw wait/post barrier masks, barrier
+group/mask bytes, and start/clean scheduling values are included as well.
+These routing and scheduling fields are observations, not logical tensor
+offsets, semantic graph edges, or a partition/replica classification. The report can
 therefore inspect the supported unary
 FP16/FP32 and U8-to-FP32 conversion carriers, unary I32/I16/I8 carriers, the
 equal-span binary I32/I16/I8/U16/U32 carriers, either-position scalar
@@ -52,7 +54,10 @@ The report also lists validated network-output DMA routes: the raw CMX source,
 the destination output symbol/addend, and the transfer length. This is enough
 to show which CMX ranges are copied to which graph-output byte ranges. It is
 not yet a complete route from every intermediate ACT invocation to a symbolic
-tensor; internal DMA edges and scheduling relationships remain unresolved.
+tensor. A retained two-ACT graph has matching producer-output and
+consumer-input CMX addends plus intersecting post/wait masks, but the inspector
+does not yet promote those matches into semantic edges. Internal DMA paths,
+address reuse, and ambiguous schedules remain unresolved.
 That includes the documented equal-span binary FP32 `Subtract` carrier.
 It also recognizes the structurally identical dense FP32 `(8,8)->8`
 invocations emitted for the documented row-broadcast carrier; inspection alone
