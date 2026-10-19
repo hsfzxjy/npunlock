@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 13 JSON report records the blob size and SHA-256 plus every
+The version 14 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -69,7 +69,7 @@ This allows a four-group per-row lowering to prove complete output coverage
 without claiming that the groups correspond to one source node or that the
 unrouted invocations are replicas.
 
-Schema v13 adds a guarded replica correlation for groups containing both routed
+The report adds a guarded replica correlation for groups containing both routed
 and unrouted invocations. It does not hard-code a tile stride. Instead, it
 requires the complete tensor contract, shape/stride pattern, runtime symbols,
 and scheduling fields to agree, then searches for a single CMX translation
@@ -78,6 +78,13 @@ in the group. Only one complete solution emits `replica_candidates`; zero or
 multiple solutions remain unresolved. The candidate inherits the routed
 graph-output interval as a proposed replica-class identity, not as permission
 for automatic patch selection.
+
+Schema v14 combines these proofs in `group_completeness_observations`. A
+direct-output ACT group is complete only when its graph output has an exact
+cover and every invocation has exactly one disposition: a unique routed slice
+or a unique replica candidate. Routed, replica, and unresolved counts remain
+visible per group. Completeness still does not identify a symbolic source node
+and is not used by automatic patch selection.
 
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant

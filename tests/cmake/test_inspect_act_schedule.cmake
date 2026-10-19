@@ -13,7 +13,7 @@ if(NOT result EQUAL 0)
 endif()
 
 foreach(expected
-    "\"schema\": \"npunlock.porting.inspect.v13\""
+    "\"schema\": \"npunlock.porting.inspect.v14\""
     "\"invocation_index\": 0"
     "\"wait_mask_raw\": 1, \"post_mask_raw\": 2"
     "\"data_addend_raw\": 64"
@@ -29,6 +29,13 @@ foreach(expected
     message(FATAL_ERROR "ACT schedule inspection changed a retained observation: ${expected}")
   endif()
 endforeach()
+
+string(FIND "${report}"
+  "{\"act_group_index\": 1, \"output_symbol_raw\": 1, \"invocation_count\": 4, \"routed_invocation_count\": 2, \"replica_invocation_count\": 2, \"unresolved_invocation_count\": 0, \"complete\": true, \"unresolved_flags\": 0}"
+  completeness_offset)
+if(completeness_offset EQUAL -1)
+  message(FATAL_ERROR "final ACT group was not classified complete")
+endif()
 
 foreach(expected
     "\"act_group_index\": 1, \"routed_invocation_count\": 2, \"unrouted_invocation_count\": 2, \"translation_solution_count\": 1, \"cmx_translation_candidate\": 2097152"

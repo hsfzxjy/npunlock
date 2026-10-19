@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v13\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v14\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -352,6 +352,25 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"group_completeness_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_group_completeness_count; ++index) {
+    const npunlock_act_group_completeness_observation *observation =
+        &routing->act_group_completeness[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"output_symbol_raw\": %u, "
+                "\"invocation_count\": %u, \"routed_invocation_count\": %u, "
+                "\"replica_invocation_count\": %u, \"unresolved_invocation_count\": %u, "
+                "\"complete\": %s, \"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", observation->act_group_index,
+                observation->output_symbol_raw, observation->invocation_count,
+                observation->routed_invocation_count, observation->replica_invocation_count,
+                observation->unresolved_invocation_count, observation->complete ? "true" : "false",
+                observation->unresolved_flags) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ]},\n  \"dpu\": {\"invariant_count\": %zu, \"invariants\": [\n",
               routing->dpu_invariant_count) < 0) {
     return 0;
@@ -453,6 +472,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "network-output DMA routes; output-cover observations require unique, "
                  "non-overlapping slices with the same interval union as the output routes; "
                  "replica candidates require a unique complete CMX-translation bijection; "
+                 "group completeness requires an exact output cover and one routed or replica "
+                 "classification for every participating invocation; "
                  "DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
                  "intervals; candidates do not classify unrouted invocations as replicas; "

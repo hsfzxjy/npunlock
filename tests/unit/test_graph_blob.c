@@ -213,8 +213,11 @@ static int test_replica_candidate_bijection(void) {
   npunlock_act_output_slice_candidate_observation slices[2] = {0};
   npunlock_act_replica_group_observation *groups = NULL;
   npunlock_act_replica_candidate_observation *candidates = NULL;
+  npunlock_act_output_cover_observation cover = {0};
+  npunlock_act_group_completeness_observation *completeness = NULL;
   size_t group_count = 0;
   size_t candidate_count = 0;
+  size_t completeness_count = 0;
   npunlock_diagnostic diagnostic = {0};
 
   configure_edge_invocation(&invocations[0], 0, 0, 0, 64, 1, 2);
@@ -234,6 +237,8 @@ static int test_replica_candidate_bijection(void) {
   slices[1].output_symbol_raw = 1;
   slices[1].output_slice_addend_candidate = 16;
   slices[1].act_span_bytes = 16;
+  cover.output_symbol_raw = 1;
+  cover.exact_cover = true;
 
   CHECK(npunlock_derive_act_replica_candidates(invocations, 4, 1, slices, 2, &groups, &group_count,
                                                &candidates, &candidate_count,
@@ -246,6 +251,16 @@ static int test_replica_candidate_bijection(void) {
   CHECK(candidates[0].routed_invocation_index == 0);
   CHECK(candidates[1].unrouted_invocation_index == 3);
   CHECK(candidates[1].routed_invocation_index == 2);
+  CHECK(npunlock_derive_act_group_completeness(invocations, 4, 1, slices, 2, &cover, 1, groups,
+                                               group_count, candidates, candidate_count,
+                                               &completeness, &completeness_count,
+                                               &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(completeness_count == 1);
+  CHECK(completeness[0].complete);
+  CHECK(completeness[0].routed_invocation_count == 2);
+  CHECK(completeness[0].replica_invocation_count == 2);
+  free(completeness);
+  completeness = NULL;
   free(groups);
   free(candidates);
   groups = NULL;
@@ -259,6 +274,15 @@ static int test_replica_candidate_bijection(void) {
   CHECK(group_count == 1);
   CHECK(groups[0].translation_solution_count == 0);
   CHECK(candidate_count == 0);
+  CHECK(npunlock_derive_act_group_completeness(invocations, 4, 1, slices, 2, &cover, 1, groups,
+                                               group_count, candidates, candidate_count,
+                                               &completeness, &completeness_count,
+                                               &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(completeness_count == 1);
+  CHECK(!completeness[0].complete);
+  CHECK(completeness[0].unresolved_invocation_count == 2);
+  CHECK((completeness[0].unresolved_flags & NPUNLOCK_GROUP_COMPLETE_REPLICA_UNRESOLVED) != 0);
+  free(completeness);
   free(groups);
   free(candidates);
   npunlock_diagnostic_release(&diagnostic);

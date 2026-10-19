@@ -3352,6 +3352,143 @@ npunlock_status npunlock_derive_act_replica_candidates(
   return NPUNLOCK_STATUS_OK;
 }
 
+npunlock_status npunlock_derive_act_group_completeness(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, const npunlock_act_output_slice_candidate_observation *slice_candidates,
+    size_t slice_candidate_count, const npunlock_act_output_cover_observation *covers,
+    size_t cover_count, const npunlock_act_replica_group_observation *replica_groups,
+    size_t replica_group_count,
+    const npunlock_act_replica_candidate_observation *replica_candidates,
+    size_t replica_candidate_count, npunlock_act_group_completeness_observation **completeness,
+    size_t *completeness_count, npunlock_diagnostic *diagnostic) {
+  npunlock_act_group_completeness_observation *result = NULL;
+  size_t allocation_size;
+  size_t result_count = 0u;
+  size_t group_index;
+  size_t work_bound;
+  size_t work_term;
+
+  if (completeness == NULL || completeness_count == NULL || diagnostic == NULL ||
+      (invocations == NULL && invocation_count != 0u) ||
+      (slice_candidates == NULL && slice_candidate_count != 0u) ||
+      (covers == NULL && cover_count != 0u) ||
+      (replica_groups == NULL && replica_group_count != 0u) ||
+      (replica_candidates == NULL && replica_candidate_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *completeness = NULL;
+  *completeness_count = 0u;
+  if (invocation_count > UINT32_MAX || group_count > UINT32_MAX ||
+      !npunlock_checked_add_size(replica_candidate_count, 1u, &work_term) ||
+      !npunlock_checked_mul_size(invocation_count, work_term, &work_term) ||
+      !npunlock_checked_add_size(work_term, slice_candidate_count, &work_bound) ||
+      !npunlock_checked_add_size(work_bound, cover_count, &work_bound) ||
+      !npunlock_checked_add_size(work_bound, replica_group_count, &work_bound) ||
+      !npunlock_checked_mul_size(group_count, work_bound, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS) {
+    return unsupported(diagnostic, "ACT group-completeness analysis exceeds its work bound");
+  }
+  if (!npunlock_checked_mul_size(group_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT group-completeness allocation overflows");
+  }
+  result = (npunlock_act_group_completeness_observation *)calloc(1u, allocation_size);
+  if (result == NULL && group_count != 0u) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT group-completeness observations");
+  }
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    npunlock_act_group_completeness_observation *observation;
+    const npunlock_act_replica_group_observation *replica_group = NULL;
+    bool participates = false;
+    bool output_symbol_set = false;
+    size_t index;
+    for (index = 0; index < slice_candidate_count; ++index) {
+      if (slice_candidates[index].act_group_index == group_index) {
+        participates = true;
+        break;
+      }
+    }
+    if (!participates) {
+      continue;
+    }
+    observation = &result[result_count++];
+    observation->act_group_index = (uint32_t)group_index;
+    for (index = 0; index < replica_group_count; ++index) {
+      if (replica_groups[index].act_group_index == group_index) {
+        replica_group = &replica_groups[index];
+        break;
+      }
+    }
+    for (index = 0; index < invocation_count; ++index) {
+      const npunlock_act_output_slice_candidate_observation *slice = NULL;
+      size_t slice_count;
+      size_t replica_count = 0u;
+      size_t replica_index;
+      if (invocations[index].group_index != group_index) {
+        continue;
+      }
+      ++observation->invocation_count;
+      slice_count =
+          invocation_slice_candidate_count(slice_candidates, slice_candidate_count,
+                                           invocations[index].target.invocation_index, &slice);
+      if (slice_count == 1u && slice != NULL) {
+        ++observation->routed_invocation_count;
+        if (!output_symbol_set) {
+          observation->output_symbol_raw = slice->output_symbol_raw;
+          output_symbol_set = true;
+        } else if (observation->output_symbol_raw != slice->output_symbol_raw) {
+          observation->unresolved_flags |= NPUNLOCK_GROUP_COMPLETE_OUTPUT_SYMBOL_AMBIGUOUS;
+        }
+        continue;
+      }
+      if (slice_count != 0u) {
+        ++observation->unresolved_invocation_count;
+        observation->unresolved_flags |= NPUNLOCK_GROUP_COMPLETE_ROUTE_AMBIGUOUS;
+        continue;
+      }
+      for (replica_index = 0; replica_index < replica_candidate_count; ++replica_index) {
+        if (replica_candidates[replica_index].act_group_index == group_index &&
+            replica_candidates[replica_index].unrouted_invocation_index ==
+                invocations[index].target.invocation_index) {
+          ++replica_count;
+        }
+      }
+      if (replica_count == 1u) {
+        ++observation->replica_invocation_count;
+      } else {
+        ++observation->unresolved_invocation_count;
+        observation->unresolved_flags |=
+            replica_group != NULL && replica_group->translation_solution_count != 1u
+                ? NPUNLOCK_GROUP_COMPLETE_REPLICA_UNRESOLVED
+                : NPUNLOCK_GROUP_COMPLETE_INVOCATION_UNCLASSIFIED;
+      }
+    }
+    if (!output_symbol_set) {
+      observation->unresolved_flags |= NPUNLOCK_GROUP_COMPLETE_OUTPUT_SYMBOL_AMBIGUOUS;
+    } else {
+      const npunlock_act_output_cover_observation *cover = NULL;
+      size_t matching_covers = 0u;
+      for (index = 0; index < cover_count; ++index) {
+        if (covers[index].output_symbol_raw == observation->output_symbol_raw) {
+          cover = &covers[index];
+          ++matching_covers;
+        }
+      }
+      if (matching_covers != 1u || cover == NULL || !cover->exact_cover) {
+        observation->unresolved_flags |= NPUNLOCK_GROUP_COMPLETE_OUTPUT_COVER_UNRESOLVED;
+      }
+    }
+    observation->complete =
+        observation->unresolved_flags == 0u && observation->unresolved_invocation_count == 0u &&
+        observation->routed_invocation_count + observation->replica_invocation_count ==
+            observation->invocation_count;
+  }
+  *completeness = result;
+  *completeness_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 void npunlock_graph_routing_observations_release(
     npunlock_graph_routing_observations *observations) {
   if (observations == NULL) {
@@ -3363,6 +3500,7 @@ void npunlock_graph_routing_observations_release(
   free(observations->act_output_covers);
   free(observations->act_replica_groups);
   free(observations->act_replica_candidates);
+  free(observations->act_group_completeness);
   free(observations->act_edge_candidates);
   free(observations->dpu_invariants);
   free(observations->act_dpu_edge_candidates);
@@ -3380,6 +3518,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_act_output_cover_observation *act_output_covers = NULL;
   npunlock_act_replica_group_observation *act_replica_groups = NULL;
   npunlock_act_replica_candidate_observation *act_replica_candidates = NULL;
+  npunlock_act_group_completeness_observation *act_group_completeness = NULL;
   npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
   npunlock_dpu_invariant_observation *dpu_invariants = NULL;
   npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates = NULL;
@@ -3392,6 +3531,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t act_output_cover_count = 0;
   size_t act_replica_group_count = 0;
   size_t act_replica_candidate_count = 0;
+  size_t act_group_completeness_count = 0;
   size_t act_edge_candidate_count = 0;
   size_t dpu_invariant_count = 0;
   size_t act_dpu_edge_candidate_count = 0;
@@ -3499,6 +3639,15 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = npunlock_derive_act_group_completeness(
+      invocations, invocation_count, group_count, act_output_slice_candidates,
+      act_output_slice_candidate_count, act_output_covers, act_output_cover_count,
+      act_replica_groups, act_replica_group_count, act_replica_candidates,
+      act_replica_candidate_count, &act_group_completeness, &act_group_completeness_count,
+      diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
   status = derive_act_dpu_edge_candidates(invocations, invocation_count, dpu_invariants,
                                           dpu_invariant_count, &act_dpu_edge_candidates,
                                           &act_dpu_edge_candidate_count, diagnostic);
@@ -3523,6 +3672,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->act_replica_group_count = act_replica_group_count;
   observations->act_replica_candidates = act_replica_candidates;
   observations->act_replica_candidate_count = act_replica_candidate_count;
+  observations->act_group_completeness = act_group_completeness;
+  observations->act_group_completeness_count = act_group_completeness_count;
   observations->act_edge_candidates = act_edge_candidates;
   observations->act_edge_candidate_count = act_edge_candidate_count;
   observations->dpu_invariants = dpu_invariants;
@@ -3538,6 +3689,7 @@ fail:
   free(act_output_covers);
   free(act_replica_groups);
   free(act_replica_candidates);
+  free(act_group_completeness);
   free(act_edge_candidates);
   free(dpu_invariants);
   free(act_dpu_edge_candidates);
