@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v11\""
+    "\"schema\": \"npunlock.porting.inspect.v12\""
     "\"tile_count_observed\""
     "\"tile_candidate_raw\""
     "\"parameter_base\""
@@ -41,6 +41,11 @@ foreach(required
     "\"output_slice_candidates\""
     "\"route_candidate_count\""
     "\"output_slice_addend_candidate\""
+    "\"output_cover_observations\""
+    "\"act_group_count\""
+    "\"routed_invocation_count\""
+    "\"unrouted_invocation_count\""
+    "\"exact_cover\""
     "\"cmx_source_addend_raw\""
     "\"output_addend_raw\""
     "\"length_bytes\""

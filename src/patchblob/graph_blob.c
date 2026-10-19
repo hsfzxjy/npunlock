@@ -2728,6 +2728,313 @@ static npunlock_status derive_act_output_slice_candidates(
   return NPUNLOCK_STATUS_OK;
 }
 
+typedef struct output_byte_interval {
+  uint64_t start;
+  uint64_t end;
+} output_byte_interval;
+
+static int compare_output_byte_intervals(const void *left_pointer, const void *right_pointer) {
+  const output_byte_interval *left = (const output_byte_interval *)left_pointer;
+  const output_byte_interval *right = (const output_byte_interval *)right_pointer;
+  if (left->start < right->start) {
+    return -1;
+  }
+  if (left->start > right->start) {
+    return 1;
+  }
+  if (left->end < right->end) {
+    return -1;
+  }
+  return left->end > right->end ? 1 : 0;
+}
+
+static size_t merge_output_byte_intervals(output_byte_interval *intervals, size_t interval_count,
+                                          bool *has_overlap) {
+  size_t input_index;
+  size_t merged_count = 0u;
+  *has_overlap = false;
+  if (interval_count == 0u) {
+    return 0u;
+  }
+  qsort(intervals, interval_count, sizeof(*intervals), compare_output_byte_intervals);
+  for (input_index = 0; input_index < interval_count; ++input_index) {
+    output_byte_interval *previous;
+    if (merged_count == 0u) {
+      intervals[merged_count++] = intervals[input_index];
+      continue;
+    }
+    previous = &intervals[merged_count - 1u];
+    if (intervals[input_index].start < previous->end) {
+      *has_overlap = true;
+    }
+    if (intervals[input_index].start <= previous->end) {
+      if (intervals[input_index].end > previous->end) {
+        previous->end = intervals[input_index].end;
+      }
+    } else {
+      intervals[merged_count++] = intervals[input_index];
+    }
+  }
+  return merged_count;
+}
+
+static bool
+output_cover_symbol_is_first(const npunlock_act_output_slice_candidate_observation *candidates,
+                             size_t candidate_index) {
+  size_t index;
+  for (index = 0; index < candidate_index; ++index) {
+    if (candidates[index].output_symbol_raw == candidates[candidate_index].output_symbol_raw) {
+      return false;
+    }
+  }
+  return true;
+}
+
+npunlock_status npunlock_derive_act_output_cover_observations(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    const npunlock_network_output_route_observation *routes, size_t route_count,
+    const npunlock_act_output_slice_candidate_observation *slice_candidates,
+    size_t slice_candidate_count, npunlock_act_output_cover_observation **covers,
+    size_t *cover_count, npunlock_diagnostic *diagnostic) {
+  npunlock_act_output_cover_observation *result = NULL;
+  output_byte_interval *route_intervals = NULL;
+  output_byte_interval *slice_intervals = NULL;
+  size_t result_count = 0u;
+  size_t result_index = 0u;
+  size_t allocation_size;
+  size_t candidate_index;
+  size_t work_bound;
+  size_t work_term;
+
+  if (covers == NULL || cover_count == NULL || diagnostic == NULL ||
+      (invocations == NULL && invocation_count != 0u) || (routes == NULL && route_count != 0u) ||
+      (slice_candidates == NULL && slice_candidate_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *covers = NULL;
+  *cover_count = 0u;
+  if (!npunlock_checked_mul_size(slice_candidate_count, slice_candidate_count, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS) {
+    return unsupported(diagnostic, "ACT output-cover analysis exceeds its work bound");
+  }
+  for (candidate_index = 0; candidate_index < slice_candidate_count; ++candidate_index) {
+    if (output_cover_symbol_is_first(slice_candidates, candidate_index)) {
+      if (result_count == SIZE_MAX) {
+        return unsupported(diagnostic, "ACT output-cover observation count overflows");
+      }
+      ++result_count;
+    }
+  }
+  if (result_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (!npunlock_checked_mul_size(result_count, invocation_count, &work_term) ||
+      !npunlock_checked_mul_size(work_term, slice_candidate_count, &work_term) ||
+      !npunlock_checked_add_size(work_bound, work_term, &work_bound) ||
+      !npunlock_checked_mul_size(result_count, route_count, &work_term) ||
+      !npunlock_checked_add_size(work_bound, work_term, &work_bound) ||
+      !npunlock_checked_mul_size(result_count, slice_candidate_count, &work_term) ||
+      !npunlock_checked_add_size(work_bound, work_term, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS) {
+    return unsupported(diagnostic, "ACT output-cover analysis exceeds its work bound");
+  }
+  if (!npunlock_checked_mul_size(result_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT output-cover observation allocation overflows");
+  }
+  result = (npunlock_act_output_cover_observation *)calloc(1u, allocation_size);
+  if (result == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT output-cover observations");
+  }
+  if (!npunlock_checked_mul_size(route_count, sizeof(*route_intervals), &allocation_size) ||
+      !npunlock_checked_mul_size(slice_candidate_count, sizeof(*slice_intervals),
+                                 &allocation_size)) {
+    free(result);
+    return unsupported(diagnostic, "ACT output-cover interval allocation overflows");
+  }
+  route_intervals = (output_byte_interval *)calloc(route_count, sizeof(*route_intervals));
+  slice_intervals = (output_byte_interval *)calloc(slice_candidate_count, sizeof(*slice_intervals));
+  if ((route_intervals == NULL && route_count != 0u) ||
+      (slice_intervals == NULL && slice_candidate_count != 0u)) {
+    free(result);
+    free(route_intervals);
+    free(slice_intervals);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT output-cover intervals");
+  }
+
+  for (candidate_index = 0; candidate_index < slice_candidate_count; ++candidate_index) {
+    const npunlock_act_output_slice_candidate_observation *first =
+        &slice_candidates[candidate_index];
+    npunlock_act_output_cover_observation *observation;
+    size_t act_groups = 0u;
+    size_t group_invocations = 0u;
+    size_t routed_invocations = 0u;
+    size_t matching_routes = 0u;
+    size_t matching_slices = 0u;
+    size_t route_merged_count;
+    size_t slice_merged_count;
+    size_t index;
+    bool route_overlap;
+    bool slice_overlap;
+    bool unions_equal = true;
+
+    if (!output_cover_symbol_is_first(slice_candidates, candidate_index)) {
+      continue;
+    }
+    if (result_index >= result_count) {
+      free(result);
+      free(route_intervals);
+      free(slice_intervals);
+      return unsupported(diagnostic,
+                         "ACT output-cover observation count changed during inspection");
+    }
+    observation = &result[result_index++];
+    observation->output_symbol_raw = first->output_symbol_raw;
+    for (index = 0; index < slice_candidate_count; ++index) {
+      size_t earlier_index;
+      bool first_group = true;
+      if (slice_candidates[index].output_symbol_raw != first->output_symbol_raw) {
+        continue;
+      }
+      for (earlier_index = 0; earlier_index < index; ++earlier_index) {
+        if (slice_candidates[earlier_index].output_symbol_raw == first->output_symbol_raw &&
+            slice_candidates[earlier_index].act_group_index ==
+                slice_candidates[index].act_group_index) {
+          first_group = false;
+          break;
+        }
+      }
+      if (first_group) {
+        ++act_groups;
+      }
+    }
+    for (index = 0; index < invocation_count; ++index) {
+      size_t inner_index;
+      bool participating_group = false;
+      bool routed = false;
+      for (inner_index = 0; inner_index < slice_candidate_count; ++inner_index) {
+        if (slice_candidates[inner_index].output_symbol_raw == first->output_symbol_raw &&
+            slice_candidates[inner_index].act_group_index == invocations[index].group_index) {
+          participating_group = true;
+          break;
+        }
+      }
+      if (!participating_group) {
+        continue;
+      }
+      ++group_invocations;
+      for (inner_index = 0; inner_index < slice_candidate_count; ++inner_index) {
+        if (slice_candidates[inner_index].output_symbol_raw == first->output_symbol_raw &&
+            slice_candidates[inner_index].act_invocation_index ==
+                invocations[index].target.invocation_index) {
+          routed = true;
+          break;
+        }
+      }
+      if (routed) {
+        ++routed_invocations;
+      }
+    }
+    for (index = 0; index < route_count; ++index) {
+      uint64_t start;
+      if (routes[index].output_symbol_raw != first->output_symbol_raw) {
+        continue;
+      }
+      if (routes[index].output_addend_raw < 0) {
+        observation->unresolved_flags |= NPUNLOCK_OUTPUT_COVER_UNION_MISMATCH;
+        continue;
+      }
+      start = (uint64_t)routes[index].output_addend_raw;
+      if (start > UINT64_MAX - routes[index].length_bytes) {
+        observation->unresolved_flags |= NPUNLOCK_OUTPUT_COVER_UNION_MISMATCH;
+        continue;
+      }
+      route_intervals[matching_routes].start = start;
+      route_intervals[matching_routes].end = start + routes[index].length_bytes;
+      if (observation->route_span_bytes > UINT64_MAX - routes[index].length_bytes) {
+        free(result);
+        free(route_intervals);
+        free(slice_intervals);
+        return unsupported(diagnostic, "ACT output-cover route span overflows");
+      }
+      observation->route_span_bytes += routes[index].length_bytes;
+      ++matching_routes;
+    }
+    for (index = 0; index < slice_candidate_count; ++index) {
+      const npunlock_act_output_slice_candidate_observation *candidate = &slice_candidates[index];
+      uint64_t start;
+      if (candidate->output_symbol_raw != first->output_symbol_raw) {
+        continue;
+      }
+      if (candidate->route_candidate_count != 1u) {
+        observation->unresolved_flags |= NPUNLOCK_OUTPUT_COVER_ROUTE_AMBIGUITY;
+      }
+      start = candidate->output_slice_addend_candidate;
+      if (start > UINT64_MAX - candidate->act_span_bytes) {
+        observation->unresolved_flags |= NPUNLOCK_OUTPUT_COVER_UNION_MISMATCH;
+        continue;
+      }
+      slice_intervals[matching_slices].start = start;
+      slice_intervals[matching_slices].end = start + candidate->act_span_bytes;
+      if (observation->slice_span_bytes > UINT64_MAX - candidate->act_span_bytes) {
+        free(result);
+        free(route_intervals);
+        free(slice_intervals);
+        return unsupported(diagnostic, "ACT output-cover slice span overflows");
+      }
+      observation->slice_span_bytes += candidate->act_span_bytes;
+      ++matching_slices;
+    }
+    route_merged_count =
+        merge_output_byte_intervals(route_intervals, matching_routes, &route_overlap);
+    slice_merged_count =
+        merge_output_byte_intervals(slice_intervals, matching_slices, &slice_overlap);
+    if (route_overlap) {
+      observation->unresolved_flags |= NPUNLOCK_OUTPUT_COVER_ROUTE_OVERLAP;
+    }
+    if (slice_overlap) {
+      observation->unresolved_flags |= NPUNLOCK_OUTPUT_COVER_SLICE_OVERLAP;
+    }
+    if (route_merged_count != slice_merged_count) {
+      unions_equal = false;
+    } else {
+      for (index = 0; index < route_merged_count; ++index) {
+        if (route_intervals[index].start != slice_intervals[index].start ||
+            route_intervals[index].end != slice_intervals[index].end) {
+          unions_equal = false;
+          break;
+        }
+      }
+    }
+    if (!unions_equal) {
+      observation->unresolved_flags |= NPUNLOCK_OUTPUT_COVER_UNION_MISMATCH;
+    }
+    if (act_groups > UINT32_MAX || group_invocations > UINT32_MAX ||
+        routed_invocations > UINT32_MAX || matching_routes > UINT32_MAX ||
+        matching_slices > UINT32_MAX) {
+      free(result);
+      free(route_intervals);
+      free(slice_intervals);
+      return unsupported(diagnostic, "ACT output-cover count exceeds the supported range");
+    }
+    observation->act_group_count = (uint32_t)act_groups;
+    observation->group_invocation_count = (uint32_t)group_invocations;
+    observation->routed_invocation_count = (uint32_t)routed_invocations;
+    observation->unrouted_invocation_count = (uint32_t)(group_invocations - routed_invocations);
+    observation->route_count = (uint32_t)matching_routes;
+    observation->slice_candidate_count = (uint32_t)matching_slices;
+    observation->exact_cover = observation->unresolved_flags == 0u;
+  }
+  free(route_intervals);
+  free(slice_intervals);
+  *covers = result;
+  *cover_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 void npunlock_graph_routing_observations_release(
     npunlock_graph_routing_observations *observations) {
   if (observations == NULL) {
@@ -2736,6 +3043,7 @@ void npunlock_graph_routing_observations_release(
   free(observations->invocations);
   free(observations->network_output_routes);
   free(observations->act_output_slice_candidates);
+  free(observations->act_output_covers);
   free(observations->act_edge_candidates);
   free(observations->dpu_invariants);
   free(observations->act_dpu_edge_candidates);
@@ -2750,6 +3058,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_invocation_routing_observation *invocations = NULL;
   npunlock_network_output_route_observation *network_output_routes = NULL;
   npunlock_act_output_slice_candidate_observation *act_output_slice_candidates = NULL;
+  npunlock_act_output_cover_observation *act_output_covers = NULL;
   npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
   npunlock_dpu_invariant_observation *dpu_invariants = NULL;
   npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates = NULL;
@@ -2759,6 +3068,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t invocation_count = 0;
   size_t network_output_route_count = 0;
   size_t act_output_slice_candidate_count = 0;
+  size_t act_output_cover_count = 0;
   size_t act_edge_candidate_count = 0;
   size_t dpu_invariant_count = 0;
   size_t act_dpu_edge_candidate_count = 0;
@@ -2852,6 +3162,13 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = npunlock_derive_act_output_cover_observations(
+      invocations, invocation_count, network_output_routes, network_output_route_count,
+      act_output_slice_candidates, act_output_slice_candidate_count, &act_output_covers,
+      &act_output_cover_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
   status = derive_act_dpu_edge_candidates(invocations, invocation_count, dpu_invariants,
                                           dpu_invariant_count, &act_dpu_edge_candidates,
                                           &act_dpu_edge_candidate_count, diagnostic);
@@ -2870,6 +3187,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->network_output_route_count = network_output_route_count;
   observations->act_output_slice_candidates = act_output_slice_candidates;
   observations->act_output_slice_candidate_count = act_output_slice_candidate_count;
+  observations->act_output_covers = act_output_covers;
+  observations->act_output_cover_count = act_output_cover_count;
   observations->act_edge_candidates = act_edge_candidates;
   observations->act_edge_candidate_count = act_edge_candidate_count;
   observations->dpu_invariants = dpu_invariants;
@@ -2882,6 +3201,7 @@ fail:
   free(invocations);
   free(network_output_routes);
   free(act_output_slice_candidates);
+  free(act_output_covers);
   free(act_edge_candidates);
   free(dpu_invariants);
   free(act_dpu_edge_candidates);

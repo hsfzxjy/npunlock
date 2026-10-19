@@ -29,6 +29,13 @@ foreach(expected
   endif()
 endforeach()
 
+string(FIND "${output}"
+  "{\"output_symbol_raw\": 1, \"act_group_count\": 1, \"group_invocation_count\": 4, \"routed_invocation_count\": 4, \"unrouted_invocation_count\": 0, \"route_count\": 2, \"slice_candidate_count\": 4, \"route_span_bytes\": 64, \"slice_span_bytes\": 64, \"exact_cover\": true, \"unresolved_flags\": 0}"
+  cover_offset)
+if(cover_offset EQUAL -1)
+  message(FATAL_ERROR "scalar-broadcast output cover was not proven")
+endif()
+
 foreach(expected
     "\"act_invocation_index\": 0, \"act_tensor_record_index\": 2, \"dma_section_index\": 5, \"dma_task_index\": 2, \"route_candidate_count\": 1"
     "\"act_data_addend_raw\": 64, \"act_span_bytes\": 16, \"route_cmx_source_addend_raw\": 64, \"route_length_bytes\": 32, \"output_symbol_raw\": 1, \"route_output_addend_raw\": 0, \"output_slice_addend_candidate\": 0"

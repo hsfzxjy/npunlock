@@ -146,6 +146,68 @@ static int test_edge_candidate_transitive_schedule(void) {
   return 0;
 }
 
+static int test_output_cover_observations(void) {
+  npunlock_invocation_routing_observation invocations[4];
+  npunlock_network_output_route_observation routes[2] = {0};
+  npunlock_act_output_slice_candidate_observation slices[4] = {0};
+  npunlock_act_output_cover_observation *covers = NULL;
+  size_t cover_count = 0;
+  size_t index;
+  npunlock_diagnostic diagnostic = {0};
+
+  for (index = 0; index < 4; ++index) {
+    configure_edge_invocation(&invocations[index], (uint32_t)index, (uint32_t)index, 0, 64, 1, 2);
+    slices[index].act_group_index = (uint32_t)index;
+    slices[index].act_invocation_index = (uint32_t)index;
+    slices[index].route_candidate_count = 1;
+    slices[index].output_symbol_raw = 1;
+    slices[index].act_span_bytes = 16;
+    slices[index].output_slice_addend_candidate = index * 16u;
+  }
+  routes[0].output_symbol_raw = 1;
+  routes[0].output_addend_raw = 0;
+  routes[0].length_bytes = 32;
+  routes[1].output_symbol_raw = 1;
+  routes[1].output_addend_raw = 32;
+  routes[1].length_bytes = 32;
+
+  CHECK(npunlock_derive_act_output_cover_observations(invocations, 4, routes, 2, slices, 4, &covers,
+                                                      &cover_count,
+                                                      &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(covers[0].exact_cover);
+  CHECK(covers[0].unresolved_flags == 0);
+  CHECK(covers[0].act_group_count == 4);
+  CHECK(covers[0].group_invocation_count == 4);
+  CHECK(covers[0].routed_invocation_count == 4);
+  CHECK(covers[0].unrouted_invocation_count == 0);
+  free(covers);
+  covers = NULL;
+
+  slices[3].output_slice_addend_candidate = 40;
+  CHECK(npunlock_derive_act_output_cover_observations(invocations, 4, routes, 2, slices, 4, &covers,
+                                                      &cover_count,
+                                                      &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(!covers[0].exact_cover);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_OUTPUT_COVER_SLICE_OVERLAP) != 0);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_OUTPUT_COVER_UNION_MISMATCH) != 0);
+  free(covers);
+  covers = NULL;
+
+  slices[3].output_slice_addend_candidate = 48;
+  slices[0].route_candidate_count = 2;
+  CHECK(npunlock_derive_act_output_cover_observations(invocations, 4, routes, 2, slices, 4, &covers,
+                                                      &cover_count,
+                                                      &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(!covers[0].exact_cover);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_OUTPUT_COVER_ROUTE_AMBIGUITY) != 0);
+  free(covers);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
 int main(void) {
   uint8_t graph[201];
   const uint8_t image[] = {1, 2, 3, 4};
@@ -156,6 +218,7 @@ int main(void) {
 
   CHECK(test_edge_candidate_ambiguity() == 0);
   CHECK(test_edge_candidate_transitive_schedule() == 0);
+  CHECK(test_output_cover_observations() == 0);
 
   target.struct_size = sizeof(target);
   target.invocation_index = 0;

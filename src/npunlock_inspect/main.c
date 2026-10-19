@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v11\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v12\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -296,6 +296,26 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"output_cover_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_output_cover_count; ++index) {
+    const npunlock_act_output_cover_observation *cover = &routing->act_output_covers[index];
+    if (fprintf(stream,
+                "%s    {\"output_symbol_raw\": %u, \"act_group_count\": %u, "
+                "\"group_invocation_count\": %u, \"routed_invocation_count\": %u, "
+                "\"unrouted_invocation_count\": %u, \"route_count\": %u, "
+                "\"slice_candidate_count\": %u, \"route_span_bytes\": %" PRIu64
+                ", \"slice_span_bytes\": %" PRIu64 ", \"exact_cover\": %s, "
+                "\"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", cover->output_symbol_raw, cover->act_group_count,
+                cover->group_invocation_count, cover->routed_invocation_count,
+                cover->unrouted_invocation_count, cover->route_count, cover->slice_candidate_count,
+                cover->route_span_bytes, cover->slice_span_bytes,
+                cover->exact_cover ? "true" : "false", cover->unresolved_flags) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ]},\n  \"dpu\": {\"invariant_count\": %zu, \"invariants\": [\n",
               routing->dpu_invariant_count) < 0) {
     return 0;
@@ -394,7 +414,9 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "correlations, including bounded transitive wait/post paths; ACT/DPU candidates "
                  "require interval containment and a direct schedule dependency; output-slice "
                  "candidates translate only ACT output subranges contained by validated "
-                 "network-output DMA routes; DPU CMX "
+                 "network-output DMA routes; output-cover observations require unique, "
+                 "non-overlapping slices with the same interval union as the output routes; "
+                 "DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
                  "intervals; candidates do not classify unrouted invocations as replicas; "
                  "discovery is not proof of execution compatibility\"\n}\n") >= 0;

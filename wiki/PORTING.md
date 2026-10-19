@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 11 JSON report records the blob size and SHA-256 plus every
+The version 12 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -52,13 +52,22 @@ FP16/FP32/U16/U32 carriers, and uniform float groups. Each target reports
 
 The report also lists validated network-output DMA routes: the raw CMX source,
 the destination output symbol/addend, and the transfer length. For an ACT
-output fully contained in one of those source intervals, schema v11 emits an
+output fully contained in one of those source intervals, the report emits an
 `output_slice_candidates` entry translating the ACT subrange to a candidate
 graph-output byte interval. It retains every matching route and its ambiguity
 count. This matched the saved per-invocation hardware effects for four
 controlled unary carriers, including the two-tile cases where only tile-0
 invocations were host-visible. An invocation without such a route remains
 merely unrouted; the inspector does not call it a replica.
+
+Schema v12 also reports an `output_cover_observations` verdict for each graph
+output symbol reached directly from ACT. A cover is exact only when every ACT
+slice has one route, neither the route destinations nor the slices overlap,
+and both merged byte-interval unions are identical. The report keeps the
+number of participating ACT groups and the routed/unrouted invocation counts.
+This allows a four-group per-row lowering to prove complete output coverage
+without claiming that the groups correspond to one source node or that the
+unrouted invocations are replicas.
 
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
