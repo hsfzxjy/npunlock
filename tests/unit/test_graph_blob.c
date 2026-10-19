@@ -95,6 +95,8 @@ static int test_edge_candidate_ambiguity(void) {
   CHECK(candidates[1].producer_invocation_index == 1);
   CHECK(candidates[0].consumer_candidate_count == 2);
   CHECK(candidates[1].consumer_candidate_count == 2);
+  CHECK(candidates[0].schedule_hop_count == 1);
+  CHECK(candidates[1].schedule_hop_count == 1);
   free(candidates);
   candidates = NULL;
 
@@ -116,6 +118,34 @@ static int test_edge_candidate_ambiguity(void) {
   return 0;
 }
 
+static int test_edge_candidate_transitive_schedule(void) {
+  npunlock_invocation_routing_observation invocations[3];
+  npunlock_act_edge_candidate_observation *candidates = NULL;
+  size_t candidate_count = 0;
+  npunlock_diagnostic diagnostic = {0};
+
+  configure_edge_invocation(&invocations[0], 0, 0, 0, 64, 1, 2);
+  configure_edge_invocation(&invocations[1], 1, 1, 80, 128, 2, 4);
+  configure_edge_invocation(&invocations[2], 2, 2, 64, 192, 4, 8);
+  CHECK(npunlock_derive_act_edge_candidates(invocations, 3, &candidates, &candidate_count,
+                                            &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(candidate_count == 1);
+  CHECK(candidates[0].producer_invocation_index == 0);
+  CHECK(candidates[0].consumer_invocation_index == 2);
+  CHECK(candidates[0].schedule_hop_count == 2);
+  CHECK(candidates[0].barrier_intersection_raw == 0);
+  free(candidates);
+  candidates = NULL;
+
+  invocations[1].post_mask_raw = 0;
+  CHECK(npunlock_derive_act_edge_candidates(invocations, 3, &candidates, &candidate_count,
+                                            &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(candidate_count == 0);
+  CHECK(candidates == NULL);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
 int main(void) {
   uint8_t graph[201];
   const uint8_t image[] = {1, 2, 3, 4};
@@ -125,6 +155,7 @@ int main(void) {
   npunlock_diagnostic diagnostic = {0};
 
   CHECK(test_edge_candidate_ambiguity() == 0);
+  CHECK(test_edge_candidate_transitive_schedule() == 0);
 
   target.struct_size = sizeof(target);
   target.invocation_index = 0;

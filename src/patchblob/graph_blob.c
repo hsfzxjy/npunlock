@@ -1894,16 +1894,76 @@ inspect_network_output_routes(const graph_layout *layout,
   return NPUNLOCK_STATUS_OK;
 }
 
-static bool act_edge_candidate_matches(const npunlock_invocation_routing_observation *producer,
-                                       const npunlock_invocation_routing_observation *consumer,
-                                       size_t consumer_tensor_index) {
-  size_t producer_tensor_index = producer->target.tensor_count - 1u;
-  const patchblob_tensor_contract_v2 *output = &producer->target.tensors[producer_tensor_index];
-  const patchblob_tensor_contract_v2 *input = &consumer->target.tensors[consumer_tensor_index];
-  const npunlock_tensor_routing_observation *output_routing =
-      &producer->tensors[producer_tensor_index];
-  const npunlock_tensor_routing_observation *input_routing =
-      &consumer->tensors[consumer_tensor_index];
+static uint32_t act_schedule_hop_count(const npunlock_invocation_routing_observation *invocations,
+                                       size_t producer_index, size_t consumer_index) {
+  uint32_t barrier_hops[64];
+  uint64_t mask;
+  size_t index;
+
+  if (producer_index >= consumer_index) {
+    return 0;
+  }
+  for (index = 0; index < 64u; ++index) {
+    barrier_hops[index] = UINT32_MAX;
+  }
+  mask = invocations[producer_index].post_mask_raw;
+  for (index = 0; index < 64u; ++index) {
+    if ((mask & (UINT64_C(1) << index)) != 0u) {
+      barrier_hops[index] = 1u;
+    }
+  }
+  for (index = producer_index + 1u; index <= consumer_index; ++index) {
+    uint32_t minimum_hops = UINT32_MAX;
+    size_t bit_index;
+    mask = invocations[index].wait_mask_raw;
+    for (bit_index = 0; bit_index < 64u; ++bit_index) {
+      if ((mask & (UINT64_C(1) << bit_index)) != 0u && barrier_hops[bit_index] < minimum_hops) {
+        minimum_hops = barrier_hops[bit_index];
+      }
+    }
+    if (index == consumer_index) {
+      return minimum_hops == UINT32_MAX ? 0u : minimum_hops;
+    }
+    if (minimum_hops == UINT32_MAX || minimum_hops == UINT32_MAX - 1u) {
+      continue;
+    }
+    mask = invocations[index].post_mask_raw;
+    for (bit_index = 0; bit_index < 64u; ++bit_index) {
+      if ((mask & (UINT64_C(1) << bit_index)) != 0u &&
+          minimum_hops + 1u < barrier_hops[bit_index]) {
+        barrier_hops[bit_index] = minimum_hops + 1u;
+      }
+    }
+  }
+  return 0;
+}
+
+static bool act_edge_candidate_matches(const npunlock_invocation_routing_observation *invocations,
+                                       size_t invocation_count, size_t producer_index,
+                                       size_t consumer_index, size_t consumer_tensor_index,
+                                       uint32_t *schedule_hops) {
+  const npunlock_invocation_routing_observation *producer;
+  const npunlock_invocation_routing_observation *consumer;
+  size_t producer_tensor_index;
+  const patchblob_tensor_contract_v2 *output;
+  const patchblob_tensor_contract_v2 *input;
+  const npunlock_tensor_routing_observation *output_routing;
+  const npunlock_tensor_routing_observation *input_routing;
+  uint32_t hops;
+
+  if (producer_index >= invocation_count || consumer_index >= invocation_count ||
+      schedule_hops == NULL) {
+    return false;
+  }
+  producer = &invocations[producer_index];
+  consumer = &invocations[consumer_index];
+  producer_tensor_index = producer->target.tensor_count - 1u;
+  output = &producer->target.tensors[producer_tensor_index];
+  input = &consumer->target.tensors[consumer_tensor_index];
+  output_routing = &producer->tensors[producer_tensor_index];
+  input_routing = &consumer->tensors[consumer_tensor_index];
+  hops = act_schedule_hop_count(invocations, producer_index, consumer_index);
+  *schedule_hops = hops;
 
   return producer->target.invocation_index < consumer->target.invocation_index &&
          producer->group_index != consumer->group_index &&
@@ -1913,8 +1973,7 @@ static bool act_edge_candidate_matches(const npunlock_invocation_routing_observa
          output->span_bytes != 0u && output_routing->data_addend >= 0 &&
          (uint64_t)output_routing->data_addend <= UINT64_MAX - output->span_bytes &&
          output_routing->data_symbol == input_routing->data_symbol &&
-         output_routing->data_addend == input_routing->data_addend &&
-         (producer->post_mask_raw & consumer->wait_mask_raw) != 0u;
+         output_routing->data_addend == input_routing->data_addend && hops != 0u;
 }
 
 npunlock_status
@@ -1948,6 +2007,7 @@ npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observatio
       size_t producer_index;
       for (producer_index = 0; producer_index < invocation_count; ++producer_index) {
         const npunlock_invocation_routing_observation *producer = &invocations[producer_index];
+        uint32_t schedule_hops;
         if (producer->target.tensor_count < 2u ||
             producer->target.tensor_count > PATCHBLOB_TARGET_V2_MAX_TENSORS) {
           return unsupported(diagnostic, "ACT edge candidate has an unsupported tensor count");
@@ -1956,7 +2016,8 @@ npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observatio
           return unsupported(diagnostic, "ACT edge candidate analysis exceeds its work bound");
         }
         ++comparisons;
-        if (act_edge_candidate_matches(producer, consumer, consumer_tensor_index)) {
+        if (act_edge_candidate_matches(invocations, invocation_count, producer_index,
+                                       consumer_index, consumer_tensor_index, &schedule_hops)) {
           if (result_count == SIZE_MAX) {
             return unsupported(diagnostic, "ACT edge candidate count overflows");
           }
@@ -1986,8 +2047,9 @@ npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observatio
       size_t producer_index;
       size_t local_count = 0;
       for (producer_index = 0; producer_index < invocation_count; ++producer_index) {
-        if (act_edge_candidate_matches(&invocations[producer_index], consumer,
-                                       consumer_tensor_index)) {
+        uint32_t schedule_hops;
+        if (act_edge_candidate_matches(invocations, invocation_count, producer_index,
+                                       consumer_index, consumer_tensor_index, &schedule_hops)) {
           ++local_count;
         }
       }
@@ -2000,7 +2062,9 @@ npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observatio
         size_t producer_tensor_index = producer->target.tensor_count - 1u;
         const npunlock_tensor_routing_observation *routing;
         npunlock_act_edge_candidate_observation *candidate;
-        if (!act_edge_candidate_matches(producer, consumer, consumer_tensor_index)) {
+        uint32_t schedule_hops;
+        if (!act_edge_candidate_matches(invocations, invocation_count, producer_index,
+                                        consumer_index, consumer_tensor_index, &schedule_hops)) {
           continue;
         }
         if (result_index >= result_count) {
@@ -2016,6 +2080,7 @@ npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observatio
         candidate->consumer_invocation_index = consumer->target.invocation_index;
         candidate->consumer_tensor_record_index = (uint32_t)consumer_tensor_index;
         candidate->consumer_candidate_count = (uint32_t)local_count;
+        candidate->schedule_hop_count = schedule_hops;
         candidate->data_symbol_raw = routing->data_symbol;
         candidate->data_addend_raw = routing->data_addend;
         candidate->span_bytes = producer->target.tensors[producer_tensor_index].span_bytes;

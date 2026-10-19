@@ -13,7 +13,7 @@ if(NOT result EQUAL 0)
 endif()
 
 foreach(expected
-    "\"schema\": \"npunlock.porting.inspect.v6\""
+    "\"schema\": \"npunlock.porting.inspect.v7\""
     "\"invocation_index\": 0"
     "\"wait_mask_raw\": 1, \"post_mask_raw\": 2"
     "\"data_addend_raw\": 64"
@@ -22,6 +22,7 @@ foreach(expected
     "\"producer_invocation_index\": 0, \"producer_tensor_record_index\": 1, \"consumer_group_index\": 1, \"consumer_invocation_index\": 4"
     "\"producer_invocation_index\": 3, \"producer_tensor_record_index\": 1, \"consumer_group_index\": 1, \"consumer_invocation_index\": 7"
     "\"consumer_candidate_count\": 1"
+    "\"schedule_hop_count\": 1"
     "\"barrier_intersection_raw\": 2")
   string(FIND "${report}" "${expected}" expected_offset)
   if(expected_offset EQUAL -1)

@@ -86,6 +86,7 @@ typedef struct npunlock_act_edge_candidate_observation {
   uint32_t consumer_invocation_index;
   uint32_t consumer_tensor_record_index;
   uint32_t consumer_candidate_count;
+  uint32_t schedule_hop_count;
   uint32_t data_symbol_raw;
   int64_t data_addend_raw;
   uint64_t span_bytes;
