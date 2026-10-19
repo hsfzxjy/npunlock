@@ -40,6 +40,35 @@ typedef struct npunlock_patch_summary {
   size_t detail_count;
 } npunlock_patch_summary;
 
+#define NPUNLOCK_ROUTING_MAX_RANK 15u
+
+/*
+ * Private inspection vocabulary. These are validated native observations,
+ * not logical graph offsets or a partition/replica classification.
+ */
+typedef struct npunlock_tensor_routing_observation {
+  uint32_t data_symbol;
+  int64_t data_addend;
+  uint32_t rank;
+  int32_t dimensions[NPUNLOCK_ROUTING_MAX_RANK];
+  int64_t strides_bits[NPUNLOCK_ROUTING_MAX_RANK];
+} npunlock_tensor_routing_observation;
+
+typedef struct npunlock_invocation_routing_observation {
+  uint32_t group_index;
+  uint32_t tile_candidate_raw;
+  uint64_t parameter_base;
+  patchblob_target_v2 target;
+  npunlock_tensor_routing_observation tensors[PATCHBLOB_TARGET_V2_MAX_TENSORS];
+} npunlock_invocation_routing_observation;
+
+typedef struct npunlock_graph_routing_observations {
+  npunlock_invocation_routing_observation *invocations;
+  size_t invocation_count;
+  size_t group_count;
+  uint32_t tile_count_observed;
+} npunlock_graph_routing_observations;
+
 npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,
                                           const patchblob_target *targets, size_t target_count,
                                           uint32_t image_alignment, uint32_t tail_padding,
@@ -60,5 +89,9 @@ npunlock_status npunlock_discover_graph_targets_v2(npunlock_view graph_blob,
                                                    patchblob_discovered_target_v2 **targets,
                                                    size_t *target_count, size_t *group_count,
                                                    npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
+                                               npunlock_graph_routing_observations *observations,
+                                               npunlock_diagnostic *diagnostic);
+void npunlock_graph_routing_observations_release(npunlock_graph_routing_observations *observations);
 
 #endif

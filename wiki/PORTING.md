@@ -35,10 +35,14 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 2 JSON report records the blob size and SHA-256 plus every
+The version 3 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
-span, and observed flags. It can therefore inspect the supported unary
+span, and observed flags. It also reports the validated raw invocation tile
+candidate, KernelParams base, and each tensor's CMX relocation symbol/addend,
+rank, dimensions, and bit strides. These routing fields are observations, not
+logical tensor offsets or a partition/replica classification. The report can
+therefore inspect the supported unary
 FP16/FP32 and U8-to-FP32 conversion carriers, unary I32/I16/I8 carriers, the
 equal-span binary I32/I16/I8/U16/U32 carriers, either-position scalar
 FP16/FP32/U16/U32 carriers, and uniform float groups. Each target reports

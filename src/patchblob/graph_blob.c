@@ -81,6 +81,9 @@ typedef struct memref_contract {
   uint32_t dtype_kind;
   uint32_t data_symbol;
   int64_t data_addend;
+  uint32_t rank;
+  int32_t dimensions[NPUNLOCK_ROUTING_MAX_RANK];
+  int64_t strides_bits[NPUNLOCK_ROUTING_MAX_RANK];
 } memref_contract;
 
 static uint16_t read_u16(const uint8_t *bytes) {
@@ -827,7 +830,7 @@ static npunlock_status validate_memref(const graph_layout *layout, uint64_t reco
   }
   expected_stride = dtype_table[type_kind].stride_bits;
   rank = read_u32(record + 0x0c);
-  if (rank == 0 || rank > 15) {
+  if (rank == 0 || rank > NPUNLOCK_ROUTING_MAX_RANK) {
     return unsupported(diagnostic, "selected invocation uses an unsupported tensor rank");
   }
   if (find_pointer_relocation(layout, layout->params_index, record_offset + 0x10u,
@@ -889,6 +892,9 @@ static npunlock_status validate_memref(const graph_layout *layout, uint64_t reco
   contract->dtype_kind = type_kind;
   contract->data_symbol = data.symbol;
   contract->data_addend = data.addend;
+  contract->rank = rank;
+  memcpy(contract->dimensions, dimension_values, (size_t)rank * sizeof(dimension_values[0]));
+  memcpy(contract->strides_bits, stride_values, (size_t)rank * sizeof(stride_values[0]));
   return NPUNLOCK_STATUS_OK;
 }
 
@@ -1672,6 +1678,107 @@ npunlock_status npunlock_discover_graph_targets_v2(npunlock_view graph_blob,
   return NPUNLOCK_STATUS_OK;
 
 fail:
+  free(discovered);
+  free(parameter_bases);
+  graph_layout_release(&layout);
+  return status;
+}
+
+void npunlock_graph_routing_observations_release(
+    npunlock_graph_routing_observations *observations) {
+  if (observations == NULL) {
+    return;
+  }
+  free(observations->invocations);
+  memset(observations, 0, sizeof(*observations));
+}
+
+npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
+                                               npunlock_graph_routing_observations *observations,
+                                               npunlock_diagnostic *diagnostic) {
+  graph_layout layout;
+  patchblob_discovered_target_v2 *discovered = NULL;
+  npunlock_invocation_routing_observation *invocations = NULL;
+  uint64_t *parameter_bases = NULL;
+  size_t target_count = 0;
+  size_t group_count = 0;
+  size_t invocation_count = 0;
+  size_t index;
+  uint32_t tile_count_observed = 0;
+  npunlock_status status;
+
+  if (observations == NULL || diagnostic == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(observations, 0, sizeof(*observations));
+  memset(&layout, 0, sizeof(layout));
+  status = npunlock_discover_graph_targets_v2(graph_blob, &discovered, &target_count, &group_count,
+                                              diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
+  }
+  status = parse_graph(graph_blob, &layout, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
+  status = invocation_parameter_bases(&layout, &parameter_bases, &invocation_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
+  if (invocation_count != target_count) {
+    status = unsupported(diagnostic, "routing observation count does not match ACT discovery");
+    goto fail;
+  }
+  tile_count_observed = layout.tile_count;
+  invocations =
+      (npunlock_invocation_routing_observation *)calloc(invocation_count, sizeof(*invocations));
+  if (invocations == NULL && invocation_count != 0u) {
+    status = npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.inspect_routing",
+                                     "could not allocate routing observations");
+    goto fail;
+  }
+  for (index = 0; index < invocation_count; ++index) {
+    const graph_section *invocation_section = &layout.sections[layout.invocations_index];
+    const uint8_t *record =
+        layout.blob.data + invocation_section->offset + index * ACT_INVOCATION_SIZE;
+    npunlock_invocation_routing_observation *observation = &invocations[index];
+    size_t tensor_index;
+
+    observation->group_index = discovered[index].group_index;
+    observation->tile_candidate_raw = read_u32(record + 0x34u);
+    observation->parameter_base = parameter_bases[index];
+    observation->target = discovered[index].target;
+    for (tensor_index = 0; tensor_index < observation->target.tensor_count; ++tensor_index) {
+      memref_contract contract;
+      npunlock_tensor_routing_observation *tensor = &observation->tensors[tensor_index];
+      status = validate_memref(&layout,
+                               observation->parameter_base + (uint64_t)tensor_index * MEMREF_SIZE,
+                               &contract, diagnostic);
+      if (status != NPUNLOCK_STATUS_OK) {
+        goto fail;
+      }
+      tensor->data_symbol = contract.data_symbol;
+      tensor->data_addend = contract.data_addend;
+      tensor->rank = contract.rank;
+      memcpy(tensor->dimensions, contract.dimensions,
+             (size_t)contract.rank * sizeof(contract.dimensions[0]));
+      memcpy(tensor->strides_bits, contract.strides_bits,
+             (size_t)contract.rank * sizeof(contract.strides_bits[0]));
+    }
+  }
+
+  free(discovered);
+  free(parameter_bases);
+  graph_layout_release(&layout);
+  observations->invocations = invocations;
+  observations->invocation_count = invocation_count;
+  observations->group_count = group_count;
+  observations->tile_count_observed = tile_count_observed;
+  return NPUNLOCK_STATUS_OK;
+
+fail:
+  free(invocations);
   free(discovered);
   free(parameter_bases);
   graph_layout_release(&layout);

@@ -8,6 +8,7 @@
 #include "npunlock/patchblob.h"
 #include "npunlock/version.h"
 
+#include "graph_blob.h"
 #include "internal.h"
 
 typedef struct file_buffer {
@@ -131,12 +132,12 @@ static const char *target_precision_name(const patchblob_target_v2 *target) {
 }
 
 static int write_report(FILE *stream, const char *graph_path, const file_buffer *graph,
-                        const patchblob_discovery_result_v2 *discovery) {
+                        const npunlock_graph_routing_observations *routing) {
   char graph_hash[65];
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v2\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v3\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -144,13 +145,14 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                       "\"source\": \"compatibility_string + version notes\"},\n") < 0 ||
       fprintf(stream,
               "  \"act\": {\"group_count\": %zu, \"target_count\": %zu, "
+              "\"tile_count_observed\": %u, "
               "\"targets\": [\n",
-              discovery->group_count, discovery->target_count) < 0) {
+              routing->group_count, routing->invocation_count, routing->tile_count_observed) < 0) {
     return 0;
   }
-  for (index = 0; index < discovery->target_count; ++index) {
-    const patchblob_discovered_target_v2 *discovered = &discovery->targets[index];
-    const patchblob_target_v2 *target = &discovered->target;
+  for (index = 0; index < routing->invocation_count; ++index) {
+    const npunlock_invocation_routing_observation *observation = &routing->invocations[index];
+    const patchblob_target_v2 *target = &observation->target;
     const patchblob_tensor_contract_v2 *output = &target->tensors[target->tensor_count - 1u];
     size_t tensor_index;
     bool first_scalar = true;
@@ -161,11 +163,14 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 "\"range_index\": %u, \"input_count\": %u, \"element_count\": "
                 "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_version\": 2, "
                 "\"target_flags\": %u, \"precision\": \"%s\", "
-                "\"input_1_scalar\": %s, \"scalar_input_indices\": [",
-                index == 0 ? "" : ",\n", discovered->group_index, target->invocation_index,
+                "\"input_1_scalar\": %s, \"routing_observation\": "
+                "{\"tile_candidate_raw\": %u, \"parameter_base\": %" PRIu64 "}, "
+                "\"scalar_input_indices\": [",
+                index == 0 ? "" : ",\n", observation->group_index, target->invocation_index,
                 target->range_index, target->tensor_count - 1u, output->element_count,
                 output->span_bytes, target->target_flags, target_precision_name(target),
-                input_1_scalar ? "true" : "false") < 0) {
+                input_1_scalar ? "true" : "false", observation->tile_candidate_raw,
+                observation->parameter_base) < 0) {
       return 0;
     }
     for (tensor_index = 0; tensor_index + 1u < target->tensor_count; ++tensor_index) {
@@ -182,14 +187,38 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
     }
     for (tensor_index = 0; tensor_index < target->tensor_count; ++tensor_index) {
       const patchblob_tensor_contract_v2 *tensor = &target->tensors[tensor_index];
+      const npunlock_tensor_routing_observation *tensor_routing =
+          &observation->tensors[tensor_index];
       const char *role = tensor->role == PATCHBLOB_TENSOR_ROLE_INPUT_V2 ? "input" : "output";
+      size_t dimension_index;
       if (fprintf(stream,
                   "%s{\"role\": \"%s\", \"index\": %u, \"precision\": \"%s\", "
                   "\"element_count\": %" PRIu64 ", \"span_bytes\": %" PRIu64
-                  ", \"observed_flags\": %u}",
+                  ", \"observed_flags\": %u, \"routing_observation\": "
+                  "{\"data_symbol_raw\": %u, \"data_addend_raw\": %" PRId64
+                  ", \"rank\": %u, \"dimensions\": [",
                   tensor_index == 0 ? "" : ", ", role, tensor->tensor_index,
                   tensor_precision_name(tensor->precision), tensor->element_count,
-                  tensor->span_bytes, tensor->observed_flags) < 0) {
+                  tensor->span_bytes, tensor->observed_flags, tensor_routing->data_symbol,
+                  tensor_routing->data_addend, tensor_routing->rank) < 0) {
+        return 0;
+      }
+      for (dimension_index = 0; dimension_index < tensor_routing->rank; ++dimension_index) {
+        if (fprintf(stream, "%s%d", dimension_index == 0 ? "" : ", ",
+                    tensor_routing->dimensions[dimension_index]) < 0) {
+          return 0;
+        }
+      }
+      if (fprintf(stream, "], \"strides_bits\": [") < 0) {
+        return 0;
+      }
+      for (dimension_index = 0; dimension_index < tensor_routing->rank; ++dimension_index) {
+        if (fprintf(stream, "%s%" PRId64, dimension_index == 0 ? "" : ", ",
+                    tensor_routing->strides_bits[dimension_index]) < 0) {
+          return 0;
+        }
+      }
+      if (fprintf(stream, "]}}") < 0) {
         return 0;
       }
     }
@@ -197,8 +226,12 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
-  return fprintf(stream, "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT contract; "
-                         "discovery is not proof of execution compatibility\"\n}\n") >= 0;
+  return fprintf(
+             stream,
+             "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT contract; "
+             "routing fields are raw validated observations, not logical offsets, "
+             "partitions, or replicas; discovery is not proof of execution compatibility\"\n}\n") >=
+         0;
 }
 
 static void print_diagnostic(const npunlock_diagnostic *diagnostic) {
@@ -214,7 +247,8 @@ int main(int argc, char **argv) {
   const char *graph_path = NULL;
   const char *report_path = NULL;
   file_buffer graph = {0};
-  patchblob_discovery_result_v2 discovery = {0};
+  npunlock_graph_routing_observations routing = {0};
+  npunlock_diagnostic diagnostic = {0};
   npunlock_status status;
   FILE *report = stdout;
   int index;
@@ -249,9 +283,10 @@ int main(int argc, char **argv) {
   if (graph.size == SIZE_MAX) {
     goto cleanup;
   }
-  status = patchblob_discover_targets_v2((npunlock_view){graph.data, graph.size}, &discovery);
+  status = npunlock_inspect_graph_routing((npunlock_view){graph.data, graph.size}, &routing,
+                                          &diagnostic);
   if (status != NPUNLOCK_STATUS_OK) {
-    print_diagnostic(&discovery.diagnostic);
+    print_diagnostic(&diagnostic);
     goto cleanup;
   }
   if (report_path != NULL) {
@@ -267,7 +302,7 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
   }
-  if (!write_report(report, graph_path, &graph, &discovery) || fflush(report) != 0) {
+  if (!write_report(report, graph_path, &graph, &routing) || fflush(report) != 0) {
     fprintf(stderr, "could not write inspection report\n");
     goto cleanup;
   }
@@ -286,7 +321,8 @@ cleanup:
   if (report_path != NULL && report != NULL) {
     fclose(report);
   }
-  patchblob_discovery_result_v2_release(&discovery);
+  npunlock_graph_routing_observations_release(&routing);
+  npunlock_diagnostic_release(&diagnostic);
   free(graph.data);
   return success ? 0 : 1;
 }

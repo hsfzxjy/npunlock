@@ -51,7 +51,14 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
   )
   set_tests_properties(
     porting_inspect_fixture
-    PROPERTIES PASS_REGULAR_EXPRESSION "npunlock.porting.inspect.v2"
+    PROPERTIES PASS_REGULAR_EXPRESSION "npunlock.porting.inspect.v3"
+  )
+  add_test(
+    NAME porting_inspect_routing_report
+    COMMAND ${CMAKE_COMMAND}
+      -DINSPECTOR=$<TARGET_FILE:npunlock_inspect>
+      -DGRAPH=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs-add-1x16-tile1.blob
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_inspect_routing.cmake
   )
   add_test(
     NAME porting_inspect_conversion_fixture
