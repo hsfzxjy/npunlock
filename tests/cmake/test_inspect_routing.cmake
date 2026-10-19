@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v10\""
+    "\"schema\": \"npunlock.porting.inspect.v11\""
     "\"tile_count_observed\""
     "\"tile_candidate_raw\""
     "\"parameter_base\""
@@ -38,6 +38,9 @@ foreach(required
     "\"dimensions\""
     "\"strides_bits\""
     "\"network_output_routes\""
+    "\"output_slice_candidates\""
+    "\"route_candidate_count\""
+    "\"output_slice_addend_candidate\""
     "\"cmx_source_addend_raw\""
     "\"output_addend_raw\""
     "\"length_bytes\""
@@ -53,7 +56,7 @@ foreach(required
     "\"act_dpu_edge_candidates\""
     "\"dpu_field_mask_raw\""
     "\"act_candidate_count\""
-    "not semantic graph edges, logical offsets, partitions, or replicas")
+    "candidates do not classify unrouted invocations as replicas")
   if(NOT first_output MATCHES "${required}")
     message(FATAL_ERROR "routing inspection omitted required observation: ${required}")
   endif()

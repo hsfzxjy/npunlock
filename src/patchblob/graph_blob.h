@@ -80,6 +80,23 @@ typedef struct npunlock_network_output_route_observation {
   uint32_t length_bytes;
 } npunlock_network_output_route_observation;
 
+typedef struct npunlock_act_output_slice_candidate_observation {
+  uint32_t act_group_index;
+  uint32_t act_invocation_index;
+  uint32_t act_tensor_record_index;
+  uint32_t dma_section_index;
+  uint32_t dma_task_index;
+  uint32_t route_candidate_count;
+  uint32_t cmx_source_symbol_raw;
+  int64_t act_data_addend_raw;
+  uint64_t act_span_bytes;
+  int64_t route_cmx_source_addend_raw;
+  uint32_t route_length_bytes;
+  uint32_t output_symbol_raw;
+  int64_t route_output_addend_raw;
+  uint64_t output_slice_addend_candidate;
+} npunlock_act_output_slice_candidate_observation;
+
 typedef struct npunlock_act_edge_candidate_observation {
   uint32_t producer_group_index;
   uint32_t producer_invocation_index;
@@ -155,6 +172,8 @@ typedef struct npunlock_graph_routing_observations {
   uint32_t tile_count_observed;
   npunlock_network_output_route_observation *network_output_routes;
   size_t network_output_route_count;
+  npunlock_act_output_slice_candidate_observation *act_output_slice_candidates;
+  size_t act_output_slice_candidate_count;
   npunlock_act_edge_candidate_observation *act_edge_candidates;
   size_t act_edge_candidate_count;
   npunlock_dpu_invariant_observation *dpu_invariants;

@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v10\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v11\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -269,6 +269,33 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"output_slice_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_output_slice_candidate_count; ++index) {
+    const npunlock_act_output_slice_candidate_observation *candidate =
+        &routing->act_output_slice_candidates[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"act_invocation_index\": %u, "
+                "\"act_tensor_record_index\": %u, \"dma_section_index\": %u, "
+                "\"dma_task_index\": %u, \"route_candidate_count\": %u, "
+                "\"match_observation\": {\"cmx_source_symbol_raw\": %u, "
+                "\"act_data_addend_raw\": %" PRId64 ", \"act_span_bytes\": %" PRIu64
+                ", \"route_cmx_source_addend_raw\": %" PRId64
+                ", \"route_length_bytes\": %u, \"output_symbol_raw\": %u, "
+                "\"route_output_addend_raw\": %" PRId64
+                ", \"output_slice_addend_candidate\": %" PRIu64 "}}",
+                index == 0 ? "" : ",\n", candidate->act_group_index,
+                candidate->act_invocation_index, candidate->act_tensor_record_index,
+                candidate->dma_section_index, candidate->dma_task_index,
+                candidate->route_candidate_count, candidate->cmx_source_symbol_raw,
+                candidate->act_data_addend_raw, candidate->act_span_bytes,
+                candidate->route_cmx_source_addend_raw, candidate->route_length_bytes,
+                candidate->output_symbol_raw, candidate->route_output_addend_raw,
+                candidate->output_slice_addend_candidate) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ]},\n  \"dpu\": {\"invariant_count\": %zu, \"invariants\": [\n",
               routing->dpu_invariant_count) < 0) {
     return 0;
@@ -365,9 +392,11 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "and network-output DMA contract; routing and scheduling fields are raw "
                  "validated observations; ACT edge candidates are exact interval/ACT-schedule "
                  "correlations, including bounded transitive wait/post paths; ACT/DPU candidates "
-                 "require interval containment and a direct schedule dependency; DPU CMX "
+                 "require interval containment and a direct schedule dependency; output-slice "
+                 "candidates translate only ACT output subranges contained by validated "
+                 "network-output DMA routes; DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
-                 "intervals, not semantic graph edges, logical offsets, partitions, or replicas; "
+                 "intervals; candidates do not classify unrouted invocations as replicas; "
                  "discovery is not proof of execution compatibility\"\n}\n") >= 0;
 }
 

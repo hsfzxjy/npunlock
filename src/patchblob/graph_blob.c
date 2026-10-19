@@ -2583,6 +2583,151 @@ static npunlock_status derive_act_dpu_edge_candidates(
   return NPUNLOCK_STATUS_OK;
 }
 
+static bool
+act_output_slice_candidate_matches(const npunlock_invocation_routing_observation *act,
+                                   const npunlock_network_output_route_observation *route,
+                                   uint64_t *output_slice_addend_candidate) {
+  size_t tensor_index;
+  const npunlock_tensor_routing_observation *routing;
+  const patchblob_tensor_contract_v2 *tensor;
+  uint64_t act_start;
+  uint64_t route_start;
+  uint64_t route_span = route->length_bytes;
+  uint64_t route_output_start;
+  uint64_t relative_start;
+
+  if (act->target.tensor_count == 0u) {
+    return false;
+  }
+  tensor_index = act->target.tensor_count - 1u;
+  routing = &act->tensors[tensor_index];
+  tensor = &act->target.tensors[tensor_index];
+  if (routing->data_addend < 0 || route->cmx_source_addend_raw < 0 ||
+      route->output_addend_raw < 0 || tensor->span_bytes == 0u || route_span == 0u ||
+      routing->data_symbol != route->cmx_source_symbol_raw) {
+    return false;
+  }
+  act_start = (uint64_t)routing->data_addend;
+  route_start = (uint64_t)route->cmx_source_addend_raw;
+  route_output_start = (uint64_t)route->output_addend_raw;
+  if (act_start < route_start || act_start > UINT64_MAX - tensor->span_bytes ||
+      route_start > UINT64_MAX - route_span ||
+      act_start + tensor->span_bytes > route_start + route_span) {
+    return false;
+  }
+  relative_start = act_start - route_start;
+  if (route_output_start > UINT64_MAX - relative_start ||
+      route_output_start + relative_start > UINT64_MAX - tensor->span_bytes) {
+    return false;
+  }
+  *output_slice_addend_candidate = route_output_start + relative_start;
+  return true;
+}
+
+static npunlock_status derive_act_output_slice_candidates(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    const npunlock_network_output_route_observation *routes, size_t route_count,
+    npunlock_act_output_slice_candidate_observation **candidates, size_t *candidate_count,
+    npunlock_diagnostic *diagnostic) {
+  npunlock_act_output_slice_candidate_observation *result = NULL;
+  size_t comparisons = 0u;
+  size_t result_count = 0u;
+  size_t result_index = 0u;
+  size_t allocation_size;
+  size_t act_index;
+
+  *candidates = NULL;
+  *candidate_count = 0u;
+  for (act_index = 0; act_index < invocation_count; ++act_index) {
+    size_t route_index;
+    for (route_index = 0; route_index < route_count; ++route_index) {
+      uint64_t output_slice_addend_candidate;
+      if (comparisons == ACT_EDGE_MAX_COMPARISONS) {
+        return unsupported(diagnostic,
+                           "ACT output-slice candidate analysis exceeds its work bound");
+      }
+      ++comparisons;
+      if (act_output_slice_candidate_matches(&invocations[act_index], &routes[route_index],
+                                             &output_slice_addend_candidate)) {
+        if (result_count == SIZE_MAX) {
+          return unsupported(diagnostic, "ACT output-slice candidate count overflows");
+        }
+        ++result_count;
+      }
+    }
+  }
+  if (result_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (!npunlock_checked_mul_size(result_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT output-slice candidate allocation overflows");
+  }
+  result = (npunlock_act_output_slice_candidate_observation *)calloc(1u, allocation_size);
+  if (result == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT output-slice candidates");
+  }
+
+  for (act_index = 0; act_index < invocation_count; ++act_index) {
+    const npunlock_invocation_routing_observation *act = &invocations[act_index];
+    size_t tensor_index;
+    size_t local_count = 0u;
+    size_t route_index;
+    if (act->target.tensor_count == 0u) {
+      continue;
+    }
+    tensor_index = act->target.tensor_count - 1u;
+    for (route_index = 0; route_index < route_count; ++route_index) {
+      uint64_t output_slice_addend_candidate;
+      if (act_output_slice_candidate_matches(act, &routes[route_index],
+                                             &output_slice_addend_candidate)) {
+        ++local_count;
+      }
+    }
+    if (local_count > UINT32_MAX) {
+      free(result);
+      return unsupported(diagnostic,
+                         "ACT output-slice route ambiguity exceeds the supported range");
+    }
+    for (route_index = 0; route_index < route_count; ++route_index) {
+      const npunlock_network_output_route_observation *route = &routes[route_index];
+      npunlock_act_output_slice_candidate_observation *candidate;
+      uint64_t output_slice_addend_candidate;
+      if (!act_output_slice_candidate_matches(act, route, &output_slice_addend_candidate)) {
+        continue;
+      }
+      if (result_index >= result_count) {
+        free(result);
+        return unsupported(diagnostic,
+                           "ACT output-slice candidate count changed during inspection");
+      }
+      candidate = &result[result_index++];
+      candidate->act_group_index = act->group_index;
+      candidate->act_invocation_index = act->target.invocation_index;
+      candidate->act_tensor_record_index = (uint32_t)tensor_index;
+      candidate->dma_section_index = route->dma_section_index;
+      candidate->dma_task_index = route->dma_task_index;
+      candidate->route_candidate_count = (uint32_t)local_count;
+      candidate->cmx_source_symbol_raw = route->cmx_source_symbol_raw;
+      candidate->act_data_addend_raw = act->tensors[tensor_index].data_addend;
+      candidate->act_span_bytes = act->target.tensors[tensor_index].span_bytes;
+      candidate->route_cmx_source_addend_raw = route->cmx_source_addend_raw;
+      candidate->route_length_bytes = route->length_bytes;
+      candidate->output_symbol_raw = route->output_symbol_raw;
+      candidate->route_output_addend_raw = route->output_addend_raw;
+      candidate->output_slice_addend_candidate = output_slice_addend_candidate;
+    }
+  }
+  if (result_index != result_count) {
+    free(result);
+    return unsupported(diagnostic, "ACT output-slice candidate count changed during inspection");
+  }
+  *candidates = result;
+  *candidate_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 void npunlock_graph_routing_observations_release(
     npunlock_graph_routing_observations *observations) {
   if (observations == NULL) {
@@ -2590,6 +2735,7 @@ void npunlock_graph_routing_observations_release(
   }
   free(observations->invocations);
   free(observations->network_output_routes);
+  free(observations->act_output_slice_candidates);
   free(observations->act_edge_candidates);
   free(observations->dpu_invariants);
   free(observations->act_dpu_edge_candidates);
@@ -2603,6 +2749,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   patchblob_discovered_target_v2 *discovered = NULL;
   npunlock_invocation_routing_observation *invocations = NULL;
   npunlock_network_output_route_observation *network_output_routes = NULL;
+  npunlock_act_output_slice_candidate_observation *act_output_slice_candidates = NULL;
   npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
   npunlock_dpu_invariant_observation *dpu_invariants = NULL;
   npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates = NULL;
@@ -2611,6 +2758,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t group_count = 0;
   size_t invocation_count = 0;
   size_t network_output_route_count = 0;
+  size_t act_output_slice_candidate_count = 0;
   size_t act_edge_candidate_count = 0;
   size_t dpu_invariant_count = 0;
   size_t act_dpu_edge_candidate_count = 0;
@@ -2698,6 +2846,12 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = derive_act_output_slice_candidates(
+      invocations, invocation_count, network_output_routes, network_output_route_count,
+      &act_output_slice_candidates, &act_output_slice_candidate_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
   status = derive_act_dpu_edge_candidates(invocations, invocation_count, dpu_invariants,
                                           dpu_invariant_count, &act_dpu_edge_candidates,
                                           &act_dpu_edge_candidate_count, diagnostic);
@@ -2714,6 +2868,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->tile_count_observed = tile_count_observed;
   observations->network_output_routes = network_output_routes;
   observations->network_output_route_count = network_output_route_count;
+  observations->act_output_slice_candidates = act_output_slice_candidates;
+  observations->act_output_slice_candidate_count = act_output_slice_candidate_count;
   observations->act_edge_candidates = act_edge_candidates;
   observations->act_edge_candidate_count = act_edge_candidate_count;
   observations->dpu_invariants = dpu_invariants;
@@ -2725,6 +2881,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
 fail:
   free(invocations);
   free(network_output_routes);
+  free(act_output_slice_candidates);
   free(act_edge_candidates);
   free(dpu_invariants);
   free(act_dpu_edge_candidates);

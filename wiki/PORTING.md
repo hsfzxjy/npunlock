@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 7 JSON report records the blob size and SHA-256 plus every
+The version 11 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -51,8 +51,17 @@ FP16/FP32/U16/U32 carriers, and uniform float groups. Each target reports
 `scalar_input_indices` explicitly; `input_1_scalar` remains for compatibility.
 
 The report also lists validated network-output DMA routes: the raw CMX source,
-the destination output symbol/addend, and the transfer length. Schema v10 adds
-the exact compiler-8.3/NPU3720 DPU invariant form. For each 304-byte invariant
+the destination output symbol/addend, and the transfer length. For an ACT
+output fully contained in one of those source intervals, schema v11 emits an
+`output_slice_candidates` entry translating the ACT subrange to a candidate
+graph-output byte interval. It retains every matching route and its ambiguity
+count. This matched the saved per-invocation hardware effects for four
+controlled unary carriers, including the two-tile cases where only tile-0
+invocations were host-visible. An invocation without such a route remains
+merely unrouted; the inspector does not call it a replica.
+
+The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
+For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for
 the architectural input-address and output-multicast register fields. It also
 decodes the raw input/output X/Y/Z and dtype fields and derives checked element
