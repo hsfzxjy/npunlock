@@ -78,6 +78,20 @@ typedef struct npunlock_network_output_route_observation {
   uint32_t length_bytes;
 } npunlock_network_output_route_observation;
 
+typedef struct npunlock_act_edge_candidate_observation {
+  uint32_t producer_group_index;
+  uint32_t producer_invocation_index;
+  uint32_t producer_tensor_record_index;
+  uint32_t consumer_group_index;
+  uint32_t consumer_invocation_index;
+  uint32_t consumer_tensor_record_index;
+  uint32_t consumer_candidate_count;
+  uint32_t data_symbol_raw;
+  int64_t data_addend_raw;
+  uint64_t span_bytes;
+  uint64_t barrier_intersection_raw;
+} npunlock_act_edge_candidate_observation;
+
 typedef struct npunlock_graph_routing_observations {
   npunlock_invocation_routing_observation *invocations;
   size_t invocation_count;
@@ -85,6 +99,8 @@ typedef struct npunlock_graph_routing_observations {
   uint32_t tile_count_observed;
   npunlock_network_output_route_observation *network_output_routes;
   size_t network_output_route_count;
+  npunlock_act_edge_candidate_observation *act_edge_candidates;
+  size_t act_edge_candidate_count;
 } npunlock_graph_routing_observations;
 
 npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,
@@ -110,6 +126,11 @@ npunlock_status npunlock_discover_graph_targets_v2(npunlock_view graph_blob,
 npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
                                                npunlock_graph_routing_observations *observations,
                                                npunlock_diagnostic *diagnostic);
+npunlock_status
+npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observation *invocations,
+                                    size_t invocation_count,
+                                    npunlock_act_edge_candidate_observation **candidates,
+                                    size_t *candidate_count, npunlock_diagnostic *diagnostic);
 void npunlock_graph_routing_observations_release(npunlock_graph_routing_observations *observations);
 
 #endif

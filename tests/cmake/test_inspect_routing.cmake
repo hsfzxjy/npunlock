@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v5\""
+    "\"schema\": \"npunlock.porting.inspect.v6\""
     "\"tile_count_observed\""
     "\"tile_candidate_raw\""
     "\"parameter_base\""
@@ -32,6 +32,7 @@ foreach(required
     "\"barrier_mask_raw\""
     "\"start_after_raw\""
     "\"clean_after_raw\""
+    "\"act_edge_candidates\""
     "\"data_symbol_raw\""
     "\"data_addend_raw\""
     "\"dimensions\""
@@ -40,7 +41,7 @@ foreach(required
     "\"cmx_source_addend_raw\""
     "\"output_addend_raw\""
     "\"length_bytes\""
-    "not logical offsets, semantic graph edges, partitions, or replicas")
+    "not semantic graph edges, logical offsets, partitions, or replicas")
   if(NOT first_output MATCHES "${required}")
     message(FATAL_ERROR "routing inspection omitted required observation: ${required}")
   endif()

@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 5 JSON report records the blob size and SHA-256 plus every
+The version 6 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -62,6 +62,14 @@ That includes the documented equal-span binary FP32 `Subtract` carrier.
 It also recognizes the structurally identical dense FP32 `(8,8)->8`
 invocations emitted for the documented row-broadcast carrier; inspection alone
 does not recover or prove its source-level broadcast shape.
+
+The `act_edge_candidates` list makes that correlation explicit when an earlier
+ACT output and a later ACT input have the same CMX symbol, exact byte interval,
+precision, and element count, and their post/wait barrier masks intersect.
+`consumer_candidate_count` is reported on every match. Only a count of one is
+unique within this narrow correlation; any other count is deliberately left
+ambiguous. Even a unique candidate is diagnostic evidence, not a source-level
+graph edge or permission to select a patch target automatically.
 Discovery means only that the
 file matches the narrow observed NPU3720/compiler-8.3 structures. It does not
 prove that a Linux driver, newer firmware, or different NPU can load or execute

@@ -137,7 +137,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v5\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v6\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -231,6 +231,27 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"act_edge_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_edge_candidate_count; ++index) {
+    const npunlock_act_edge_candidate_observation *candidate = &routing->act_edge_candidates[index];
+    if (fprintf(stream,
+                "%s    {\"producer_group_index\": %u, \"producer_invocation_index\": %u, "
+                "\"producer_tensor_record_index\": %u, \"consumer_group_index\": %u, "
+                "\"consumer_invocation_index\": %u, \"consumer_tensor_record_index\": %u, "
+                "\"consumer_candidate_count\": %u, \"match_observation\": "
+                "{\"data_symbol_raw\": %u, \"data_addend_raw\": %" PRId64
+                ", \"span_bytes\": %" PRIu64 ", \"barrier_intersection_raw\": %" PRIu64 "}}",
+                index == 0 ? "" : ",\n", candidate->producer_group_index,
+                candidate->producer_invocation_index, candidate->producer_tensor_record_index,
+                candidate->consumer_group_index, candidate->consumer_invocation_index,
+                candidate->consumer_tensor_record_index, candidate->consumer_candidate_count,
+                candidate->data_symbol_raw, candidate->data_addend_raw, candidate->span_bytes,
+                candidate->barrier_intersection_raw) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ], \"network_output_routes\": [\n") < 0) {
     return 0;
   }
@@ -249,9 +270,10 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   }
   return fprintf(stream,
                  "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT and network-output "
-                 "DMA contract; routing and scheduling fields are raw validated observations, not "
-                 "logical offsets, semantic graph edges, partitions, or replicas; discovery is not "
-                 "proof of execution compatibility\"\n}\n") >= 0;
+                 "DMA contract; routing and scheduling fields are raw validated observations; "
+                 "ACT edge candidates are exact interval/barrier correlations, not semantic graph "
+                 "edges, logical offsets, partitions, or replicas; discovery is not proof of "
+                 "execution compatibility\"\n}\n") >= 0;
 }
 
 static void print_diagnostic(const npunlock_diagnostic *diagnostic) {

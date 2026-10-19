@@ -15,6 +15,7 @@
 #define ACT_RANGE_SIZE 0x18u
 #define MEMREF_SIZE 0x28u
 #define DMA_TASK_SIZE 0x80u
+#define ACT_EDGE_MAX_COMPARISONS 16777216u
 #define GRAPH_CODE_ADDRESS 0x1d000000u
 #define SHT_NULL 0u
 #define SHT_PROGBITS 1u
@@ -1893,6 +1894,144 @@ inspect_network_output_routes(const graph_layout *layout,
   return NPUNLOCK_STATUS_OK;
 }
 
+static bool act_edge_candidate_matches(const npunlock_invocation_routing_observation *producer,
+                                       const npunlock_invocation_routing_observation *consumer,
+                                       size_t consumer_tensor_index) {
+  size_t producer_tensor_index = producer->target.tensor_count - 1u;
+  const patchblob_tensor_contract_v2 *output = &producer->target.tensors[producer_tensor_index];
+  const patchblob_tensor_contract_v2 *input = &consumer->target.tensors[consumer_tensor_index];
+  const npunlock_tensor_routing_observation *output_routing =
+      &producer->tensors[producer_tensor_index];
+  const npunlock_tensor_routing_observation *input_routing =
+      &consumer->tensors[consumer_tensor_index];
+
+  return producer->target.invocation_index < consumer->target.invocation_index &&
+         producer->group_index != consumer->group_index &&
+         output->role == PATCHBLOB_TENSOR_ROLE_OUTPUT_V2 &&
+         input->role == PATCHBLOB_TENSOR_ROLE_INPUT_V2 && output->precision == input->precision &&
+         output->element_count == input->element_count && output->span_bytes == input->span_bytes &&
+         output->span_bytes != 0u && output_routing->data_addend >= 0 &&
+         (uint64_t)output_routing->data_addend <= UINT64_MAX - output->span_bytes &&
+         output_routing->data_symbol == input_routing->data_symbol &&
+         output_routing->data_addend == input_routing->data_addend &&
+         (producer->post_mask_raw & consumer->wait_mask_raw) != 0u;
+}
+
+npunlock_status
+npunlock_derive_act_edge_candidates(const npunlock_invocation_routing_observation *invocations,
+                                    size_t invocation_count,
+                                    npunlock_act_edge_candidate_observation **candidates,
+                                    size_t *candidate_count, npunlock_diagnostic *diagnostic) {
+  npunlock_act_edge_candidate_observation *result = NULL;
+  size_t comparisons = 0;
+  size_t result_count = 0;
+  size_t allocation_size;
+  size_t consumer_index;
+  size_t result_index = 0;
+
+  if (candidates == NULL || candidate_count == NULL || diagnostic == NULL ||
+      (invocations == NULL && invocation_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *candidates = NULL;
+  *candidate_count = 0;
+
+  for (consumer_index = 0; consumer_index < invocation_count; ++consumer_index) {
+    const npunlock_invocation_routing_observation *consumer = &invocations[consumer_index];
+    size_t consumer_tensor_index;
+    if (consumer->target.tensor_count < 2u ||
+        consumer->target.tensor_count > PATCHBLOB_TARGET_V2_MAX_TENSORS) {
+      return unsupported(diagnostic, "ACT edge candidate has an unsupported tensor count");
+    }
+    for (consumer_tensor_index = 0; consumer_tensor_index + 1u < consumer->target.tensor_count;
+         ++consumer_tensor_index) {
+      size_t producer_index;
+      for (producer_index = 0; producer_index < invocation_count; ++producer_index) {
+        const npunlock_invocation_routing_observation *producer = &invocations[producer_index];
+        if (producer->target.tensor_count < 2u ||
+            producer->target.tensor_count > PATCHBLOB_TARGET_V2_MAX_TENSORS) {
+          return unsupported(diagnostic, "ACT edge candidate has an unsupported tensor count");
+        }
+        if (comparisons == ACT_EDGE_MAX_COMPARISONS) {
+          return unsupported(diagnostic, "ACT edge candidate analysis exceeds its work bound");
+        }
+        ++comparisons;
+        if (act_edge_candidate_matches(producer, consumer, consumer_tensor_index)) {
+          if (result_count == SIZE_MAX) {
+            return unsupported(diagnostic, "ACT edge candidate count overflows");
+          }
+          ++result_count;
+        }
+      }
+    }
+  }
+  if (result_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (!npunlock_checked_mul_size(result_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT edge candidate allocation overflows");
+  }
+  result = (npunlock_act_edge_candidate_observation *)calloc(1u, allocation_size);
+  if (result == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT edge candidates");
+  }
+
+  for (consumer_index = 0; consumer_index < invocation_count; ++consumer_index) {
+    const npunlock_invocation_routing_observation *consumer = &invocations[consumer_index];
+    size_t consumer_tensor_index;
+    for (consumer_tensor_index = 0; consumer_tensor_index + 1u < consumer->target.tensor_count;
+         ++consumer_tensor_index) {
+      size_t producer_index;
+      size_t local_count = 0;
+      for (producer_index = 0; producer_index < invocation_count; ++producer_index) {
+        if (act_edge_candidate_matches(&invocations[producer_index], consumer,
+                                       consumer_tensor_index)) {
+          ++local_count;
+        }
+      }
+      if (local_count > UINT32_MAX) {
+        free(result);
+        return unsupported(diagnostic, "ACT edge ambiguity count exceeds the supported range");
+      }
+      for (producer_index = 0; producer_index < invocation_count; ++producer_index) {
+        const npunlock_invocation_routing_observation *producer = &invocations[producer_index];
+        size_t producer_tensor_index = producer->target.tensor_count - 1u;
+        const npunlock_tensor_routing_observation *routing;
+        npunlock_act_edge_candidate_observation *candidate;
+        if (!act_edge_candidate_matches(producer, consumer, consumer_tensor_index)) {
+          continue;
+        }
+        if (result_index >= result_count) {
+          free(result);
+          return unsupported(diagnostic, "ACT edge candidate count changed during inspection");
+        }
+        routing = &producer->tensors[producer_tensor_index];
+        candidate = &result[result_index++];
+        candidate->producer_group_index = producer->group_index;
+        candidate->producer_invocation_index = producer->target.invocation_index;
+        candidate->producer_tensor_record_index = (uint32_t)producer_tensor_index;
+        candidate->consumer_group_index = consumer->group_index;
+        candidate->consumer_invocation_index = consumer->target.invocation_index;
+        candidate->consumer_tensor_record_index = (uint32_t)consumer_tensor_index;
+        candidate->consumer_candidate_count = (uint32_t)local_count;
+        candidate->data_symbol_raw = routing->data_symbol;
+        candidate->data_addend_raw = routing->data_addend;
+        candidate->span_bytes = producer->target.tensors[producer_tensor_index].span_bytes;
+        candidate->barrier_intersection_raw = producer->post_mask_raw & consumer->wait_mask_raw;
+      }
+    }
+  }
+  if (result_index != result_count) {
+    free(result);
+    return unsupported(diagnostic, "ACT edge candidate count changed during inspection");
+  }
+  *candidates = result;
+  *candidate_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 void npunlock_graph_routing_observations_release(
     npunlock_graph_routing_observations *observations) {
   if (observations == NULL) {
@@ -1900,6 +2039,7 @@ void npunlock_graph_routing_observations_release(
   }
   free(observations->invocations);
   free(observations->network_output_routes);
+  free(observations->act_edge_candidates);
   memset(observations, 0, sizeof(*observations));
 }
 
@@ -1910,11 +2050,13 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   patchblob_discovered_target_v2 *discovered = NULL;
   npunlock_invocation_routing_observation *invocations = NULL;
   npunlock_network_output_route_observation *network_output_routes = NULL;
+  npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
   uint64_t *parameter_bases = NULL;
   size_t target_count = 0;
   size_t group_count = 0;
   size_t invocation_count = 0;
   size_t network_output_route_count = 0;
+  size_t act_edge_candidate_count = 0;
   size_t index;
   uint32_t tile_count_observed = 0;
   npunlock_status status;
@@ -1990,6 +2132,11 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
              (size_t)contract.rank * sizeof(contract.strides_bits[0]));
     }
   }
+  status = npunlock_derive_act_edge_candidates(invocations, invocation_count, &act_edge_candidates,
+                                               &act_edge_candidate_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
 
   free(discovered);
   free(parameter_bases);
@@ -2000,11 +2147,14 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->tile_count_observed = tile_count_observed;
   observations->network_output_routes = network_output_routes;
   observations->network_output_route_count = network_output_route_count;
+  observations->act_edge_candidates = act_edge_candidates;
+  observations->act_edge_candidate_count = act_edge_candidate_count;
   return NPUNLOCK_STATUS_OK;
 
 fail:
   free(invocations);
   free(network_output_routes);
+  free(act_edge_candidates);
   free(discovered);
   free(parameter_bases);
   graph_layout_release(&layout);
