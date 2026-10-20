@@ -138,6 +138,19 @@ are not synthesized; their candidate compile may fail or the strict comparison
 may reject them. A successful probe remains evidence for review, not an
 automatic binding.
 
+For stronger evidence, request two to eight independent substitutions:
+
+```python
+evidence = prepared.probe_mapping(custom_output, ("Sqrt", "Tanh"))
+print(evidence.explain())
+```
+
+The status is `consistent` only when at least two accepted probes name the same
+group. Accepted probes that name different groups produce `conflicting`; fewer
+than two accepted probes produce `insufficient`. Rejected candidates remain in
+the report. Even `consistent` evidence does not update `PreparedGraph.mappings`
+or authorize automatic patch selection.
+
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for

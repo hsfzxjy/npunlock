@@ -39,6 +39,7 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 __all__ = [
     "ActGroup",
     "BuildPlan",
+    "CarrierMappingEvidence",
     "CarrierProbe",
     "CompiledKernel",
     "CustomMapping",
@@ -398,6 +399,50 @@ class CarrierProbe:
         if not self.accepted or len(self.comparison.changed_group_indices) != 1:
             return None
         return self.comparison.changed_group_indices[0]
+
+
+@dataclass(frozen=True, slots=True)
+class CarrierMappingEvidence:
+    """Independent carrier probes for one custom node."""
+
+    output: Tensor = field(repr=False, compare=False)
+    probes: tuple[CarrierProbe, ...]
+
+    @property
+    def accepted_probes(self) -> tuple[CarrierProbe, ...]:
+        return tuple(probe for probe in self.probes if probe.accepted)
+
+    @property
+    def status(self) -> str:
+        accepted = self.accepted_probes
+        indices = {probe.group_index for probe in accepted}
+        if len(indices) > 1:
+            return "conflicting"
+        if len(accepted) >= 2 and len(indices) == 1:
+            return "consistent"
+        return "insufficient"
+
+    @property
+    def group_index(self) -> int | None:
+        if self.status != "consistent":
+            return None
+        return self.accepted_probes[0].group_index
+
+    def explain(self) -> str:
+        group = "none" if self.group_index is None else str(self.group_index)
+        lines = [
+            f"carrier mapping evidence: {self.status}; group={group}; "
+            f"accepted={len(self.accepted_probes)}/{len(self.probes)}"
+        ]
+        for probe in self.probes:
+            changed = ",".join(str(index) for index in probe.comparison.changed_group_indices) or "none"
+            mismatches = ",".join(probe.comparison.mismatch_names) or "none"
+            lines.append(
+                f"  {probe.baseline_carrier}->{probe.candidate_carrier}: "
+                f"{'accepted' if probe.accepted else 'rejected'}; "
+                f"changed_groups={changed}; mismatches={mismatches}"
+            )
+        return "\n".join(lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1789,6 +1834,35 @@ class PreparedGraph:
             candidate_ir,
             candidate_provenance,
         )
+
+    def probe_mapping(
+        self,
+        output: Tensor,
+        carriers: Sequence[str],
+        *,
+        ir_worker: str | None = None,
+    ) -> CarrierMappingEvidence:
+        """Run two to eight independent carrier substitutions for one node."""
+
+        if isinstance(carriers, (str, bytes, bytearray)) or not isinstance(carriers, Sequence):
+            raise TypeError("carriers must be a sequence of operator names")
+        values = tuple(carriers)
+        if not 2 <= len(values) <= 8:
+            raise ValueError("carrier mapping evidence requires two to eight substitutions")
+        if any(
+            not isinstance(value, str) or not value or any(character.isspace() for character in value)
+            for value in values
+        ):
+            raise ValueError("carrier substitutions must be non-empty operator names without whitespace")
+        if len(set(values)) != len(values):
+            raise ValueError("carrier substitutions must be unique")
+        if not isinstance(output, Tensor) or output.producer not in self.serialized_ir.custom_nodes:
+            raise ValueError("carrier probe output must belong to a custom node in this prepared graph")
+        baseline_carrier = output.producer.metadata.get("_carrier")
+        if baseline_carrier in values:
+            raise ValueError("carrier substitutions must differ from the prepared baseline carrier")
+        probes = tuple(self.probe_carrier(output, carrier, ir_worker=ir_worker) for carrier in values)
+        return CarrierMappingEvidence(output, probes)
 
     def _normalize_binding(self, value: object) -> tuple[int, ...]:
         values: tuple[object, ...]

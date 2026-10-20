@@ -418,7 +418,7 @@ class GraphComparison:
 
     @property
     def accepted(self) -> bool:
-        return self.contract_stable and self.unique_changed_group
+        return self.contract_stable and self.unique_changed_group and len(self.changed_group_indices) == 1
 
     @property
     def mismatch_names(self) -> tuple[str, ...]:

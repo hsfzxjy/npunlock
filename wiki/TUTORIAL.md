@@ -420,6 +420,17 @@ used as a patch binding automatically. If you already have both native blobs,
 comparison in memory. See [Porting to Linux and newer NPUs](PORTING.md) for the
 workflow and its limits.
 
+For a stronger manual review, run two independent substitutions and print the
+complete evidence:
+
+```python
+evidence = prepared.probe_mapping(custom_output, ("Sqrt", "Tanh"))
+print(evidence.explain())
+```
+
+This reports `consistent` only when at least two accepted probes agree on one
+group. It still does not change the prepared graph's bindings.
+
 For several kernels, filter groups with independent fields and bind them all:
 
 ```python

@@ -153,6 +153,17 @@ class CarrierProbe:
     @property
     def group_index(self) -> int | None: ...
 
+class CarrierMappingEvidence:
+    output: Tensor
+    probes: tuple[CarrierProbe, ...]
+    @property
+    def accepted_probes(self) -> tuple[CarrierProbe, ...]: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def group_index(self) -> int | None: ...
+    def explain(self) -> str: ...
+
 class InferenceInput:
     selector: int | str
     data: bytes
@@ -305,6 +316,13 @@ class PreparedGraph:
         *,
         ir_worker: str | None = ...,
     ) -> CarrierProbe: ...
+    def probe_mapping(
+        self,
+        output: Tensor,
+        carriers: Sequence[str],
+        *,
+        ir_worker: str | None = ...,
+    ) -> CarrierMappingEvidence: ...
     def plan(
         self,
         *,

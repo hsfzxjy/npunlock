@@ -723,6 +723,7 @@ class FakeNative:
         self.infer_dtype = "f16"
         self.sessions: list[FakeInferenceSession] = []
         self.comparison = npu.GraphComparison(0, (1,), True, True)
+        self.comparisons: list[npu.GraphComparison] = []
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.compile_ir_count += 1
@@ -758,7 +759,7 @@ class FakeNative:
 
     def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> npu.GraphComparison:
         self.compare_args = (baseline_graph_blob, candidate_graph_blob)
-        return self.comparison
+        return self.comparisons.pop(0) if self.comparisons else self.comparison
 
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
@@ -1010,6 +1011,50 @@ class CompilationFlowTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "custom node"):
             prepared.probe_carrier(ordinary, "Sqrt")
+
+    def test_prepared_mapping_probe_requires_two_consistent_acceptances(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"sqrt", b"tanh", b"relu"]
+        fake.comparisons = [
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(1, (), False, False),
+            npu.GraphComparison(0, (0,), True, True),
+        ]
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        evidence = prepared.probe_mapping(y, ("Sqrt", "Tanh", "Relu"))
+
+        self.assertEqual(evidence.status, "consistent")
+        self.assertEqual(evidence.group_index, 0)
+        self.assertEqual(tuple(probe.candidate_carrier for probe in evidence.accepted_probes), ("Sqrt", "Relu"))
+        self.assertIn("accepted=2/3", evidence.explain())
+        self.assertIn("Abs->Tanh: rejected", evidence.explain())
+
+    def test_prepared_mapping_probe_reports_conflict(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"sqrt", b"tanh"]
+        fake.comparisons = [
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(0, (1,), True, True),
+        ]
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        evidence = prepared.probe_mapping(y, ("Sqrt", "Tanh"))
+
+        self.assertEqual(evidence.status, "conflicting")
+        self.assertIsNone(evidence.group_index)
 
     def test_positional_mapping_rejects_dtype_mismatch(self) -> None:
         f32 = npu.input("f32", shape=(1, 32), dtype="f32")
