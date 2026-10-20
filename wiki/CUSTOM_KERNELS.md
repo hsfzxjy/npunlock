@@ -624,7 +624,9 @@ When iterating on kernel C, save the driver-compiled carrier and reviewed
 binding separately with `prepared.export("network.prepared.npunlock",
 plan=plan)`. A later process can call `npu.load_prepared(..., graph=graph)`,
 which requires the same serialized graph but deliberately accepts changed
-kernel source. Prepared bundles do not embed source or compiled ELF inputs;
+kernel source. For an evidence-backed `ReviewedBinding`, the v2 bundle includes
+the controlled candidate native blobs and rechecks their comparisons and
+coverage on load. Prepared bundles do not embed source or compiled ELF inputs;
 provide `KernelSpec` or `CompiledKernel` again after loading. See
 [Python API](PYTHON_API.md#reuse-a-prepared-carrier).
 

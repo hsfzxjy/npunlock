@@ -325,6 +325,7 @@ class Program:
 class BuildPlan:
     group_indices: tuple[tuple[int, ...], ...]
     kernels: tuple[KernelSpec | CompiledKernel, ...]
+    reviewed_bindings: tuple[ReviewedBinding | None, ...]
     def explain(self) -> str: ...
     def build(
         self,

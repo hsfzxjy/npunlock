@@ -590,13 +590,14 @@ print(prepared.explain())
 program = prepared.plan().build()
 ```
 
-The versioned bundle contains the unpatched native carrier, exact serialized
-IR XML and weights identities, effective build flags, original driver/compiler
-provenance, discovered ACT contracts, and optionally the reviewed symbolic
-bindings from a `BuildPlan`. It does not contain kernel source, compiled kernel
-ELFs, MoviTools, or Intel driver binaries. Per-kernel source, compiled ELF,
-definitions, and linker overrides are caller inputs; pass `KernelSpec` or
-`CompiledKernel` values to the loaded graph's new plan.
+The v2 bundle contains the unpatched native carrier, exact serialized IR XML
+and weights identities, effective build flags, original driver/compiler
+provenance, discovered ACT contracts, and optional bindings from a
+`BuildPlan`. If a plan contains a `ReviewedBinding`, its controlled candidate
+native blobs and carrier names are included too. It does not contain kernel
+source, compiled kernel ELFs, MoviTools, or Intel driver binaries. Per-kernel
+source, compiled ELF, definitions, and linker overrides are caller inputs;
+pass `KernelSpec` or `CompiledKernel` values to the loaded graph's new plan.
 
 `load_prepared()` reserializes the caller graph and requires exact XML and
 weights hashes. It uses a bounded read-only driver query—without creating or
@@ -604,10 +605,13 @@ compiling a graph—and requires the current driver, device, graph-extension,
 and compiler versions to match the producer provenance exactly. It then
 rediscovers the ACT groups from the bundled carrier, compares every target
 contract with the manifest, and revalidates saved bindings for arity, dtype,
-exact cover, uniqueness, and range. A stale driver, changed graph, corrupt
-carrier, altered contract, or incompatible saved binding is rejected before
-MoviTools runs. There is deliberately no stale-provenance override in the v1
-format; executing the eventual program remains the separate semantic check.
+exact cover, uniqueness, and range. Evidence-backed bindings additionally
+rerun every bundled baseline/candidate comparison and the selected direct,
+ACT-consumer, or DPU-consumer coverage check. A stale driver, changed graph,
+corrupt candidate, altered contract, inconsistent evidence, or incompatible
+saved binding is rejected before MoviTools runs. V1 bundles remain readable.
+There is deliberately no stale-provenance override; executing the eventual
+program remains the separate semantic check.
 
 ## Export and load a program bundle
 

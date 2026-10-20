@@ -1466,6 +1466,7 @@ class BuildPlan:
     _prepared: PreparedGraph = field(repr=False, compare=False)
     group_indices: tuple[tuple[int, ...], ...]
     kernels: tuple[KernelSpec | CompiledKernel, ...]
+    reviewed_bindings: tuple[ReviewedBinding | None, ...]
     _target_groups: tuple[tuple[PatchTargetContract, ...], ...] = field(repr=False)
 
     def explain(self) -> str:
@@ -1476,10 +1477,11 @@ class BuildPlan:
         if not custom_nodes:
             lines.append("  (no custom kernels)")
             return "\n".join(lines)
-        for node, indices, kernel, targets in zip(
+        for node, indices, kernel, review, targets in zip(
             custom_nodes,
             self.group_indices,
             self.kernels,
+            self.reviewed_bindings,
             self._target_groups,
         ):
             groups = ",".join(str(index) for index in indices) if indices else "raw-explicit"
@@ -1496,6 +1498,8 @@ class BuildPlan:
                     f"  {node.name or '<unnamed>'}: groups={groups} targets={len(targets)} "
                     f"compiled_elf={kernel.elf_name!r} elf_sha256={kernel.elf_sha256}"
                 )
+            if review is not None:
+                lines.append(f"    {review.explain()}")
             for target in targets:
                 if isinstance(target, PatchTargetV2):
                     tensors = ", ".join(
@@ -1622,6 +1626,7 @@ class PreparedGraph:
     _embedded_targets: tuple[tuple[PatchTargetContract, ...], ...] | None = field(repr=False, compare=False)
     _build_flags: str = field(repr=False, compare=False)
     _saved_indices: tuple[tuple[int, ...], ...] | None = field(default=None, repr=False, compare=False)
+    _saved_reviews: tuple[ReviewedBinding | None, ...] | None = field(default=None, repr=False, compare=False)
 
     def export(self, destination: str | Path, *, plan: BuildPlan | None = None) -> None:
         """Write this unpatched carrier and an optional reviewed binding plan."""
@@ -1631,20 +1636,41 @@ class PreparedGraph:
         saved_indices = None
         if plan is not None and self._embedded_targets is None:
             saved_indices = plan.group_indices
-        bindings = (
-            None
-            if saved_indices is None
-            else [
-                {
-                    "custom_index": index,
-                    "name": node.name or "<unnamed>",
-                    "group_indices": list(indices),
-                }
-                for index, (node, indices) in enumerate(zip(self.serialized_ir.custom_nodes, saved_indices))
-            ]
-        )
+        review_members: list[tuple[str, bytes]] = []
+        bindings = None
+        if saved_indices is not None:
+            bindings = []
+            for index, (node, indices, review) in enumerate(
+                zip(self.serialized_ir.custom_nodes, saved_indices, plan.reviewed_bindings)
+            ):
+                review_json = None
+                if review is not None:
+                    probes = []
+                    for probe_index, probe in enumerate(review.evidence.probes):
+                        candidate = probe.candidate_provenance.graph_blob
+                        path = f"reviews/{index}/{probe_index}.blob"
+                        review_members.append((path, candidate))
+                        probes.append(
+                            {
+                                "carrier": probe.candidate_carrier,
+                                "ir_sha256": probe.candidate_ir_sha256,
+                                "candidate": {"path": path, **_bytes_identity(candidate)},
+                            }
+                        )
+                    review_json = {
+                        "coverage_kind": review.coverage_kind,
+                        "probes": probes,
+                    }
+                bindings.append(
+                    {
+                        "custom_index": index,
+                        "name": node.name or "<unnamed>",
+                        "group_indices": list(indices),
+                        "review": review_json,
+                    }
+                )
         manifest = {
-            "schema": "npunlock.prepared.v1",
+            "schema": "npunlock.prepared.v2",
             "carrier": {
                 "path": "carrier.blob",
                 **_bytes_identity(self.ir_provenance.graph_blob),
@@ -1663,6 +1689,8 @@ class PreparedGraph:
         with zipfile.ZipFile(archive_bytes, "w") as archive:
             _write_zip_member(archive, "manifest.json", manifest_bytes)
             _write_zip_member(archive, "carrier.blob", self.ir_provenance.graph_blob)
+            for path, candidate in review_members:
+                _write_zip_member(archive, path, candidate)
         Path(destination).write_bytes(archive_bytes.getvalue())
 
     def find_groups(
@@ -1979,7 +2007,11 @@ class PreparedGraph:
     def _resolve_bindings(
         self,
         bindings: Mapping[Tensor, object] | None = None,
-    ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[PatchTargetContract, ...], ...]]:
+    ) -> tuple[
+        tuple[tuple[int, ...], ...],
+        tuple[tuple[PatchTargetContract, ...], ...],
+        tuple[ReviewedBinding | None, ...],
+    ]:
         custom_nodes = self.serialized_ir.custom_nodes
         if bindings is not None and not isinstance(bindings, Mapping):
             raise TypeError("bindings must be a mapping from custom output tensors to ACT groups")
@@ -1991,8 +2023,10 @@ class PreparedGraph:
         if self._embedded_targets is not None:
             target_groups = self._embedded_targets
             selected_indices = tuple(() for _ in custom_nodes)
+            selected_reviews = tuple(None for _ in custom_nodes)
         else:
             bound_indices: dict[Node, tuple[int, ...]] = {}
+            bound_reviews: dict[Node, ReviewedBinding | None] = {}
             for output, value in supplied_bindings.items():
                 if not isinstance(output, Tensor) or output.producer not in custom_nodes:
                     raise ValueError("prepared binding keys must be outputs of custom nodes in this graph")
@@ -2002,9 +2036,12 @@ class PreparedGraph:
                 if len(node.outputs) != 1:
                     raise ValueError("prepared group bindings currently require one output per custom node")
                 bound_indices[node] = self._normalize_binding(value, output=output)
+                bound_reviews[node] = value if isinstance(value, ReviewedBinding) else None
 
             default_indices = self._saved_indices if self._saved_indices is not None else self._automatic_indices
             automatic = dict(zip(custom_nodes, default_indices)) if default_indices is not None else {}
+            default_reviews = self._saved_reviews or tuple(None for _ in custom_nodes)
+            automatic_reviews = dict(zip(custom_nodes, default_reviews))
             missing = [node for node in custom_nodes if node not in bound_indices and node not in automatic]
             if missing:
                 names = ", ".join(repr(node.name or "<unnamed>") for node in missing)
@@ -2017,8 +2054,10 @@ class PreparedGraph:
             used: dict[int, Node] = {}
             resolved_indices: list[tuple[int, ...]] = []
             selected_targets: list[tuple[PatchTargetContract, ...]] = []
+            resolved_reviews: list[ReviewedBinding | None] = []
             for node in custom_nodes:
                 indices = bound_indices[node] if node in bound_indices else automatic[node]
+                review = bound_reviews[node] if node in bound_reviews else automatic_reviews[node]
                 for index in indices:
                     previous = used.get(index)
                     if previous is not None:
@@ -2061,9 +2100,11 @@ class PreparedGraph:
                     targets = combined
                 resolved_indices.append(indices)
                 selected_targets.append(targets)
+                resolved_reviews.append(review)
             selected_indices = tuple(resolved_indices)
             target_groups = tuple(selected_targets)
-        return selected_indices, target_groups
+            selected_reviews = tuple(resolved_reviews)
+        return selected_indices, target_groups, selected_reviews
 
     def plan(
         self,
@@ -2076,7 +2117,7 @@ class PreparedGraph:
         """Validate target bindings and snapshot every custom-kernel build input."""
 
         custom_nodes = self.serialized_ir.custom_nodes
-        selected_indices, target_groups = self._resolve_bindings(bindings)
+        selected_indices, target_groups, reviewed_bindings = self._resolve_bindings(bindings)
         if kernels is not None and not isinstance(kernels, Mapping):
             raise TypeError(
                 "kernels must be a mapping from custom output tensors to KernelSpec or CompiledKernel values"
@@ -2116,7 +2157,7 @@ class PreparedGraph:
                         linker_script=default_linker_script,
                     )
             planned_kernels.append(kernel)
-        return BuildPlan(self, selected_indices, tuple(planned_kernels), target_groups)
+        return BuildPlan(self, selected_indices, tuple(planned_kernels), reviewed_bindings, target_groups)
 
     def build(
         self,
@@ -2298,14 +2339,20 @@ def _prepared_provenance(value: object, graph_blob: bytes) -> IrCompileResult:
 def _prepared_bindings(
     value: object,
     custom_nodes: tuple[Node, ...],
-) -> tuple[tuple[int, ...], ...] | None:
+    *,
+    schema: str,
+) -> tuple[tuple[tuple[int, ...], ...] | None, tuple[dict[str, Any] | None, ...] | None]:
     if value is None:
-        return None
+        return None, None
     if not isinstance(value, list) or len(value) != len(custom_nodes):
         raise ValueError("prepared bundle bindings do not match the caller graph")
     bindings: list[tuple[int, ...]] = []
+    reviews: list[dict[str, Any] | None] = []
     for index, (entry, node) in enumerate(zip(value, custom_nodes)):
-        if not isinstance(entry, dict) or set(entry) != {"custom_index", "name", "group_indices"}:
+        required = {"custom_index", "name", "group_indices"}
+        if schema == "npunlock.prepared.v2":
+            required.add("review")
+        if not isinstance(entry, dict) or set(entry) != required:
             raise ValueError("prepared bundle binding entry is invalid")
         indices = entry["group_indices"]
         if (
@@ -2318,7 +2365,46 @@ def _prepared_bindings(
         ):
             raise ValueError("prepared bundle bindings do not match the caller graph")
         bindings.append(tuple(indices))
-    return tuple(bindings)
+        review = entry.get("review")
+        if review is None:
+            reviews.append(None)
+            continue
+        if len(indices) != 1 or not isinstance(review, dict) or set(review) != {"coverage_kind", "probes"}:
+            raise ValueError("prepared bundle reviewed binding is invalid")
+        coverage_kind = review["coverage_kind"]
+        probes = review["probes"]
+        if (
+            coverage_kind not in {"direct_output", "act_consumer", "dpu_consumer"}
+            or not isinstance(probes, list)
+            or not 2 <= len(probes) <= 8
+        ):
+            raise ValueError("prepared bundle reviewed binding is invalid")
+        carriers: list[str] = []
+        for probe_index, probe in enumerate(probes):
+            if not isinstance(probe, dict) or set(probe) != {"carrier", "ir_sha256", "candidate"}:
+                raise ValueError("prepared bundle reviewed probe is invalid")
+            carrier = probe["carrier"]
+            ir_sha256 = probe["ir_sha256"]
+            if (
+                not isinstance(carrier, str)
+                or not carrier
+                or any(character.isspace() for character in carrier)
+                or carrier in carriers
+                or not isinstance(ir_sha256, str)
+                or len(ir_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in ir_sha256)
+            ):
+                raise ValueError("prepared bundle reviewed probe carrier is invalid")
+            path, candidate_size, _ = _manifest_blob_entry(
+                probe["candidate"],
+                f"reviewed candidate {index}:{probe_index}",
+                bundle_label="prepared bundle",
+            )
+            if path != f"reviews/{index}/{probe_index}.blob" or candidate_size == 0:
+                raise ValueError("prepared bundle reviewed candidate entry is invalid")
+            carriers.append(carrier)
+        reviews.append(review)
+    return tuple(bindings), tuple(reviews)
 
 
 def load_prepared(
@@ -2354,9 +2440,10 @@ def load_prepared(
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise ValueError("prepared bundle manifest is not valid UTF-8 JSON") from exc
             required = {"schema", "carrier", "ir", "build_flags", "provenance", "act_groups", "bindings"}
+            schema = manifest.get("schema") if isinstance(manifest, dict) else None
             if (
                 not isinstance(manifest, dict)
-                or manifest.get("schema") != "npunlock.prepared.v1"
+                or schema not in {"npunlock.prepared.v1", "npunlock.prepared.v2"}
                 or set(manifest) != required
             ):
                 raise ValueError("prepared bundle manifest fields or schema are unsupported")
@@ -2375,7 +2462,35 @@ def load_prepared(
             )
             if len(carrier) != carrier_size or hashlib.sha256(carrier).hexdigest() != carrier_hash:
                 raise ValueError("prepared bundle carrier does not match its manifest")
-            if set(names) != {"manifest.json", carrier_path}:
+            saved_indices, saved_review_specs = _prepared_bindings(
+                manifest["bindings"],
+                serialized.custom_nodes,
+                schema=schema,
+            )
+            review_blobs: dict[str, bytes] = {}
+            if saved_review_specs is not None:
+                for custom_index, review in enumerate(saved_review_specs):
+                    if review is None:
+                        continue
+                    for probe_index, probe in enumerate(review["probes"]):
+                        path, candidate_size, candidate_hash = _manifest_blob_entry(
+                            probe["candidate"],
+                            f"reviewed candidate {custom_index}:{probe_index}",
+                            bundle_label="prepared bundle",
+                        )
+                        candidate = _bundle_member(
+                            archive,
+                            path,
+                            maximum_size=2 * 1024 * 1024 * 1024,
+                            bundle_label="prepared bundle",
+                        )
+                        if len(candidate) != candidate_size or hashlib.sha256(candidate).hexdigest() != candidate_hash:
+                            raise ValueError(
+                                f"prepared bundle reviewed candidate {custom_index}:{probe_index} "
+                                "does not match its manifest"
+                            )
+                        review_blobs[path] = candidate
+            if set(names) != {"manifest.json", carrier_path, *review_blobs}:
                 raise ValueError("prepared bundle contains undeclared members")
     except zipfile.BadZipFile as exc:
         raise ValueError("prepared bundle is not a valid ZIP archive") from exc
@@ -2391,7 +2506,6 @@ def load_prepared(
     if _effective_build_flags(serialized, build_flags) != build_flags:
         raise ValueError("prepared bundle build_flags do not preserve the caller graph contract")
     provenance = _prepared_provenance(manifest["provenance"], carrier)
-    saved_indices = _prepared_bindings(manifest["bindings"], serialized.custom_nodes)
     _require_validated_positional_compiler(serialized, embedded_targets, provenance.compiler_version)
 
     native = libraries or _default_native_libraries(native_dir)
@@ -2433,11 +2547,19 @@ def load_prepared(
             CustomMapping(
                 node.outputs[0],
                 node.name or "<unnamed>",
-                "saved",
+                "saved-reviewed" if review is not None else "saved",
                 indices,
-                "reviewed binding restored from the prepared bundle",
+                (
+                    "evidence-backed binding restored and revalidated from the prepared bundle"
+                    if review is not None
+                    else "explicit binding restored from the prepared bundle"
+                ),
             )
-            for node, indices in zip(serialized.custom_nodes, saved_indices)
+            for node, indices, review in zip(
+                serialized.custom_nodes,
+                saved_indices,
+                saved_review_specs or tuple(None for _ in serialized.custom_nodes),
+            )
         )
     prepared = PreparedGraph(
         graph,
@@ -2452,6 +2574,76 @@ def load_prepared(
         build_flags,
         saved_indices,
     )
+    saved_reviews: tuple[ReviewedBinding | None, ...] | None = None
+    if saved_review_specs is not None:
+        restored_reviews: list[ReviewedBinding | None] = []
+        for custom_index, (node, indices, review) in enumerate(
+            zip(serialized.custom_nodes, saved_indices or (), saved_review_specs)
+        ):
+            if review is None:
+                restored_reviews.append(None)
+                continue
+            probes: list[CarrierProbe] = []
+            baseline_carrier = node.metadata.get("_carrier")
+            if not isinstance(baseline_carrier, str):
+                raise ValueError("prepared bundle reviewed node has no carrier operator")
+            for probe_index, probe_spec in enumerate(review["probes"]):
+                candidate_carrier = probe_spec["carrier"]
+                candidate_ir = serialize_ir(graph, _carrier_overrides={node: candidate_carrier})
+                if candidate_ir.weights != serialized.weights or candidate_ir.custom_nodes != serialized.custom_nodes:
+                    raise ValueError("prepared bundle reviewed probe changes the caller graph contract")
+                if hashlib.sha256(candidate_ir.xml).hexdigest() != probe_spec["ir_sha256"]:
+                    raise ValueError("prepared bundle reviewed probe IR identity does not match the caller graph")
+                path = probe_spec["candidate"]["path"]
+                candidate_blob = review_blobs[path]
+                candidate_provenance = IrCompileResult(
+                    candidate_blob,
+                    provenance.driver_index,
+                    provenance.device_index,
+                    provenance.driver_version,
+                    provenance.vendor_id,
+                    provenance.device_id,
+                    provenance.graph_extension_version,
+                    provenance.compiler_version,
+                )
+                probes.append(
+                    CarrierProbe(
+                        node.outputs[0],
+                        baseline_carrier,
+                        candidate_carrier,
+                        native.compare_graphs(carrier, candidate_blob),
+                        hashlib.sha256(serialized.xml).hexdigest(),
+                        hashlib.sha256(candidate_ir.xml).hexdigest(),
+                        hashlib.sha256(carrier).hexdigest(),
+                        hashlib.sha256(candidate_blob).hexdigest(),
+                        candidate_ir,
+                        candidate_provenance,
+                    )
+                )
+            evidence = CarrierMappingEvidence(node.outputs[0], tuple(probes))
+            restored = prepared.review_binding(
+                node.outputs[0],
+                evidence,
+                coverage_kind=review["coverage_kind"],
+            )
+            if tuple(indices) != (restored.group_index,):
+                raise ValueError(f"prepared bundle reviewed binding {custom_index} does not match its saved group")
+            restored_reviews.append(restored)
+        saved_reviews = tuple(restored_reviews)
+        prepared = PreparedGraph(
+            graph,
+            serialized,
+            provenance,
+            groups,
+            mappings,
+            native,
+            timeout_ms,
+            automatic_indices,
+            embedded_targets,
+            build_flags,
+            saved_indices,
+            saved_reviews,
+        )
     if saved_indices is not None:
         prepared._resolve_bindings()
     return prepared

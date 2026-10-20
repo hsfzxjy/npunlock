@@ -1657,27 +1657,101 @@ class CompilationFlowTests(unittest.TestCase):
         prepared = npu.prepare(graph, native_dir="unused", libraries=fake)  # type: ignore[arg-type]
         plan = prepared.plan(bindings={scaled: prepared.groups[0], mixed: prepared.groups[1]})
         path = ROOT / "build" / "python-api-prepared-test.npunlock"
+        legacy_path = ROOT / "build" / "python-api-prepared-v1-test.npunlock"
         try:
             prepared.export(path, plan=plan)
             with zipfile.ZipFile(path, "r") as archive:
                 manifest = json.loads(archive.read("manifest.json"))
-                self.assertEqual(manifest["schema"], "npunlock.prepared.v1")
+                self.assertEqual(manifest["schema"], "npunlock.prepared.v2")
                 self.assertNotIn(b"old source", archive.read("manifest.json"))
                 self.assertEqual(manifest["bindings"][0]["group_indices"], [1])
                 self.assertEqual(manifest["bindings"][1]["group_indices"], [0])
+                self.assertIsNone(manifest["bindings"][0]["review"])
+                self.assertIsNone(manifest["bindings"][1]["review"])
+
+            with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(legacy_path, "w") as destination:
+                manifest = json.loads(source.read("manifest.json"))
+                manifest["schema"] = "npunlock.prepared.v1"
+                for binding in manifest["bindings"]:
+                    del binding["review"]
+                destination.writestr(
+                    "manifest.json",
+                    (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
+                )
+                destination.writestr("carrier.blob", source.read("carrier.blob"))
 
             reloaded_graph, _, _ = make_graph(b"new source")
             loaded = npu.load_prepared(path, graph=reloaded_graph, libraries=fake)  # type: ignore[arg-type]
+            legacy_loaded = npu.load_prepared(
+                legacy_path,
+                graph=reloaded_graph,
+                libraries=fake,  # type: ignore[arg-type]
+            )
         finally:
             path.unlink(missing_ok=True)
+            legacy_path.unlink(missing_ok=True)
 
         self.assertEqual(fake.compile_ir_count, 1)
         self.assertEqual(tuple(mapping.status for mapping in loaded.mappings), ("saved", "saved"))
+        self.assertEqual(tuple(mapping.status for mapping in legacy_loaded.mappings), ("saved", "saved"))
         loaded_plan = loaded.plan()
         self.assertEqual(loaded_plan.group_indices, ((1,), (0,)))
         self.assertEqual(tuple(kernel.source for kernel in loaded_plan.kernels), (b"mix", b"new source"))
         loaded_plan.build(movi_dll_dir="movi")
         self.assertEqual(fake.compile_ir_count, 1)
+
+    def test_prepared_bundle_revalidates_evidence_backed_binding(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="reviewed")
+        graph = npu.Graph([x], [y], name="reviewed_bundle")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"sqrt", b"tanh"]
+        fake.comparisons = [
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(0, (0,), True, True),
+        ]
+        prepared = npu.prepare(graph, native_dir="unused", libraries=fake)  # type: ignore[arg-type]
+        evidence = prepared.probe_mapping(y, ("Sqrt", "Tanh"))
+        reviewed = prepared.review_binding(y, evidence, coverage_kind="act_consumer")
+        plan = prepared.plan(bindings={y: reviewed})
+        path = ROOT / "build" / "python-api-reviewed-prepared.npunlock"
+        corrupt_path = ROOT / "build" / "python-api-reviewed-prepared-corrupt.npunlock"
+        try:
+            prepared.export(path, plan=plan)
+            with zipfile.ZipFile(path, "r") as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["schema"], "npunlock.prepared.v2")
+                self.assertEqual(manifest["bindings"][0]["review"]["coverage_kind"], "act_consumer")
+                self.assertEqual(
+                    [probe["carrier"] for probe in manifest["bindings"][0]["review"]["probes"]],
+                    ["Sqrt", "Tanh"],
+                )
+                self.assertIn("reviews/0/0.blob", archive.namelist())
+                self.assertIn("reviews/0/1.blob", archive.namelist())
+
+            fake.comparisons = [
+                npu.GraphComparison(0, (0,), True, True),
+                npu.GraphComparison(0, (0,), True, True),
+            ]
+            loaded = npu.load_prepared(path, graph=graph, libraries=fake)  # type: ignore[arg-type]
+            loaded_plan = loaded.plan()
+
+            self.assertEqual(fake.compile_ir_count, 3)
+            self.assertEqual(loaded.mappings[0].status, "saved-reviewed")
+            self.assertIsNotNone(loaded_plan.reviewed_bindings[0])
+            self.assertIn("reviewed binding: group=0", loaded_plan.explain())
+
+            with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(corrupt_path, "w") as destination:
+                for name in source.namelist():
+                    data = source.read(name)
+                    if name == "reviews/0/0.blob":
+                        data += b"corrupt"
+                    destination.writestr(name, data)
+            with self.assertRaisesRegex(ValueError, "reviewed candidate 0:0 does not match"):
+                npu.load_prepared(corrupt_path, graph=graph, libraries=fake)  # type: ignore[arg-type]
+        finally:
+            path.unlink(missing_ok=True)
+            corrupt_path.unlink(missing_ok=True)
 
     def test_prepared_bundle_rejects_graph_and_act_contract_mismatch(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

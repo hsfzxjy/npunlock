@@ -598,7 +598,10 @@ output = loaded.run_one(input_value)
 The bundle records tensor contracts, graph/compiler provenance, hashes, and
 patch reports. Execution still requires compatible NPU hardware and driver.
 Use `PreparedGraph.export()` instead when you want to preserve a reviewed
-carrier and binding while continuing to rebuild the C kernel.
+carrier and binding while continuing to rebuild the C kernel. When a plan uses
+`ReviewedBinding`, the prepared bundle also carries the controlled candidate
+native blobs. Loading reruns their strict comparisons and the selected coverage
+check without recompiling the graph.
 
 ## 12. Use shared buffers when repeated copies matter
 
