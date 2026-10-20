@@ -3699,13 +3699,15 @@ npunlock_status npunlock_derive_act_replica_candidates(
 npunlock_status npunlock_derive_act_group_completeness(
     const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
     size_t group_count, const npunlock_act_output_slice_candidate_observation *slice_candidates,
-    size_t slice_candidate_count, const npunlock_act_output_cover_observation *covers,
-    size_t cover_count, const npunlock_act_replica_group_observation *replica_groups,
-    size_t replica_group_count,
+    size_t slice_candidate_count, const npunlock_network_output_route_observation *routes,
+    size_t route_count, const npunlock_act_output_cover_observation *covers, size_t cover_count,
+    const npunlock_act_replica_group_observation *replica_groups, size_t replica_group_count,
     const npunlock_act_replica_candidate_observation *replica_candidates,
     size_t replica_candidate_count, npunlock_act_group_completeness_observation **completeness,
     size_t *completeness_count, npunlock_diagnostic *diagnostic) {
   npunlock_act_group_completeness_observation *result = NULL;
+  output_byte_interval *route_intervals = NULL;
+  output_byte_interval *slice_intervals = NULL;
   size_t allocation_size;
   size_t result_count = 0u;
   size_t group_index;
@@ -3715,7 +3717,7 @@ npunlock_status npunlock_derive_act_group_completeness(
   if (completeness == NULL || completeness_count == NULL || diagnostic == NULL ||
       (invocations == NULL && invocation_count != 0u) ||
       (slice_candidates == NULL && slice_candidate_count != 0u) ||
-      (covers == NULL && cover_count != 0u) ||
+      (routes == NULL && route_count != 0u) || (covers == NULL && cover_count != 0u) ||
       (replica_groups == NULL && replica_group_count != 0u) ||
       (replica_candidates == NULL && replica_candidate_count != 0u)) {
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
@@ -3726,6 +3728,7 @@ npunlock_status npunlock_derive_act_group_completeness(
       !npunlock_checked_add_size(replica_candidate_count, 1u, &work_term) ||
       !npunlock_checked_mul_size(invocation_count, work_term, &work_term) ||
       !npunlock_checked_add_size(work_term, slice_candidate_count, &work_bound) ||
+      !npunlock_checked_add_size(work_bound, route_count, &work_bound) ||
       !npunlock_checked_add_size(work_bound, cover_count, &work_bound) ||
       !npunlock_checked_add_size(work_bound, replica_group_count, &work_bound) ||
       !npunlock_checked_mul_size(group_count, work_bound, &work_bound) ||
@@ -3740,6 +3743,23 @@ npunlock_status npunlock_derive_act_group_completeness(
     return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
                                    "patchblob.inspect_routing",
                                    "could not allocate ACT group-completeness observations");
+  }
+  if (!npunlock_checked_mul_size(route_count, sizeof(*route_intervals), &allocation_size) ||
+      !npunlock_checked_mul_size(slice_candidate_count, sizeof(*slice_intervals),
+                                 &allocation_size)) {
+    free(result);
+    return unsupported(diagnostic, "ACT group-completeness interval allocation overflows");
+  }
+  route_intervals = (output_byte_interval *)calloc(route_count, sizeof(*route_intervals));
+  slice_intervals = (output_byte_interval *)calloc(slice_candidate_count, sizeof(*slice_intervals));
+  if ((route_intervals == NULL && route_count != 0u) ||
+      (slice_intervals == NULL && slice_candidate_count != 0u)) {
+    free(result);
+    free(route_intervals);
+    free(slice_intervals);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT group-completeness intervals");
   }
   for (group_index = 0; group_index < group_count; ++group_index) {
     npunlock_act_group_completeness_observation *observation;
@@ -3811,15 +3831,75 @@ npunlock_status npunlock_derive_act_group_completeness(
     if (!output_symbol_set) {
       observation->unresolved_flags |= NPUNLOCK_GROUP_COMPLETE_OUTPUT_SYMBOL_AMBIGUOUS;
     } else {
-      const npunlock_act_output_cover_observation *cover = NULL;
+      size_t matching_routes = 0u;
+      size_t matching_slices = 0u;
+      size_t route_merged_count;
+      size_t slice_merged_count;
+      bool route_overlap;
+      bool slice_overlap;
+      bool exact_cover = true;
+      bool global_exact_cover = false;
       size_t matching_covers = 0u;
       for (index = 0; index < cover_count; ++index) {
         if (covers[index].output_symbol_raw == observation->output_symbol_raw) {
-          cover = &covers[index];
+          global_exact_cover = covers[index].exact_cover;
           ++matching_covers;
         }
       }
-      if (matching_covers != 1u || cover == NULL || !cover->exact_cover) {
+      if (matching_covers != 1u) {
+        global_exact_cover = false;
+      }
+      for (index = 0; index < route_count; ++index) {
+        uint64_t start;
+        if (routes[index].output_symbol_raw != observation->output_symbol_raw) {
+          continue;
+        }
+        if (routes[index].output_addend_raw < 0) {
+          exact_cover = false;
+          continue;
+        }
+        start = (uint64_t)routes[index].output_addend_raw;
+        if (start > UINT64_MAX - routes[index].length_bytes) {
+          exact_cover = false;
+          continue;
+        }
+        route_intervals[matching_routes].start = start;
+        route_intervals[matching_routes].end = start + routes[index].length_bytes;
+        ++matching_routes;
+      }
+      for (index = 0; index < slice_candidate_count; ++index) {
+        const npunlock_act_output_slice_candidate_observation *candidate = &slice_candidates[index];
+        uint64_t start;
+        if (candidate->act_group_index != group_index ||
+            candidate->output_symbol_raw != observation->output_symbol_raw) {
+          continue;
+        }
+        start = candidate->output_slice_addend_candidate;
+        if (start > UINT64_MAX - candidate->act_span_bytes) {
+          exact_cover = false;
+          continue;
+        }
+        slice_intervals[matching_slices].start = start;
+        slice_intervals[matching_slices].end = start + candidate->act_span_bytes;
+        ++matching_slices;
+      }
+      route_merged_count =
+          merge_output_byte_intervals(route_intervals, matching_routes, &route_overlap);
+      slice_merged_count =
+          merge_output_byte_intervals(slice_intervals, matching_slices, &slice_overlap);
+      if (matching_routes == 0u || matching_slices == 0u || route_overlap || slice_overlap ||
+          route_merged_count != slice_merged_count) {
+        exact_cover = false;
+      } else {
+        for (index = 0; index < route_merged_count; ++index) {
+          if (route_intervals[index].start != slice_intervals[index].start ||
+              route_intervals[index].end != slice_intervals[index].end) {
+            exact_cover = false;
+            break;
+          }
+        }
+      }
+      if (!exact_cover && !global_exact_cover) {
         observation->unresolved_flags |= NPUNLOCK_GROUP_COMPLETE_OUTPUT_COVER_UNRESOLVED;
       }
     }
@@ -3828,6 +3908,8 @@ npunlock_status npunlock_derive_act_group_completeness(
         observation->routed_invocation_count + observation->replica_invocation_count ==
             observation->invocation_count;
   }
+  free(route_intervals);
+  free(slice_intervals);
   *completeness = result;
   *completeness_count = result_count;
   return NPUNLOCK_STATUS_OK;
@@ -4178,10 +4260,10 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   }
   status = npunlock_derive_act_group_completeness(
       invocations, invocation_count, group_count, act_output_slice_candidates,
-      act_output_slice_candidate_count, act_output_covers, act_output_cover_count,
-      act_replica_groups, act_replica_group_count, act_replica_candidates,
-      act_replica_candidate_count, &act_group_completeness, &act_group_completeness_count,
-      diagnostic);
+      act_output_slice_candidate_count, network_output_routes, network_output_route_count,
+      act_output_covers, act_output_cover_count, act_replica_groups, act_replica_group_count,
+      act_replica_candidates, act_replica_candidate_count, &act_group_completeness,
+      &act_group_completeness_count, diagnostic);
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }

@@ -213,7 +213,7 @@ static int test_replica_candidate_bijection(void) {
   npunlock_act_output_slice_candidate_observation slices[2] = {0};
   npunlock_act_replica_group_observation *groups = NULL;
   npunlock_act_replica_candidate_observation *candidates = NULL;
-  npunlock_act_output_cover_observation cover = {0};
+  npunlock_network_output_route_observation route = {0};
   npunlock_act_group_completeness_observation *completeness = NULL;
   size_t group_count = 0;
   size_t candidate_count = 0;
@@ -237,8 +237,8 @@ static int test_replica_candidate_bijection(void) {
   slices[1].output_symbol_raw = 1;
   slices[1].output_slice_addend_candidate = 16;
   slices[1].act_span_bytes = 16;
-  cover.output_symbol_raw = 1;
-  cover.exact_cover = true;
+  route.output_symbol_raw = 1;
+  route.length_bytes = 32;
 
   CHECK(npunlock_derive_act_replica_candidates(invocations, 4, 1, slices, 2, &groups, &group_count,
                                                &candidates, &candidate_count,
@@ -251,8 +251,8 @@ static int test_replica_candidate_bijection(void) {
   CHECK(candidates[0].routed_invocation_index == 0);
   CHECK(candidates[1].unrouted_invocation_index == 3);
   CHECK(candidates[1].routed_invocation_index == 2);
-  CHECK(npunlock_derive_act_group_completeness(invocations, 4, 1, slices, 2, &cover, 1, groups,
-                                               group_count, candidates, candidate_count,
+  CHECK(npunlock_derive_act_group_completeness(invocations, 4, 1, slices, 2, &route, 1, NULL, 0,
+                                               groups, group_count, candidates, candidate_count,
                                                &completeness, &completeness_count,
                                                &diagnostic) == NPUNLOCK_STATUS_OK);
   CHECK(completeness_count == 1);
@@ -274,8 +274,8 @@ static int test_replica_candidate_bijection(void) {
   CHECK(group_count == 1);
   CHECK(groups[0].translation_solution_count == 0);
   CHECK(candidate_count == 0);
-  CHECK(npunlock_derive_act_group_completeness(invocations, 4, 1, slices, 2, &cover, 1, groups,
-                                               group_count, candidates, candidate_count,
+  CHECK(npunlock_derive_act_group_completeness(invocations, 4, 1, slices, 2, &route, 1, NULL, 0,
+                                               groups, group_count, candidates, candidate_count,
                                                &completeness, &completeness_count,
                                                &diagnostic) == NPUNLOCK_STATUS_OK);
   CHECK(completeness_count == 1);
@@ -285,6 +285,75 @@ static int test_replica_candidate_bijection(void) {
   free(completeness);
   free(groups);
   free(candidates);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
+static int test_group_local_output_cover_with_cmx_reuse(void) {
+  npunlock_invocation_routing_observation invocations[3];
+  npunlock_network_output_route_observation route = {0};
+  npunlock_act_output_slice_candidate_observation slices[3] = {0};
+  npunlock_act_output_cover_observation *global_covers = NULL;
+  npunlock_act_group_completeness_observation *completeness = NULL;
+  size_t global_cover_count = 0;
+  size_t completeness_count = 0;
+  size_t index;
+  npunlock_diagnostic diagnostic = {0};
+
+  configure_edge_invocation(&invocations[0], 0, 0, 0, 64, 1, 2);
+  configure_edge_invocation(&invocations[1], 1, 0, 64, 128, 1, 2);
+  configure_edge_invocation(&invocations[2], 2, 1, 64, 96, 1, 2);
+  for (index = 0; index < 3; ++index) {
+    slices[index].act_group_index = invocations[index].group_index;
+    slices[index].act_invocation_index = (uint32_t)index;
+    slices[index].route_candidate_count = 1;
+    slices[index].output_symbol_raw = 7;
+  }
+  slices[0].act_span_bytes = 64;
+  slices[1].output_slice_addend_candidate = 64;
+  slices[1].act_span_bytes = 64;
+  slices[2].output_slice_addend_candidate = 64;
+  slices[2].act_span_bytes = 32;
+  route.output_symbol_raw = 7;
+  route.length_bytes = 128;
+
+  CHECK(npunlock_derive_act_output_cover_observations(invocations, 3, &route, 1, slices, 3,
+                                                      &global_covers, &global_cover_count,
+                                                      &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(global_cover_count == 1);
+  CHECK(!global_covers[0].exact_cover);
+  CHECK((global_covers[0].unresolved_flags & NPUNLOCK_OUTPUT_COVER_SLICE_OVERLAP) != 0);
+  CHECK(npunlock_derive_act_group_completeness(
+            invocations, 3, 2, slices, 3, &route, 1, global_covers, global_cover_count, NULL, 0,
+            NULL, 0, &completeness, &completeness_count, &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(completeness_count == 2);
+  CHECK(completeness[0].act_group_index == 0);
+  CHECK(completeness[0].complete);
+  CHECK(completeness[1].act_group_index == 1);
+  CHECK(!completeness[1].complete);
+  CHECK((completeness[1].unresolved_flags & NPUNLOCK_GROUP_COMPLETE_OUTPUT_COVER_UNRESOLVED) != 0);
+
+  free(global_covers);
+  free(completeness);
+  global_covers = NULL;
+  completeness = NULL;
+
+  invocations[1].group_index = 1;
+  slices[1].act_group_index = 1;
+  CHECK(npunlock_derive_act_output_cover_observations(invocations, 2, &route, 1, slices, 2,
+                                                      &global_covers, &global_cover_count,
+                                                      &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(global_cover_count == 1);
+  CHECK(global_covers[0].exact_cover);
+  CHECK(npunlock_derive_act_group_completeness(
+            invocations, 2, 2, slices, 2, &route, 1, global_covers, global_cover_count, NULL, 0,
+            NULL, 0, &completeness, &completeness_count, &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(completeness_count == 2);
+  CHECK(completeness[0].complete);
+  CHECK(completeness[1].complete);
+
+  free(global_covers);
+  free(completeness);
   npunlock_diagnostic_release(&diagnostic);
   return 0;
 }
@@ -484,6 +553,7 @@ int main(void) {
   CHECK(test_edge_candidate_transitive_schedule() == 0);
   CHECK(test_output_cover_observations() == 0);
   CHECK(test_replica_candidate_bijection() == 0);
+  CHECK(test_group_local_output_cover_with_cmx_reuse() == 0);
   CHECK(test_act_dpu_output_cover_observations() == 0);
   CHECK(test_act_consumer_cover_observations() == 0);
   CHECK(test_routing_comparison() == 0);

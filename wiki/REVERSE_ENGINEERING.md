@@ -16,7 +16,7 @@ That observation turned an undocumented native graph into a practical,
 testable custom-kernel path. This page records the important milestones behind
 that result without treating every observed field as a general vendor ABI.
 
-Status: experimental. Last updated 2026-09-27.
+Status: experimental. Last updated 2026-10-20.
 
 ## How the conclusions were established
 
@@ -1948,6 +1948,37 @@ This establishes only the exact FP16 two-`[1,32]` plus three-`[1,1]` source
 layout, record positions, carrier, compiler, and device. It does not establish
 arbitrary vector/scalar mixtures, shapes, parameter positions/counts, other
 precisions, compilers, or NPU generations.
+
+## 64. Group-local output coverage in a branched graph
+
+On 2026-10-20, the graph in
+[`examples/example_branched_network.py`](../examples/example_branched_network.py)
+compiled to six ACT groups for three custom nodes spread across an FP16
+connected branch and an independent FP32 output branch. The compiler reused
+part of the FP32 output's CMX address range later for an intermediate FP16 ACT
+group. A graph-wide address-union analysis therefore correctly reported an
+overlap, but could not distinguish reuse over time from two simultaneous
+producers of the same output.
+
+The direct-output proof now also evaluates each ACT group independently. The
+FP32 group's two routed slices exactly cover the 128-byte output DMA interval;
+its other two invocations form the already validated one-to-one tile-replica
+mapping. The later FP16 group covers only 32 bytes of that interval, so it
+remains incomplete. The conservative graph-wide report is preserved and still
+shows the address overlap.
+
+Three controlled carrier substitutions—`Abs` to `Sqrt`, `Tanh`, and `Relu`—
+independently changed only ACT group 0 while leaving the observed graph
+contract stable. Combining those differential results with the group-local
+direct-output proof produced an accepted reviewed binding for the FP32 custom
+node. The 116,680-byte baseline native graph had SHA-256
+`463e8f5f0848928372ab9316f73d6c1634de7696a8ad3a88aa1d4ce673c7c144`.
+
+This establishes a bounded way to separate direct-output ownership from later
+CMX address reuse in this NPU3720/compiler-8.3 layout. It does not establish a
+general lifetime model, map the two intermediate custom nodes, explain the
+unobserved ACT-to-DMA-to-DPU transfer between them, or authorize mappings on
+other compiler versions or NPU generations.
 
 ## What remains deliberately unresolved
 

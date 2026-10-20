@@ -349,9 +349,9 @@ npunlock_status npunlock_derive_act_replica_candidates(
 npunlock_status npunlock_derive_act_group_completeness(
     const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
     size_t group_count, const npunlock_act_output_slice_candidate_observation *slice_candidates,
-    size_t slice_candidate_count, const npunlock_act_output_cover_observation *covers,
-    size_t cover_count, const npunlock_act_replica_group_observation *replica_groups,
-    size_t replica_group_count,
+    size_t slice_candidate_count, const npunlock_network_output_route_observation *routes,
+    size_t route_count, const npunlock_act_output_cover_observation *covers, size_t cover_count,
+    const npunlock_act_replica_group_observation *replica_groups, size_t replica_group_count,
     const npunlock_act_replica_candidate_observation *replica_candidates,
     size_t replica_candidate_count, npunlock_act_group_completeness_observation **completeness,
     size_t *completeness_count, npunlock_diagnostic *diagnostic);

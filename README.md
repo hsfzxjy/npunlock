@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-19:** one custom kernel can now combine two FP16 tensors with three independently bound graph-global parameters. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#63-graph-global-hybrid-five-input-execution).
+> **Latest breakthrough — 2026-10-20:** a branched graph can now prove which ACT group owns a direct output even when a later operation reuses the same CMX addresses. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#64-group-local-output-coverage-in-a-branched-graph).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,

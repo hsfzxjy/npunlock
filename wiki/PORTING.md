@@ -80,11 +80,17 @@ graph-output interval as a proposed replica-class identity, not as permission
 for automatic patch selection.
 
 Schema v14 combines these proofs in `group_completeness_observations`. A
-direct-output ACT group is complete only when its graph output has an exact
-cover and every invocation has exactly one disposition: a unique routed slice
-or a unique replica candidate. Routed, replica, and unresolved counts remain
-visible per group. Completeness still does not identify a symbolic source node
-and is not used by automatic patch selection.
+direct-output ACT group is complete only when every invocation has exactly one
+disposition—a unique routed slice or a unique replica candidate—and output
+coverage is exact. Coverage may be established by an exact partition across
+the participating groups or by one group's routed slices having the same
+byte-interval union as the graph-output DMA routes. The latter group-local
+proof matters because a later operation may reuse the same CMX addresses; that
+reuse remains visible in the conservative cross-group
+`output_cover_observations` report but does not by itself invalidate an exact
+group. Routed, replica, and unresolved counts remain visible per group.
+Completeness still does not identify a symbolic source node and is not used by
+automatic patch selection.
 
 Schema v15 adds a validated `code_observation` to every ACT invocation. It
 contains the relocated offset and extent within `.text.KernelText` plus the
