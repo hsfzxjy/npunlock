@@ -80,16 +80,20 @@ static int write_json_string(FILE *stream, const char *value) {
   return fputc('"', stream) != EOF;
 }
 
-static void hash_view(npunlock_view view, char text[65]) {
+static void format_digest(const uint8_t digest[32], char text[65]) {
   static const char digits[] = "0123456789abcdef";
-  uint8_t digest[32];
   size_t index;
-  npunlock_sha256(view, digest);
-  for (index = 0; index < sizeof(digest); ++index) {
+  for (index = 0; index < 32u; ++index) {
     text[index * 2] = digits[digest[index] >> 4];
     text[index * 2 + 1] = digits[digest[index] & 15u];
   }
   text[64] = 0;
+}
+
+static void hash_view(npunlock_view view, char text[65]) {
+  uint8_t digest[32];
+  npunlock_sha256(view, digest);
+  format_digest(digest, text);
 }
 
 static const char *tensor_precision_name(uint32_t precision) {
@@ -137,7 +141,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v14\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v15\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -154,16 +158,20 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
     const npunlock_invocation_routing_observation *observation = &routing->invocations[index];
     const patchblob_target_v2 *target = &observation->target;
     const patchblob_tensor_contract_v2 *output = &target->tensors[target->tensor_count - 1u];
+    char code_hash[65];
     size_t tensor_index;
     bool first_scalar = true;
     bool input_1_scalar = target->tensor_count == 3u && output->element_count > 1u &&
                           target->tensors[1].element_count == 1u;
+    format_digest(observation->code_sha256, code_hash);
     if (fprintf(stream,
                 "%s    {\"group_index\": %u, \"invocation_index\": %u, "
                 "\"range_index\": %u, \"input_count\": %u, \"element_count\": "
                 "%" PRIu64 ", \"span_bytes\": %" PRIu64 ", \"contract_version\": 2, "
                 "\"target_flags\": %u, \"precision\": \"%s\", "
-                "\"input_1_scalar\": %s, \"routing_observation\": "
+                "\"input_1_scalar\": %s, \"code_observation\": "
+                "{\"offset_raw\": %" PRIu64 ", \"extent\": %u, \"sha256\": \"%s\"}, "
+                "\"routing_observation\": "
                 "{\"tile_candidate_raw\": %u, \"parameter_base\": %" PRIu64
                 ", \"wait_mask_raw\": %" PRIu64 ", \"post_mask_raw\": %" PRIu64
                 ", \"barrier_group_raw\": %u, \"barrier_mask_raw\": %u, "
@@ -172,7 +180,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 index == 0 ? "" : ",\n", observation->group_index, target->invocation_index,
                 target->range_index, target->tensor_count - 1u, output->element_count,
                 output->span_bytes, target->target_flags, target_precision_name(target),
-                input_1_scalar ? "true" : "false", observation->tile_candidate_raw,
+                input_1_scalar ? "true" : "false", observation->code_offset_raw,
+                observation->code_extent, code_hash, observation->tile_candidate_raw,
                 observation->parameter_base, observation->wait_mask_raw, observation->post_mask_raw,
                 observation->barrier_group_raw, observation->barrier_mask_raw,
                 observation->start_after_raw, observation->clean_after_raw) < 0) {
@@ -474,6 +483,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "replica candidates require a unique complete CMX-translation bijection; "
                  "group completeness requires an exact output cover and one routed or replica "
                  "classification for every participating invocation; "
+                 "code fingerprints cover validated range slices but are not semantic operation "
+                 "identifiers; "
                  "DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
                  "intervals; candidates do not classify unrouted invocations as replicas; "

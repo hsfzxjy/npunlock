@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 14 JSON report records the blob size and SHA-256 plus every
+The version 15 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -85,6 +85,12 @@ cover and every invocation has exactly one disposition: a unique routed slice
 or a unique replica candidate. Routed, replica, and unresolved counts remain
 visible per group. Completeness still does not identify a symbolic source node
 and is not used by automatic patch selection.
+
+Schema v15 adds a validated `code_observation` to every ACT invocation. It
+contains the relocated offset and extent within `.text.KernelText` plus the
+SHA-256 of exactly that bounded code slice. Equal fingerprints show code reuse;
+a differential compile can use changed fingerprints as evidence only when the
+rest of the invocation, routing, scheduling, and DPU contract is unchanged.
 
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant

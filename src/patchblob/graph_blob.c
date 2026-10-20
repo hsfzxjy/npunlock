@@ -3581,12 +3581,35 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   }
   for (index = 0; index < invocation_count; ++index) {
     const graph_section *invocation_section = &layout.sections[layout.invocations_index];
+    const graph_section *range_section = &layout.sections[layout.ranges_index];
+    const graph_section *text_section = &layout.sections[layout.kernel_text_index];
     const uint8_t *record =
         layout.blob.data + invocation_section->offset + index * ACT_INVOCATION_SIZE;
     npunlock_invocation_routing_observation *observation = &invocations[index];
+    graph_relocation range_relocation;
+    size_t code_offset;
+    size_t range_offset;
     size_t tensor_index;
 
     observation->group_index = discovered[index].group_index;
+    status = find_range_relocation(&layout, discovered[index].target.range_index, &range_relocation,
+                                   diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto fail;
+    }
+    range_offset =
+        range_section->offset + (size_t)discovered[index].target.range_index * ACT_RANGE_SIZE;
+    observation->code_extent = read_u32(layout.blob.data + range_offset + 0x0cu);
+    if (range_relocation.addend < 0 ||
+        !u64_to_size((uint64_t)range_relocation.addend, &code_offset) ||
+        !range_in_bounds(code_offset, observation->code_extent, text_section->size)) {
+      status = malformed(diagnostic, "ACT range code slice is outside KernelText");
+      goto fail;
+    }
+    observation->code_offset_raw = (uint64_t)code_offset;
+    npunlock_sha256((npunlock_view){layout.blob.data + text_section->offset + code_offset,
+                                    observation->code_extent},
+                    observation->code_sha256);
     observation->tile_candidate_raw = read_u32(record + 0x34u);
     observation->parameter_base = parameter_bases[index];
     observation->wait_mask_raw = read_u64(record + 0x10u);

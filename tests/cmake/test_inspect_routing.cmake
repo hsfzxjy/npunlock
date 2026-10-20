@@ -22,7 +22,11 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v14\""
+    "\"schema\": \"npunlock.porting.inspect.v15\""
+    "\"code_observation\""
+    "\"offset_raw\""
+    "\"extent\""
+    "\"sha256\""
     "\"tile_count_observed\""
     "\"tile_candidate_raw\""
     "\"parameter_base\""
@@ -73,6 +77,7 @@ foreach(required
 endforeach()
 
 foreach(expected
+    "\"code_observation\": {\"offset_raw\": 0, \"extent\": 5280, \"sha256\": \"bcb89071968d07af5e42e824beb91467a60e50dd64c6414a71b2d04875dd886f\"}"
     "\"register_offset\": 92, \"relocation_type\": 4, \"data_symbol_raw\": 0, \"data_addend_raw\": 768"
     "\"register_offset\": 160, \"relocation_type\": 7, \"data_symbol_raw\": 0, \"data_addend_raw\": 832"
     "\"cluster_raw\": 0, \"wait_mask_raw\": 1, \"post_mask_raw\": 2"

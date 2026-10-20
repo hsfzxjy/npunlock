@@ -58,6 +58,9 @@ typedef struct npunlock_tensor_routing_observation {
 
 typedef struct npunlock_invocation_routing_observation {
   uint32_t group_index;
+  uint64_t code_offset_raw;
+  uint32_t code_extent;
+  uint8_t code_sha256[32];
   uint32_t tile_candidate_raw;
   uint64_t parameter_base;
   uint64_t wait_mask_raw;
