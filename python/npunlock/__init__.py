@@ -20,6 +20,7 @@ from ._native import (
     InferenceOutput,
     InferenceResult,
     InferenceSession,
+    GraphComparison,
     IrCompileResult,
     NativeError,
     NativeLibraries,
@@ -42,6 +43,7 @@ __all__ = [
     "CustomMapping",
     "DType",
     "Graph",
+    "GraphComparison",
     "InferenceInput",
     "InferenceOutput",
     "InferenceResult",
@@ -64,6 +66,7 @@ __all__ = [
     "TensorSpec",
     "compile",
     "compile_kernel",
+    "compare_native_graphs",
     "configure",
     "constant",
     "custom",
@@ -698,6 +701,24 @@ def _native_blob_bytes(value: object) -> bytes:
     if not blob:
         raise ValueError("native graph blob must not be empty")
     return blob
+
+
+def compare_native_graphs(
+    baseline: bytes | bytearray | memoryview,
+    candidate: bytes | bytearray | memoryview,
+    *,
+    native_dir: str | Path | None = None,
+    libraries: NativeLibraries | None = None,
+) -> GraphComparison:
+    """Compare two validated native carriers without executing either graph.
+
+    The result is accepted only when exactly one ACT group's code changes while
+    all other inspected native contract observations remain equal. Acceptance
+    is differential evidence, not a symbolic source-node identity.
+    """
+
+    native = libraries or _default_native_libraries(native_dir)
+    return native.compare_graphs(_native_blob_bytes(baseline), _native_blob_bytes(candidate))
 
 
 def load_native(

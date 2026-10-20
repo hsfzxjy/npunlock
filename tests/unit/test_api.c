@@ -40,6 +40,10 @@ _Static_assert(PATCHBLOB_TENSOR_PRECISION_I16_V2 == 5u, "I16 tensor precision AB
 _Static_assert(PATCHBLOB_TENSOR_PRECISION_U8_V2 == 6u, "U8 tensor precision ABI changed");
 _Static_assert(PATCHBLOB_TENSOR_PRECISION_U16_V2 == 7u, "U16 tensor precision ABI changed");
 _Static_assert(PATCHBLOB_TENSOR_PRECISION_U32_V2 == 8u, "U32 tensor precision ABI changed");
+_Static_assert(PATCHBLOB_COMPARE_PARTIAL_GROUP_CODE_CHANGE == (1u << 6),
+               "comparison flag ABI changed");
+_Static_assert(sizeof(patchblob_comparison_result) == 72,
+               "patchblob comparison result ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&
@@ -64,6 +68,7 @@ int main(void) {
   patchblob_target target = {0};
   patchblob_result patch_result = {0};
   patchblob_discovery_result discovery_result = {0};
+  patchblob_comparison_result comparison_result = {0};
   graphinfer_options infer_options = {0};
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
@@ -142,6 +147,12 @@ int main(void) {
   CHECK(check_diagnostic(&discovery_result.diagnostic, "malformed_input"));
   patchblob_discovery_result_release(&discovery_result);
   patchblob_discovery_result_release(&discovery_result);
+
+  CHECK(patchblob_compare_graphs((npunlock_view){NULL, 1}, (npunlock_view){blob, sizeof(blob)},
+                                 &comparison_result) == NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&comparison_result.diagnostic, "invalid_argument"));
+  patchblob_comparison_result_release(&comparison_result);
+  patchblob_comparison_result_release(&comparison_result);
 
   infer_options.struct_size = sizeof(infer_options);
   infer_options.driver_index = GRAPHINFER_AUTO_INDEX;

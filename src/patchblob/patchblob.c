@@ -378,6 +378,61 @@ void patchblob_discovery_result_v2_release(patchblob_discovery_result_v2 *result
   memset(result, 0, sizeof(*result));
 }
 
+npunlock_status patchblob_compare_graphs(npunlock_view baseline_graph_blob,
+                                         npunlock_view candidate_graph_blob,
+                                         patchblob_comparison_result *result) {
+  npunlock_graph_routing_observations baseline = {0};
+  npunlock_graph_routing_observations candidate = {0};
+  npunlock_graph_routing_comparison comparison = {0};
+  npunlock_status status;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (!npunlock_view_is_valid(baseline_graph_blob) || baseline_graph_blob.size == 0u ||
+      !npunlock_view_is_valid(candidate_graph_blob) || candidate_graph_blob.size == 0u) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.compare",
+                                   "baseline and candidate graph views must be non-empty");
+  }
+  status = npunlock_inspect_graph_routing(baseline_graph_blob, &baseline, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
+  status = npunlock_inspect_graph_routing(candidate_graph_blob, &candidate, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
+  status = npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                       &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
+  result->mismatch_flags = comparison.mismatch_flags;
+  result->contract_stable = comparison.contract_stable ? 1u : 0u;
+  result->unique_changed_group = comparison.unique_changed_group ? 1u : 0u;
+  result->changed_group_indices = comparison.changed_group_indices;
+  result->changed_group_count = comparison.changed_group_count;
+  comparison.changed_group_indices = NULL;
+  comparison.changed_group_count = 0u;
+
+cleanup:
+  npunlock_graph_routing_observations_release(&baseline);
+  npunlock_graph_routing_observations_release(&candidate);
+  npunlock_graph_routing_comparison_release(&comparison);
+  return status;
+}
+
+void patchblob_comparison_result_release(patchblob_comparison_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->changed_group_indices);
+  npunlock_diagnostic_release(&result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
 void patchblob_result_release(patchblob_result *result) {
   if (result == NULL) {
     return;

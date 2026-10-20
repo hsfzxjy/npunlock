@@ -213,6 +213,18 @@ class _PatchResult(ctypes.Structure):
     ]
 
 
+class _PatchComparisonResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("mismatch_flags", ctypes.c_uint32),
+        ("contract_stable", ctypes.c_uint32),
+        ("unique_changed_group", ctypes.c_uint32),
+        ("changed_group_indices", ctypes.POINTER(ctypes.c_uint32)),
+        ("changed_group_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _InferOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -384,6 +396,33 @@ class IrCompileResult:
 class PatchResult:
     graph_blob: bytes
     report_json: bytes
+
+
+_GRAPH_COMPARISON_MISMATCH_NAMES = {
+    1 << 0: "structure",
+    1 << 1: "invocation_contract",
+    1 << 2: "output_routing",
+    1 << 3: "act_relations",
+    1 << 4: "dpu",
+    1 << 5: "act_dpu_relations",
+    1 << 6: "partial_group_code_change",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class GraphComparison:
+    mismatch_flags: int
+    changed_group_indices: tuple[int, ...]
+    contract_stable: bool
+    unique_changed_group: bool
+
+    @property
+    def accepted(self) -> bool:
+        return self.contract_stable and self.unique_changed_group
+
+    @property
+    def mismatch_names(self) -> tuple[str, ...]:
+        return tuple(name for flag, name in _GRAPH_COMPARISON_MISMATCH_NAMES.items() if self.mismatch_flags & flag)
 
 
 @dataclass(frozen=True, slots=True)
@@ -735,6 +774,13 @@ class NativeLibraries:
         ]
         self.patch.patchblob_discover_targets_v2.restype = ctypes.c_int
         self.patch.patchblob_discovery_result_v2_release.argtypes = [ctypes.POINTER(_PatchDiscoveryResultV2)]
+        self.patch.patchblob_compare_graphs.argtypes = [
+            _View,
+            _View,
+            ctypes.POINTER(_PatchComparisonResult),
+        ]
+        self.patch.patchblob_compare_graphs.restype = ctypes.c_int
+        self.patch.patchblob_comparison_result_release.argtypes = [ctypes.POINTER(_PatchComparisonResult)]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -1125,6 +1171,29 @@ class NativeLibraries:
             return tuple(tuple(group) for group in groups)
         finally:
             self.patch.patchblob_discovery_result_v2_release(ctypes.byref(result))
+
+    def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> GraphComparison:
+        if not isinstance(baseline_graph_blob, bytes) or not baseline_graph_blob:
+            raise ValueError("baseline graph blob must be non-empty bytes")
+        if not isinstance(candidate_graph_blob, bytes) or not candidate_graph_blob:
+            raise ValueError("candidate graph blob must be non-empty bytes")
+        baseline_view, baseline_owner = _owned_view(baseline_graph_blob)
+        candidate_view, candidate_owner = _owned_view(candidate_graph_blob)
+        _ = (baseline_owner, candidate_owner)
+        result = _PatchComparisonResult()
+        result.struct_size = ctypes.sizeof(_PatchComparisonResult)
+        status = self.patch.patchblob_compare_graphs(baseline_view, candidate_view, ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise("patchblob comparison", status, result.diagnostic)
+            return GraphComparison(
+                result.mismatch_flags,
+                tuple(result.changed_group_indices[index] for index in range(result.changed_group_count)),
+                bool(result.contract_stable),
+                bool(result.unique_changed_group),
+            )
+        finally:
+            self.patch.patchblob_comparison_result_release(ctypes.byref(result))
 
     def infer_graph(
         self,

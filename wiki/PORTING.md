@@ -107,6 +107,18 @@ the mismatch classes when this fails. An accepted comparison is useful
 differential evidence, but it still does not by itself prove a symbolic source
 identity or authorize automatic patch selection.
 
+Python callers can apply the same in-memory comparison without writing either
+blob to disk:
+
+```python
+comparison = npu.compare_native_graphs(baseline_blob, candidate_blob)
+print(comparison.accepted, comparison.changed_group_indices)
+print(comparison.mismatch_names)
+```
+
+The native C equivalent is `patchblob_compare_graphs()`. Both APIs apply the
+same fail-closed parser and comparison rules as `npunlock-inspect`.
+
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for

@@ -697,6 +697,7 @@ class FakeNative:
         self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 32, 64),),)
         self.infer_dtype = "f16"
         self.sessions: list[FakeInferenceSession] = []
+        self.comparison = npu.GraphComparison(0, (1,), True, True)
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.compile_ir_count += 1
@@ -727,6 +728,10 @@ class FakeNative:
     def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[npu.PatchTargetV2, ...], ...]:
         self.discovery_v2_blob = graph_blob
         return self.discovery_groups_v2
+
+    def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> npu.GraphComparison:
+        self.compare_args = (baseline_graph_blob, candidate_graph_blob)
+        return self.comparison
 
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
@@ -2726,6 +2731,32 @@ class CompilationFlowTests(unittest.TestCase):
             npu.load_native("graph.blob", graph=graph, libraries=fake)  # type: ignore[arg-type]
         with self.assertRaisesRegex(TypeError, "requires a Graph"):
             npu.load_native(b"native", graph=object(), libraries=fake)  # type: ignore[arg-type]
+
+    def test_compare_native_graphs(self) -> None:
+        fake = FakeNative()
+
+        comparison = npu.compare_native_graphs(
+            bytearray(b"baseline"), memoryview(b"candidate"), libraries=fake  # type: ignore[arg-type]
+        )
+
+        self.assertIs(comparison, fake.comparison)
+        self.assertEqual(fake.compare_args, (b"baseline", b"candidate"))
+        self.assertTrue(comparison.accepted)
+        self.assertEqual(comparison.changed_group_indices, (1,))
+        self.assertEqual(comparison.mismatch_names, ())
+
+    def test_graph_comparison_rejection_reasons(self) -> None:
+        comparison = npu.GraphComparison((1 << 2) | (1 << 6), (0, 1), False, False)
+
+        self.assertFalse(comparison.accepted)
+        self.assertEqual(comparison.mismatch_names, ("output_routing", "partial_group_code_change"))
+
+    def test_compare_native_graphs_validates_blobs(self) -> None:
+        fake = FakeNative()
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            npu.compare_native_graphs(b"", b"candidate", libraries=fake)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(TypeError, "bytes-like"):
+            npu.compare_native_graphs(b"baseline", "candidate", libraries=fake)  # type: ignore[arg-type]
 
     def test_program_bundle_round_trip_needs_no_symbolic_graph(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

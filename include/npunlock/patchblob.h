@@ -129,6 +129,33 @@ typedef struct patchblob_result {
   npunlock_diagnostic diagnostic;
 } patchblob_result;
 
+typedef enum patchblob_comparison_flags {
+  PATCHBLOB_COMPARE_STRUCTURE_CHANGED = 1u << 0,
+  PATCHBLOB_COMPARE_INVOCATION_CONTRACT_CHANGED = 1u << 1,
+  PATCHBLOB_COMPARE_OUTPUT_ROUTING_CHANGED = 1u << 2,
+  PATCHBLOB_COMPARE_ACT_RELATIONS_CHANGED = 1u << 3,
+  PATCHBLOB_COMPARE_DPU_CHANGED = 1u << 4,
+  PATCHBLOB_COMPARE_ACT_DPU_RELATIONS_CHANGED = 1u << 5,
+  PATCHBLOB_COMPARE_PARTIAL_GROUP_CODE_CHANGE = 1u << 6
+} patchblob_comparison_flags;
+
+/*
+ * Differential evidence for two compiler-produced native graph blobs.
+ * contract_stable is true only when all inspected non-code observations are
+ * equal. unique_changed_group additionally requires exactly one complete ACT
+ * group to have changed code. This result does not establish a symbolic
+ * source-node identity and is not a patch selector.
+ */
+typedef struct patchblob_comparison_result {
+  uint32_t struct_size;
+  uint32_t mismatch_flags;
+  uint32_t contract_stable;
+  uint32_t unique_changed_group;
+  uint32_t *changed_group_indices;
+  size_t changed_group_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_comparison_result;
+
 NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
@@ -143,6 +170,11 @@ NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_discover_targets_v2(npunlock_view graph_blob, patchblob_discovery_result_v2 *result);
 NPUNLOCK_PATCHBLOB_API void
 patchblob_discovery_result_v2_release(patchblob_discovery_result_v2 *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status
+patchblob_compare_graphs(npunlock_view baseline_graph_blob, npunlock_view candidate_graph_blob,
+                         patchblob_comparison_result *result);
+NPUNLOCK_PATCHBLOB_API void
+patchblob_comparison_result_release(patchblob_comparison_result *result);
 
 #ifdef __cplusplus
 }

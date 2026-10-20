@@ -127,6 +127,16 @@ class CustomMapping:
     group_indices: tuple[int, ...]
     reason: str
 
+class GraphComparison:
+    mismatch_flags: int
+    changed_group_indices: tuple[int, ...]
+    contract_stable: bool
+    unique_changed_group: bool
+    @property
+    def accepted(self) -> bool: ...
+    @property
+    def mismatch_names(self) -> tuple[str, ...]: ...
+
 class InferenceInput:
     selector: int | str
     data: bytes
@@ -164,6 +174,7 @@ class SerializedIR:
 class NativeLibraries:
     def __init__(self, directory: str | PathLike[str] | None = ...) -> None: ...
     def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[PatchTargetV2, ...], ...]: ...
+    def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> GraphComparison: ...
     def query_ir_provenance(
         self,
         *,
@@ -349,6 +360,13 @@ def compile(
     movi_worker: str | None = ...,
     libraries: Any = ...,
 ) -> Program: ...
+def compare_native_graphs(
+    baseline: bytes | bytearray | memoryview,
+    candidate: bytes | bytearray | memoryview,
+    *,
+    native_dir: str | PathLike[str] | None = ...,
+    libraries: Any = ...,
+) -> GraphComparison: ...
 def load_native(
     blob: bytes | bytearray | memoryview,
     *,
