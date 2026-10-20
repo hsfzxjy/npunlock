@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-20:** an intermediate ACT group's outputs can now be proven to form an exact scheduled DMA fan-in through DDR, exposing multi-tile data movement without claiming an unproven DPU edge. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#66-exact-act-to-dma-fan-in-coverage).
+> **Latest breakthrough — 2026-10-20:** a multi-tile ACT group's outputs can now be followed through an exact DMA fan-in to a unique per-tile DPU input set, with tile translations derived from the graph itself. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#67-derived-multicast-to-dpu-input-coverage).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,

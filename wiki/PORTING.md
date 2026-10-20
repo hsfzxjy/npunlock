@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 19 JSON report records the blob size and SHA-256 plus every
+The version 20 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -131,6 +131,17 @@ source task, their non-overlapping DDR destinations have one exact interval
 union, and one uniquely scheduled DDR-to-multicast-CMX task consumes that
 union. The result proves the bounded native data-movement chain; it does not
 infer what consumes the multicast destination or identify a source node.
+
+Schema v20 adds `act_dma_dpu_input_candidates` and
+`act_dma_dpu_input_cover_observations`. For an exact fan-in group with one ACT
+invocation per observed tile, the inspector derives each tile's CMX
+translation from the corresponding ACT source placement relative to tile 0.
+It applies that observed translation to the multicast destination and requires
+one same-cluster DPU input with the translated address, equal byte span, and a
+direct fan-in-post/DPU-wait barrier dependency. A cover is exact only when all
+tiles form a one-to-one mapping. This is a native address-and-schedule proof;
+it still does not identify the source-level operation or authorize automatic
+patch selection.
 
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:

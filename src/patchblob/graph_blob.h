@@ -149,6 +149,8 @@ typedef struct npunlock_act_dma_fanin_observation {
   uint32_t fanin_dma_engine_index;
   uint32_t ddr_symbol_table_index;
   uint32_t ddr_symbol_raw;
+  uint32_t cmx_destination_symbol_table_index;
+  uint32_t cmx_destination_symbol_raw;
   int64_t ddr_source_addend_raw;
   uint64_t span_bytes;
   int64_t cmx_destination_addend_raw;
@@ -158,6 +160,38 @@ typedef struct npunlock_act_dma_fanin_observation {
   uint32_t unresolved_flags;
   bool exact_cover;
 } npunlock_act_dma_fanin_observation;
+
+typedef struct npunlock_act_dma_dpu_input_candidate_observation {
+  uint32_t act_group_index;
+  uint32_t tile_candidate_raw;
+  uint32_t act_invocation_index;
+  uint32_t dpu_section_index;
+  uint32_t dpu_invariant_index;
+  uint32_t dpu_field_mask_raw;
+  uint32_t dpu_candidate_count;
+  uint32_t cmx_symbol_raw;
+  int64_t fanin_destination_addend_raw;
+  int64_t tile_translation_candidate;
+  int64_t translated_destination_addend_raw;
+  int64_t dpu_input_addend_raw;
+  uint64_t span_bytes;
+  uint64_t barrier_intersection_raw;
+} npunlock_act_dma_dpu_input_candidate_observation;
+
+#define NPUNLOCK_ACT_DMA_DPU_FANIN_UNRESOLVED UINT32_C(1)
+#define NPUNLOCK_ACT_DMA_DPU_TILE_SET_UNRESOLVED UINT32_C(2)
+#define NPUNLOCK_ACT_DMA_DPU_INPUT_AMBIGUOUS UINT32_C(4)
+#define NPUNLOCK_ACT_DMA_DPU_INPUT_REUSED UINT32_C(8)
+
+typedef struct npunlock_act_dma_dpu_input_cover_observation {
+  uint32_t act_group_index;
+  uint32_t tile_count_expected;
+  uint32_t invocation_count;
+  uint32_t translated_tile_count;
+  uint32_t matched_dpu_input_count;
+  uint32_t unresolved_flags;
+  bool exact_cover;
+} npunlock_act_dma_dpu_input_cover_observation;
 
 typedef struct npunlock_network_output_route_observation {
   uint32_t dma_section_index;
@@ -353,6 +387,10 @@ typedef struct npunlock_graph_routing_observations {
   size_t act_dma_source_candidate_count;
   npunlock_act_dma_fanin_observation *act_dma_fanin_observations;
   size_t act_dma_fanin_observation_count;
+  npunlock_act_dma_dpu_input_candidate_observation *act_dma_dpu_input_candidates;
+  size_t act_dma_dpu_input_candidate_count;
+  npunlock_act_dma_dpu_input_cover_observation *act_dma_dpu_input_covers;
+  size_t act_dma_dpu_input_cover_count;
   npunlock_network_output_route_observation *network_output_routes;
   size_t network_output_route_count;
   npunlock_act_output_slice_candidate_observation *act_output_slice_candidates;
@@ -386,6 +424,8 @@ typedef struct npunlock_graph_routing_observations {
 #define NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE PATCHBLOB_COMPARE_PARTIAL_GROUP_CODE_CHANGE
 #define NPUNLOCK_COMPARE_DMA_CHANGED PATCHBLOB_COMPARE_DMA_CHANGED
 #define NPUNLOCK_COMPARE_ACT_DMA_RELATIONS_CHANGED PATCHBLOB_COMPARE_ACT_DMA_RELATIONS_CHANGED
+#define NPUNLOCK_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED                                             \
+  PATCHBLOB_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED
 
 typedef struct npunlock_graph_routing_comparison {
   uint32_t mismatch_flags;
@@ -434,6 +474,15 @@ npunlock_status npunlock_derive_act_dma_fanin_observations(
     const npunlock_act_dma_source_candidate_observation *source_candidates,
     size_t source_candidate_count, npunlock_act_dma_fanin_observation **observations,
     size_t *observation_count, npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_derive_act_dma_dpu_input_observations(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, uint32_t tile_count,
+    const npunlock_act_dma_source_candidate_observation *source_candidates,
+    size_t source_candidate_count, const npunlock_act_dma_fanin_observation *fanin_observations,
+    size_t fanin_observation_count, const npunlock_dpu_invariant_observation *dpu_invariants,
+    size_t dpu_invariant_count, npunlock_act_dma_dpu_input_candidate_observation **candidates,
+    size_t *candidate_count, npunlock_act_dma_dpu_input_cover_observation **covers,
+    size_t *cover_count, npunlock_diagnostic *diagnostic);
 npunlock_status npunlock_derive_act_consumer_cover_observations(
     const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
     size_t group_count, const npunlock_act_edge_candidate_observation *candidates,

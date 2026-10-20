@@ -185,8 +185,17 @@ and byte span, plus a direct post/wait barrier intersection. Multiple such DDR
 destinations form an exact fan-in only when they are unique, non-overlapping,
 have one interval union, and one uniquely scheduled contiguous transfer reads
 that complete union into the observed NPU3720 multicast-CMX form. This proves
-the bytes and schedule through the DMA chain; it does not prove which DPU or
-source operation consumes the destination.
+the bytes and schedule through the DMA chain.
+
+For the narrower one-ACT-invocation-per-tile case, the inspector can continue
+this proof to DPU inputs without assuming a fixed tile stride. It subtracts
+the tile-0 ACT source address from each tile's corresponding ACT source
+address, applies that observed translation to the multicast destination, and
+requires one DPU input on the same cluster with the translated address, equal
+span, and a direct barrier dependency. Every observed tile must match exactly
+once. This proves a native per-tile ACT-to-DMA-to-DPU input relationship; it
+does not identify a source operation, establish a general multicast encoding,
+or make the group an automatic patch target.
 
 Observed ACT relocation tables use 24-byte ELF64 `SHT_RELA` entries, flags
 `0x40`, alignment 8, and names derived from their target section, such as

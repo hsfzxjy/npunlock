@@ -45,6 +45,8 @@ _Static_assert(PATCHBLOB_COMPARE_PARTIAL_GROUP_CODE_CHANGE == (1u << 6),
 _Static_assert(PATCHBLOB_COMPARE_DMA_CHANGED == (1u << 7), "comparison flag ABI changed");
 _Static_assert(PATCHBLOB_COMPARE_ACT_DMA_RELATIONS_CHANGED == (1u << 8),
                "comparison flag ABI changed");
+_Static_assert(PATCHBLOB_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED == (1u << 9),
+               "comparison flag ABI changed");
 _Static_assert(sizeof(patchblob_comparison_result) == 72,
                "patchblob comparison result ABI changed");
 _Static_assert(PATCHBLOB_GROUP_INVOCATION_UNCLASSIFIED == (1u << 4),

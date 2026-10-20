@@ -161,7 +161,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v19\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v20\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -490,26 +490,74 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   for (index = 0; index < routing->act_dma_fanin_observation_count; ++index) {
     const npunlock_act_dma_fanin_observation *observation =
         &routing->act_dma_fanin_observations[index];
-    if (fprintf(
-            stream,
-            "%s    {\"act_group_index\": %u, \"invocation_count\": %u, "
-            "\"matched_invocation_count\": %u, \"source_dma_task_count\": %u, "
-            "\"fanin_candidate_count\": %u, \"fanin_dma_section_index\": %u, "
-            "\"fanin_dma_task_index\": %u, \"fanin_dma_engine_index\": %u, "
-            "\"ddr_symbol_table_index\": %u, \"ddr_symbol_raw\": %u, "
-            "\"ddr_source_addend_raw\": %" PRId64 ", \"span_bytes\": %" PRIu64
-            ", \"cmx_destination_addend_raw\": %" PRId64 ", \"cmx_destination_value_raw\": %" PRIu64
-            ", \"fanin_wait_mask_raw\": %" PRIu64 ", \"fanin_post_mask_raw\": %" PRIu64
-            ", \"exact_cover\": %s, \"unresolved_flags\": %u}",
-            index == 0 ? "" : ",\n", observation->act_group_index, observation->invocation_count,
-            observation->matched_invocation_count, observation->source_dma_task_count,
-            observation->fanin_candidate_count, observation->fanin_dma_section_index,
-            observation->fanin_dma_task_index, observation->fanin_dma_engine_index,
-            observation->ddr_symbol_table_index, observation->ddr_symbol_raw,
-            observation->ddr_source_addend_raw, observation->span_bytes,
-            observation->cmx_destination_addend_raw, observation->cmx_destination_value_raw,
-            observation->fanin_wait_mask_raw, observation->fanin_post_mask_raw,
-            observation->exact_cover ? "true" : "false", observation->unresolved_flags) < 0) {
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"invocation_count\": %u, "
+                "\"matched_invocation_count\": %u, \"source_dma_task_count\": %u, "
+                "\"fanin_candidate_count\": %u, \"fanin_dma_section_index\": %u, "
+                "\"fanin_dma_task_index\": %u, \"fanin_dma_engine_index\": %u, "
+                "\"ddr_symbol_table_index\": %u, \"ddr_symbol_raw\": %u, "
+                "\"cmx_destination_symbol_table_index\": %u, "
+                "\"cmx_destination_symbol_raw\": %u, "
+                "\"ddr_source_addend_raw\": %" PRId64 ", \"span_bytes\": %" PRIu64
+                ", \"cmx_destination_addend_raw\": %" PRId64
+                ", \"cmx_destination_value_raw\": %" PRIu64 ", \"fanin_wait_mask_raw\": %" PRIu64
+                ", \"fanin_post_mask_raw\": %" PRIu64
+                ", \"exact_cover\": %s, \"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", observation->act_group_index,
+                observation->invocation_count, observation->matched_invocation_count,
+                observation->source_dma_task_count, observation->fanin_candidate_count,
+                observation->fanin_dma_section_index, observation->fanin_dma_task_index,
+                observation->fanin_dma_engine_index, observation->ddr_symbol_table_index,
+                observation->ddr_symbol_raw, observation->cmx_destination_symbol_table_index,
+                observation->cmx_destination_symbol_raw, observation->ddr_source_addend_raw,
+                observation->span_bytes, observation->cmx_destination_addend_raw,
+                observation->cmx_destination_value_raw, observation->fanin_wait_mask_raw,
+                observation->fanin_post_mask_raw, observation->exact_cover ? "true" : "false",
+                observation->unresolved_flags) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"act_dma_dpu_input_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dma_dpu_input_candidate_count; ++index) {
+    const npunlock_act_dma_dpu_input_candidate_observation *candidate =
+        &routing->act_dma_dpu_input_candidates[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"tile_candidate_raw\": %u, "
+                "\"act_invocation_index\": %u, \"dpu_section_index\": %u, "
+                "\"dpu_invariant_index\": %u, \"dpu_field_mask_raw\": %u, "
+                "\"dpu_candidate_count\": %u, \"match_observation\": {"
+                "\"cmx_symbol_raw\": %u, \"fanin_destination_addend_raw\": %" PRId64
+                ", \"tile_translation_candidate\": %" PRId64
+                ", \"translated_destination_addend_raw\": %" PRId64
+                ", \"dpu_input_addend_raw\": %" PRId64 ", \"span_bytes\": %" PRIu64
+                ", \"barrier_intersection_raw\": %" PRIu64 "}}",
+                index == 0 ? "" : ",\n", candidate->act_group_index, candidate->tile_candidate_raw,
+                candidate->act_invocation_index, candidate->dpu_section_index,
+                candidate->dpu_invariant_index, candidate->dpu_field_mask_raw,
+                candidate->dpu_candidate_count, candidate->cmx_symbol_raw,
+                candidate->fanin_destination_addend_raw, candidate->tile_translation_candidate,
+                candidate->translated_destination_addend_raw, candidate->dpu_input_addend_raw,
+                candidate->span_bytes, candidate->barrier_intersection_raw) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"act_dma_dpu_input_cover_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dma_dpu_input_cover_count; ++index) {
+    const npunlock_act_dma_dpu_input_cover_observation *cover =
+        &routing->act_dma_dpu_input_covers[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"tile_count_expected\": %u, "
+                "\"invocation_count\": %u, \"translated_tile_count\": %u, "
+                "\"matched_dpu_input_count\": %u, \"exact_cover\": %s, "
+                "\"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", cover->act_group_index, cover->tile_count_expected,
+                cover->invocation_count, cover->translated_tile_count,
+                cover->matched_dpu_input_count, cover->exact_cover ? "true" : "false",
+                cover->unresolved_flags) < 0) {
       return 0;
     }
   }
@@ -631,7 +679,11 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "fields remain raw observations; ACT/DMA source candidates require an exact "
                  "CMX interval and direct schedule match; fan-in observations additionally "
                  "require unique source tasks, an exact non-overlapping DDR union, and one "
-                 "scheduled DDR-to-multicast-CMX task, but do not establish DPU ownership; ACT "
+                 "scheduled DDR-to-multicast-CMX task; ACT/DMA/DPU input covers additionally "
+                 "derive per-tile CMX translations from ACT source placements and require a "
+                 "unique same-cluster DPU input with the translated address, equal span, and "
+                 "direct schedule dependency; fan-in observations alone do not establish DPU "
+                 "ownership; ACT "
                  "edge candidates are exact "
                  "interval/ACT-schedule "
                  "correlations, including bounded transitive wait/post paths; ACT/DPU candidates "
@@ -668,6 +720,7 @@ static int write_mismatch_names(FILE *stream, uint32_t flags) {
       {NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE, "partial_group_code_change"},
       {NPUNLOCK_COMPARE_DMA_CHANGED, "dma"},
       {NPUNLOCK_COMPARE_ACT_DMA_RELATIONS_CHANGED, "act_dma_relations"},
+      {NPUNLOCK_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED, "act_dma_dpu_relations"},
   };
   bool first = true;
   size_t index;

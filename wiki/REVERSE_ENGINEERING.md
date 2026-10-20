@@ -2033,10 +2033,35 @@ or a missing direct barrier dependency leaves the observation unresolved.
 Strict graph comparison also reports derived-chain changes separately as
 `act_dma_relations`.
 
-This proves a complete native ACT-to-DMA fan-in for this group. It does not yet
-decode the multicast target set, prove which DPU inputs receive the 64 bytes,
-or make the group eligible for automatic patch selection. That final
-DMA-to-DPU ownership proof remains separate.
+This proves a complete native ACT-to-DMA fan-in for this group. The fan-in
+record by itself does not decode the multicast target set, prove which DPU
+inputs receive the 64 bytes, or make the group eligible for automatic patch
+selection. The next result adds a separate DMA-to-DPU input proof.
+
+## 67. Derived multicast-to-DPU input coverage
+
+On 2026-10-20, the section 66 fan-in was correlated with DPU inputs without
+hard-coding the observed `0x200000` tile stride. The two source ACT invocations
+belong to tile candidates 0 and 1 and use CMX source addends 192 and 2,097,344.
+Using tile 0 as the reference derives translations 0 and 2,097,152 directly
+from those placements.
+
+Applying the translations to the fan-in's multicast-CMX destination addend
+128 produces 128 and 2,097,280. Those values uniquely match the 64-byte inputs
+of DPU invariants `(section 14, invariant 0, cluster 0)` and `(section 14,
+invariant 1, cluster 1)`. The fan-in posts barrier `0x80`, and both DPU
+invariants wait on `0x80`. The resulting two-tile cover is therefore exact:
+every tile has one translated destination, one same-cluster DPU input, the
+same byte span, and a direct scheduling dependency.
+
+The implementation reports zero or multiple DPU matches, duplicate tiles,
+reused DPU inputs, a missing tile-0 reference, span differences, arithmetic
+overflow, and missing barriers as unresolved. It currently requires exactly
+one ACT invocation for every observed tile. This is intentionally narrower
+than interpreting the raw multicast encoding, and it does not claim a stable
+tile stride, a source-level semantic edge, or automatic patch eligibility.
+Strict comparison names changes in this derived proof separately as
+`act_dma_dpu_relations`.
 
 ## What remains deliberately unresolved
 
