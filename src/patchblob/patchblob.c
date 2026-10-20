@@ -512,6 +512,143 @@ void patchblob_group_completeness_result_release(patchblob_group_completeness_re
   memset(result, 0, sizeof(*result));
 }
 
+static npunlock_status group_coverage_internal_error(patchblob_group_coverage_result *result,
+                                                     const char *message) {
+  return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                 "patchblob.inspect_group_coverage", message);
+}
+
+npunlock_status patchblob_inspect_group_coverage(npunlock_view graph_blob,
+                                                 patchblob_group_coverage_result *result) {
+  npunlock_graph_routing_observations observations = {0};
+  patchblob_group_coverage *groups = NULL;
+  size_t allocation_size;
+  size_t index;
+  npunlock_status status;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (!npunlock_view_is_valid(graph_blob) || graph_blob.size == 0u) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.inspect_group_coverage",
+                                   "graph blob view must be non-empty");
+  }
+  status = npunlock_inspect_graph_routing(graph_blob, &observations, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
+  if (observations.group_count > UINT32_MAX || observations.invocation_count > UINT32_MAX ||
+      !npunlock_checked_mul_size(observations.group_count, sizeof(*groups), &allocation_size)) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OVERFLOW,
+                                     "patchblob.inspect_group_coverage",
+                                     "group-coverage result allocation overflows");
+    goto cleanup;
+  }
+  groups = (patchblob_group_coverage *)calloc(1u, allocation_size);
+  if (groups == NULL && observations.group_count != 0u) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.inspect_group_coverage",
+                                     "could not allocate group-coverage results");
+    goto cleanup;
+  }
+  for (index = 0; index < observations.group_count; ++index) {
+    groups[index].struct_size = (uint32_t)sizeof(groups[index]);
+    groups[index].group_index = (uint32_t)index;
+    groups[index].direct_output_state = PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED;
+    groups[index].act_consumer_state = PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED;
+    groups[index].dpu_consumer_state = PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED;
+  }
+  for (index = 0; index < observations.invocation_count; ++index) {
+    uint32_t group_index = observations.invocations[index].group_index;
+    if (group_index >= observations.group_count ||
+        groups[group_index].invocation_count == UINT32_MAX) {
+      status = group_coverage_internal_error(result, "internal invocation group is out of range");
+      goto cleanup;
+    }
+    ++groups[group_index].invocation_count;
+  }
+  for (index = 0; index < observations.act_group_completeness_count; ++index) {
+    const npunlock_act_group_completeness_observation *source =
+        &observations.act_group_completeness[index];
+    patchblob_group_coverage *destination;
+    if (source->act_group_index >= observations.group_count) {
+      status = group_coverage_internal_error(result, "direct-output group index is out of range");
+      goto cleanup;
+    }
+    destination = &groups[source->act_group_index];
+    if (destination->direct_output_state != PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED ||
+        destination->invocation_count != source->invocation_count) {
+      status = group_coverage_internal_error(result, "direct-output coverage is inconsistent");
+      goto cleanup;
+    }
+    destination->direct_output_state =
+        source->complete ? PATCHBLOB_GROUP_COVERAGE_COMPLETE : PATCHBLOB_GROUP_COVERAGE_INCOMPLETE;
+    destination->direct_output_unresolved_flags = source->unresolved_flags;
+    destination->direct_routed_invocation_count = source->routed_invocation_count;
+    destination->direct_replica_invocation_count = source->replica_invocation_count;
+  }
+  for (index = 0; index < observations.act_consumer_cover_count; ++index) {
+    const npunlock_act_consumer_cover_observation *source =
+        &observations.act_consumer_covers[index];
+    patchblob_group_coverage *destination;
+    if (source->producer_group_index >= observations.group_count) {
+      status = group_coverage_internal_error(result, "ACT-consumer group index is out of range");
+      goto cleanup;
+    }
+    destination = &groups[source->producer_group_index];
+    if (destination->act_consumer_state != PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED ||
+        destination->invocation_count != source->producer_invocation_count) {
+      status = group_coverage_internal_error(result, "ACT-consumer coverage is inconsistent");
+      goto cleanup;
+    }
+    destination->act_consumer_state = source->exact_cover ? PATCHBLOB_GROUP_COVERAGE_COMPLETE
+                                                          : PATCHBLOB_GROUP_COVERAGE_INCOMPLETE;
+    destination->act_consumer_unresolved_flags = source->unresolved_flags;
+    destination->act_matched_invocation_count = source->matched_producer_invocation_count;
+    destination->act_consumer_group_count = source->consumer_group_count;
+    destination->act_consumer_input_count = source->consumer_input_count;
+  }
+  for (index = 0; index < observations.act_dpu_output_cover_count; ++index) {
+    const npunlock_act_dpu_output_cover_observation *source =
+        &observations.act_dpu_output_covers[index];
+    patchblob_group_coverage *destination;
+    if (source->act_group_index >= observations.group_count) {
+      status = group_coverage_internal_error(result, "DPU-consumer group index is out of range");
+      goto cleanup;
+    }
+    destination = &groups[source->act_group_index];
+    if (destination->dpu_consumer_state != PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED ||
+        destination->invocation_count != source->invocation_count) {
+      status = group_coverage_internal_error(result, "DPU-consumer coverage is inconsistent");
+      goto cleanup;
+    }
+    destination->dpu_consumer_state = source->exact_cover ? PATCHBLOB_GROUP_COVERAGE_COMPLETE
+                                                          : PATCHBLOB_GROUP_COVERAGE_INCOMPLETE;
+    destination->dpu_consumer_unresolved_flags = source->unresolved_flags;
+    destination->dpu_matched_invocation_count = source->matched_invocation_count;
+    destination->dpu_input_count = source->dpu_input_count;
+  }
+  result->groups = groups;
+  result->group_count = observations.group_count;
+  groups = NULL;
+
+cleanup:
+  free(groups);
+  npunlock_graph_routing_observations_release(&observations);
+  return status;
+}
+
+void patchblob_group_coverage_result_release(patchblob_group_coverage_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->groups);
+  npunlock_diagnostic_release(&result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
 void patchblob_result_release(patchblob_result *result) {
   if (result == NULL) {
     return;

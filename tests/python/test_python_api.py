@@ -728,6 +728,25 @@ class FakeNative:
         self.comparison = npu.GraphComparison(0, (1,), True, True)
         self.comparisons: list[npu.GraphComparison] = []
         self.completeness = (npu.ActGroupCompleteness(0, "complete", 1, 2, 2, 0, 0, 0),)
+        self.coverage = (
+            npu.ActGroupCoverage(
+                0,
+                2,
+                "not_observed",
+                "complete",
+                "not_observed",
+                0,
+                0,
+                0,
+                0,
+                0,
+                2,
+                1,
+                2,
+                0,
+                0,
+            ),
+        )
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.compile_ir_count += 1
@@ -768,6 +787,10 @@ class FakeNative:
     def inspect_group_completeness(self, graph_blob: bytes) -> tuple[npu.ActGroupCompleteness, ...]:
         self.completeness_blob = graph_blob
         return self.completeness
+
+    def inspect_group_coverage(self, graph_blob: bytes) -> tuple[npu.ActGroupCoverage, ...]:
+        self.coverage_blob = graph_blob
+        return self.coverage
 
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
@@ -1081,6 +1104,26 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertTrue(completeness[0].observed)
         self.assertTrue(completeness[0].complete)
         self.assertEqual(completeness[0].unresolved_names, ())
+
+    def test_prepared_group_coverage_keeps_route_kinds_independent(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        coverage = prepared.inspect_group_coverage()
+
+        self.assertEqual(coverage, fake.coverage)
+        self.assertEqual(fake.coverage_blob, b"native")
+        self.assertEqual(coverage[0].observed_kinds, ("act_consumer",))
+        self.assertEqual(coverage[0].complete_kinds, ("act_consumer",))
+        self.assertEqual(coverage[0].direct_output_unresolved_names, ())
+        self.assertEqual(coverage[0].act_consumer_unresolved_names, ())
+        self.assertEqual(coverage[0].dpu_consumer_unresolved_names, ())
 
     def test_positional_mapping_rejects_dtype_mismatch(self) -> None:
         f32 = npu.input("f32", shape=(1, 32), dtype="f32")

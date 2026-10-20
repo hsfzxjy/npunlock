@@ -49,6 +49,8 @@ _Static_assert(PATCHBLOB_GROUP_INVOCATION_UNCLASSIFIED == (1u << 4),
 _Static_assert(sizeof(patchblob_group_completeness) == 36, "group-completeness record ABI changed");
 _Static_assert(sizeof(patchblob_group_completeness_result) == 64,
                "group-completeness result ABI changed");
+_Static_assert(sizeof(patchblob_group_coverage) == 64, "group-coverage record ABI changed");
+_Static_assert(sizeof(patchblob_group_coverage_result) == 64, "group-coverage result ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&
@@ -75,6 +77,7 @@ int main(void) {
   patchblob_discovery_result discovery_result = {0};
   patchblob_comparison_result comparison_result = {0};
   patchblob_group_completeness_result completeness_result = {0};
+  patchblob_group_coverage_result coverage_result = {0};
   graphinfer_options infer_options = {0};
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
@@ -165,6 +168,12 @@ int main(void) {
   CHECK(check_diagnostic(&completeness_result.diagnostic, "invalid_argument"));
   patchblob_group_completeness_result_release(&completeness_result);
   patchblob_group_completeness_result_release(&completeness_result);
+
+  CHECK(patchblob_inspect_group_coverage((npunlock_view){NULL, 1}, &coverage_result) ==
+        NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&coverage_result.diagnostic, "invalid_argument"));
+  patchblob_group_coverage_result_release(&coverage_result);
+  patchblob_group_coverage_result_release(&coverage_result);
 
   infer_options.struct_size = sizeof(infer_options);
   infer_options.driver_index = GRAPHINFER_AUTO_INDEX;

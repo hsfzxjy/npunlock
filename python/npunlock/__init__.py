@@ -17,6 +17,7 @@ import numpy as np
 
 from ._native import (
     ActGroupCompleteness,
+    ActGroupCoverage,
     InferenceInput,
     InferenceOutput,
     InferenceResult,
@@ -40,6 +41,7 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 __all__ = [
     "ActGroup",
     "ActGroupCompleteness",
+    "ActGroupCoverage",
     "BuildPlan",
     "CarrierMappingEvidence",
     "CarrierProbe",
@@ -1870,6 +1872,11 @@ class PreparedGraph:
         """Return direct-output routing/replica completeness for every ACT group."""
 
         return self._libraries.inspect_group_completeness(self.ir_provenance.graph_blob)
+
+    def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]:
+        """Return independent direct-output, ACT-consumer, and DPU-consumer evidence."""
+
+        return self._libraries.inspect_group_coverage(self.ir_provenance.graph_blob)
 
     def _normalize_binding(self, value: object) -> tuple[int, ...]:
         values: tuple[object, ...]

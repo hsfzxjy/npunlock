@@ -194,6 +194,44 @@ typedef struct patchblob_group_completeness_result {
   npunlock_diagnostic diagnostic;
 } patchblob_group_completeness_result;
 
+typedef enum patchblob_group_coverage_state {
+  PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED = 0u,
+  PATCHBLOB_GROUP_COVERAGE_INCOMPLETE = 1u,
+  PATCHBLOB_GROUP_COVERAGE_COMPLETE = 2u
+} patchblob_group_coverage_state;
+
+/*
+ * Independent native coverage evidence for every ACT group. Each route kind
+ * has its own state and unresolved flags; callers must not combine a COMPLETE
+ * state with source-label evidence implicitly. This record is diagnostic and
+ * is not a patch selector.
+ */
+typedef struct patchblob_group_coverage {
+  uint32_t struct_size;
+  uint32_t group_index;
+  uint32_t invocation_count;
+  uint32_t direct_output_state;
+  uint32_t act_consumer_state;
+  uint32_t dpu_consumer_state;
+  uint32_t direct_output_unresolved_flags;
+  uint32_t act_consumer_unresolved_flags;
+  uint32_t dpu_consumer_unresolved_flags;
+  uint32_t direct_routed_invocation_count;
+  uint32_t direct_replica_invocation_count;
+  uint32_t act_matched_invocation_count;
+  uint32_t act_consumer_group_count;
+  uint32_t act_consumer_input_count;
+  uint32_t dpu_matched_invocation_count;
+  uint32_t dpu_input_count;
+} patchblob_group_coverage;
+
+typedef struct patchblob_group_coverage_result {
+  uint32_t struct_size;
+  patchblob_group_coverage *groups;
+  size_t group_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_group_coverage_result;
+
 NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
@@ -217,6 +255,10 @@ NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_group_completeness(
     npunlock_view graph_blob, patchblob_group_completeness_result *result);
 NPUNLOCK_PATCHBLOB_API void
 patchblob_group_completeness_result_release(patchblob_group_completeness_result *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status
+patchblob_inspect_group_coverage(npunlock_view graph_blob, patchblob_group_coverage_result *result);
+NPUNLOCK_PATCHBLOB_API void
+patchblob_group_coverage_result_release(patchblob_group_coverage_result *result);
 
 #ifdef __cplusplus
 }

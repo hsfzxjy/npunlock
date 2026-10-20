@@ -153,6 +153,33 @@ class ActGroupCompleteness:
     @property
     def unresolved_names(self) -> tuple[str, ...]: ...
 
+class ActGroupCoverage:
+    group_index: int
+    invocation_count: int
+    direct_output_state: str
+    act_consumer_state: str
+    dpu_consumer_state: str
+    direct_output_unresolved_flags: int
+    act_consumer_unresolved_flags: int
+    dpu_consumer_unresolved_flags: int
+    direct_routed_invocation_count: int
+    direct_replica_invocation_count: int
+    act_matched_invocation_count: int
+    act_consumer_group_count: int
+    act_consumer_input_count: int
+    dpu_matched_invocation_count: int
+    dpu_input_count: int
+    @property
+    def observed_kinds(self) -> tuple[str, ...]: ...
+    @property
+    def complete_kinds(self) -> tuple[str, ...]: ...
+    @property
+    def direct_output_unresolved_names(self) -> tuple[str, ...]: ...
+    @property
+    def act_consumer_unresolved_names(self) -> tuple[str, ...]: ...
+    @property
+    def dpu_consumer_unresolved_names(self) -> tuple[str, ...]: ...
+
 class CarrierProbe:
     output: Tensor
     baseline_carrier: str
@@ -219,6 +246,7 @@ class NativeLibraries:
     def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[PatchTargetV2, ...], ...]: ...
     def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> GraphComparison: ...
     def inspect_group_completeness(self, graph_blob: bytes) -> tuple[ActGroupCompleteness, ...]: ...
+    def inspect_group_coverage(self, graph_blob: bytes) -> tuple[ActGroupCoverage, ...]: ...
     def query_ir_provenance(
         self,
         *,
@@ -341,6 +369,7 @@ class PreparedGraph:
         ir_worker: str | None = ...,
     ) -> CarrierMappingEvidence: ...
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
+    def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]: ...
     def plan(
         self,
         *,

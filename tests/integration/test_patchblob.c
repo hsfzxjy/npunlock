@@ -442,6 +442,7 @@ int main(void) {
   patchblob_discovery_result discovery = {0};
   patchblob_discovery_result_v2 discovery_v2 = {0};
   patchblob_group_completeness_result completeness = {0};
+  patchblob_group_coverage_result coverage = {0};
   patchblob_result result = {0};
   uint32_t flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
                    PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
@@ -505,6 +506,35 @@ int main(void) {
   CHECK(completeness.groups[1].unresolved_invocation_count == 0);
   CHECK(completeness.groups[1].unresolved_flags == 0);
   patchblob_group_completeness_result_release(&completeness);
+
+  status = patchblob_inspect_group_coverage(
+      (npunlock_view){two_operation_carrier.data, two_operation_carrier.size}, &coverage);
+  if (status != NPUNLOCK_STATUS_OK && coverage.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)coverage.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(coverage.group_count == 2);
+  CHECK(coverage.groups[0].invocation_count == 4);
+  CHECK(coverage.groups[0].direct_output_state == PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED);
+  CHECK(coverage.groups[0].act_consumer_state == PATCHBLOB_GROUP_COVERAGE_COMPLETE);
+  CHECK(coverage.groups[0].dpu_consumer_state == PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED);
+  CHECK(coverage.groups[0].act_matched_invocation_count == 4);
+  CHECK(coverage.groups[0].act_consumer_group_count == 1);
+  CHECK(coverage.groups[0].act_consumer_input_count == 4);
+  CHECK(coverage.groups[1].direct_output_state == PATCHBLOB_GROUP_COVERAGE_COMPLETE);
+  CHECK(coverage.groups[1].act_consumer_state == PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED);
+  CHECK(coverage.groups[1].direct_routed_invocation_count == 2);
+  CHECK(coverage.groups[1].direct_replica_invocation_count == 2);
+  patchblob_group_coverage_result_release(&coverage);
+
+  status = patchblob_inspect_group_coverage(
+      (npunlock_view){convert_f32_to_f16.data, convert_f32_to_f16.size}, &coverage);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(coverage.group_count == 2);
+  CHECK(coverage.groups[0].dpu_consumer_state == PATCHBLOB_GROUP_COVERAGE_COMPLETE);
+  CHECK(coverage.groups[0].dpu_matched_invocation_count == 2);
+  CHECK(coverage.groups[0].dpu_input_count == 2);
+  patchblob_group_coverage_result_release(&coverage);
 
   CHECK(check_scalar_carrier((npunlock_view){scalar_u16_carrier.data, scalar_u16_carrier.size},
                              (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U16_V2,

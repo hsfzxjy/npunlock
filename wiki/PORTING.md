@@ -183,6 +183,20 @@ validated direct graph-output slice—commonly because it is intermediate—and
 must not be read as either success or failure. This result remains diagnostic;
 it does not make intermediate-group coverage claims.
 
+Use `prepared.inspect_group_coverage()` to see all three proof kinds together
+without merging their verdicts:
+
+```python
+for group in prepared.inspect_group_coverage():
+    print(group.group_index, group.observed_kinds, group.complete_kinds)
+```
+
+Every group reports independent `direct_output_state`, `act_consumer_state`,
+and `dpu_consumer_state` values plus route-specific counts and unresolved
+flags. The native C equivalent is `patchblob_inspect_group_coverage()`. Neither
+API chooses which evidence kind is sufficient for a binding, and neither
+combines coverage with a symbolic source label.
+
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for

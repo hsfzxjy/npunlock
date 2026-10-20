@@ -444,6 +444,19 @@ if evidence.group_index is not None:
 complete. The [porting guide](PORTING.md) defines the three states and their
 limits.
 
+To inspect intermediate groups without collapsing different kinds of evidence,
+use the broader read-only view:
+
+```python
+for group in prepared.inspect_group_coverage():
+    print(group.group_index, group.complete_kinds)
+```
+
+Each record keeps `direct_output_state`, `act_consumer_state`, and
+`dpu_consumer_state` independent. A complete ACT- or DPU-consumer relationship
+proves bounded native invocation coverage, not source identity, and is not an
+automatic patch binding.
+
 For several kernels, filter groups with independent fields and bind them all:
 
 ```python

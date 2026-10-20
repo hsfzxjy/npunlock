@@ -248,6 +248,36 @@ class _PatchGroupCompletenessResult(ctypes.Structure):
     ]
 
 
+class _PatchGroupCoverage(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("group_index", ctypes.c_uint32),
+        ("invocation_count", ctypes.c_uint32),
+        ("direct_output_state", ctypes.c_uint32),
+        ("act_consumer_state", ctypes.c_uint32),
+        ("dpu_consumer_state", ctypes.c_uint32),
+        ("direct_output_unresolved_flags", ctypes.c_uint32),
+        ("act_consumer_unresolved_flags", ctypes.c_uint32),
+        ("dpu_consumer_unresolved_flags", ctypes.c_uint32),
+        ("direct_routed_invocation_count", ctypes.c_uint32),
+        ("direct_replica_invocation_count", ctypes.c_uint32),
+        ("act_matched_invocation_count", ctypes.c_uint32),
+        ("act_consumer_group_count", ctypes.c_uint32),
+        ("act_consumer_input_count", ctypes.c_uint32),
+        ("dpu_matched_invocation_count", ctypes.c_uint32),
+        ("dpu_input_count", ctypes.c_uint32),
+    ]
+
+
+class _PatchGroupCoverageResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("groups", ctypes.POINTER(_PatchGroupCoverage)),
+        ("group_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _InferOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -479,6 +509,85 @@ class ActGroupCompleteness:
     @property
     def unresolved_names(self) -> tuple[str, ...]:
         return tuple(name for flag, name in _GROUP_COMPLETENESS_FLAG_NAMES.items() if self.unresolved_flags & flag)
+
+
+_ACT_CONSUMER_COVERAGE_FLAG_NAMES = {
+    1 << 0: "edge_ambiguous",
+    1 << 1: "producer_unclassified",
+    1 << 2: "input_duplicated",
+}
+
+_DPU_CONSUMER_COVERAGE_FLAG_NAMES = {
+    1 << 0: "consumer_ambiguous",
+    1 << 1: "invocation_unclassified",
+    1 << 2: "slice_overlap",
+    1 << 3: "union_mismatch",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ActGroupCoverage:
+    group_index: int
+    invocation_count: int
+    direct_output_state: str
+    act_consumer_state: str
+    dpu_consumer_state: str
+    direct_output_unresolved_flags: int
+    act_consumer_unresolved_flags: int
+    dpu_consumer_unresolved_flags: int
+    direct_routed_invocation_count: int
+    direct_replica_invocation_count: int
+    act_matched_invocation_count: int
+    act_consumer_group_count: int
+    act_consumer_input_count: int
+    dpu_matched_invocation_count: int
+    dpu_input_count: int
+
+    @property
+    def observed_kinds(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name, state in (
+                ("direct_output", self.direct_output_state),
+                ("act_consumer", self.act_consumer_state),
+                ("dpu_consumer", self.dpu_consumer_state),
+            )
+            if state != "not_observed"
+        )
+
+    @property
+    def complete_kinds(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name, state in (
+                ("direct_output", self.direct_output_state),
+                ("act_consumer", self.act_consumer_state),
+                ("dpu_consumer", self.dpu_consumer_state),
+            )
+            if state == "complete"
+        )
+
+    @property
+    def direct_output_unresolved_names(self) -> tuple[str, ...]:
+        return tuple(
+            name for flag, name in _GROUP_COMPLETENESS_FLAG_NAMES.items() if self.direct_output_unresolved_flags & flag
+        )
+
+    @property
+    def act_consumer_unresolved_names(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for flag, name in _ACT_CONSUMER_COVERAGE_FLAG_NAMES.items()
+            if self.act_consumer_unresolved_flags & flag
+        )
+
+    @property
+    def dpu_consumer_unresolved_names(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for flag, name in _DPU_CONSUMER_COVERAGE_FLAG_NAMES.items()
+            if self.dpu_consumer_unresolved_flags & flag
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -845,6 +954,12 @@ class NativeLibraries:
         self.patch.patchblob_group_completeness_result_release.argtypes = [
             ctypes.POINTER(_PatchGroupCompletenessResult)
         ]
+        self.patch.patchblob_inspect_group_coverage.argtypes = [
+            _View,
+            ctypes.POINTER(_PatchGroupCoverageResult),
+        ]
+        self.patch.patchblob_inspect_group_coverage.restype = ctypes.c_int
+        self.patch.patchblob_group_coverage_result_release.argtypes = [ctypes.POINTER(_PatchGroupCoverageResult)]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -1297,6 +1412,54 @@ class NativeLibraries:
             return tuple(groups)
         finally:
             self.patch.patchblob_group_completeness_result_release(ctypes.byref(result))
+
+    def inspect_group_coverage(self, graph_blob: bytes) -> tuple[ActGroupCoverage, ...]:
+        if not isinstance(graph_blob, bytes) or not graph_blob:
+            raise ValueError("graph blob must be non-empty bytes")
+        graph_view, graph_owner = _owned_view(graph_blob)
+        _ = graph_owner
+        result = _PatchGroupCoverageResult()
+        result.struct_size = ctypes.sizeof(_PatchGroupCoverageResult)
+        status = self.patch.patchblob_inspect_group_coverage(graph_view, ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise("patchblob group coverage", status, result.diagnostic)
+            states = {0: "not_observed", 1: "incomplete", 2: "complete"}
+            if result.group_count and not bool(result.groups):
+                raise RuntimeError("patchblob returned a null group-coverage array")
+            groups: list[ActGroupCoverage] = []
+            for index in range(result.group_count):
+                source = result.groups[index]
+                if (
+                    source.struct_size < ctypes.sizeof(_PatchGroupCoverage)
+                    or source.group_index != index
+                    or source.direct_output_state not in states
+                    or source.act_consumer_state not in states
+                    or source.dpu_consumer_state not in states
+                ):
+                    raise RuntimeError("patchblob returned an invalid group-coverage record")
+                groups.append(
+                    ActGroupCoverage(
+                        source.group_index,
+                        source.invocation_count,
+                        states[source.direct_output_state],
+                        states[source.act_consumer_state],
+                        states[source.dpu_consumer_state],
+                        source.direct_output_unresolved_flags,
+                        source.act_consumer_unresolved_flags,
+                        source.dpu_consumer_unresolved_flags,
+                        source.direct_routed_invocation_count,
+                        source.direct_replica_invocation_count,
+                        source.act_matched_invocation_count,
+                        source.act_consumer_group_count,
+                        source.act_consumer_input_count,
+                        source.dpu_matched_invocation_count,
+                        source.dpu_input_count,
+                    )
+                )
+            return tuple(groups)
+        finally:
+            self.patch.patchblob_group_coverage_result_release(ctypes.byref(result))
 
     def infer_graph(
         self,
