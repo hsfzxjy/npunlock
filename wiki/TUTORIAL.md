@@ -405,13 +405,20 @@ The binding key is the symbolic output returned by `npu.custom()`, not a string
 node name. Native graph blobs do not provide a proven general mapping from an
 IR source name to an ACT range.
 
-For porting experiments, `npu.compare_native_graphs(baseline, candidate)` can
-check whether a controlled compiler perturbation changed the code of exactly
-one ACT group while leaving every other inspected native contract observation
-equal. Treat an accepted result as differential evidence only; it does not
-identify a symbolic node and is not used as a patch binding automatically. See
-[Porting to Linux and newer NPUs](PORTING.md) for the comparison workflow and
-its limits.
+For porting experiments, a prepared graph can compile one controlled carrier
+substitution without changing the original graph:
+
+```python
+probe = prepared.probe_carrier(custom_output, "Sqrt")
+print(probe.accepted, probe.group_index, probe.comparison.mismatch_names)
+```
+
+This preserves the node's existing inputs, outputs, attributes, weights, and
+build flags. Treat an accepted result as differential evidence only; it is not
+used as a patch binding automatically. If you already have both native blobs,
+`npu.compare_native_graphs(baseline, candidate)` applies the same strict
+comparison in memory. See [Porting to Linux and newer NPUs](PORTING.md) for the
+workflow and its limits.
 
 For several kernels, filter groups with independent fields and bind them all:
 

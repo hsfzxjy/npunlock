@@ -518,6 +518,29 @@ class SerializationTests(unittest.TestCase):
         self.assertIsNone(root.find("./layers/layer[@type='Custom']"))
         self.assertEqual(serialized.custom_nodes, (y.producer,))
 
+    def test_custom_carrier_override_is_non_mutating(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="custom")
+        graph = npu.Graph([x], [y])
+
+        baseline = npu.serialize_ir(graph)
+        candidate = npu.serialize_ir(graph, _carrier_overrides={y.producer: "Sqrt"})
+
+        self.assertIn(b'type="Abs"', baseline.xml)
+        self.assertNotIn(b'type="Sqrt"', baseline.xml)
+        self.assertIn(b'type="Sqrt"', candidate.xml)
+        self.assertNotIn(b'type="Abs"', candidate.xml)
+        self.assertEqual(candidate.weights, baseline.weights)
+        self.assertEqual(y.producer.metadata["_carrier"], "Abs")
+
+    def test_custom_carrier_override_rejects_unrelated_nodes(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.Abs(x)
+        graph = npu.Graph([x], [y])
+
+        with self.assertRaisesRegex(ValueError, "custom nodes in this graph"):
+            npu.serialize_ir(graph, _carrier_overrides={y.producer: "Sqrt"})
+
     def test_f32_custom_marks_carrier_precision_sensitive(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f32")
         y = npu.custom(
@@ -692,6 +715,8 @@ class FakeNative:
         self.xml = b""
         self.weights = b""
         self.compile_ir_count = 0
+        self.ir_calls: list[tuple[bytes, bytes, dict[str, object]]] = []
+        self.compile_ir_blobs: list[bytes] = []
         self.shave_calls: list[tuple[bytes, dict[str, object]]] = []
         self.patch_calls: list[tuple[bytes, bytes, tuple[npu.PatchTarget, ...]]] = []
         self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 32, 64),),)
@@ -704,7 +729,9 @@ class FakeNative:
         self.xml = xml
         self.weights = weights
         self.compile_ir_kwargs = kwargs
-        return npu.IrCompileResult(b"native", 0, 0, 1, 0x8086, 0x7D1D, 0x10012, (8, 3))
+        self.ir_calls.append((xml, weights, dict(kwargs)))
+        graph_blob = self.compile_ir_blobs.pop(0) if self.compile_ir_blobs else b"native"
+        return npu.IrCompileResult(graph_blob, 0, 0, 1, 0x8086, 0x7D1D, 0x10012, (8, 3))
 
     def query_ir_provenance(self, **kwargs: object) -> npu.IrCompileResult:
         self.query_ir_kwargs = kwargs
@@ -942,6 +969,47 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(fake.discovery_blob, b"native")
         self.assertEqual(fake.patch_args[2], (npu.PatchTarget(0, 0, 1, 32, 64),))
         self.assertEqual(program.graph_blob, b"patched")
+
+    def test_prepared_carrier_probe_returns_evidence_without_mutating_graph(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="custom")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"candidate"]
+        fake.comparison = npu.GraphComparison(0, (0,), True, True)
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        probe = prepared.probe_carrier(y, "Sqrt", ir_worker="worker.exe")
+
+        self.assertTrue(probe.accepted)
+        self.assertEqual(probe.group_index, 0)
+        self.assertEqual((probe.baseline_carrier, probe.candidate_carrier), ("Abs", "Sqrt"))
+        self.assertEqual(fake.compare_args, (b"baseline", b"candidate"))
+        self.assertEqual(fake.compile_ir_count, 2)
+        self.assertEqual(fake.ir_calls[1][2]["worker"], "worker.exe")
+        self.assertIn(b'type="Abs"', prepared.serialized_ir.xml)
+        self.assertIn(b'type="Sqrt"', probe.candidate_ir.xml)
+        self.assertEqual(y.producer.metadata["_carrier"], "Abs")
+        self.assertEqual(probe.baseline_ir_sha256, hashlib.sha256(prepared.serialized_ir.xml).hexdigest())
+        self.assertEqual(probe.candidate_ir_sha256, hashlib.sha256(probe.candidate_ir.xml).hexdigest())
+        self.assertEqual(probe.baseline_graph_blob_sha256, hashlib.sha256(b"baseline").hexdigest())
+        self.assertEqual(probe.candidate_graph_blob_sha256, hashlib.sha256(b"candidate").hexdigest())
+
+    def test_prepared_carrier_probe_rejects_non_custom_output(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        ordinary = npu.Abs(y)
+        prepared = npu.prepare(
+            npu.Graph([x], [ordinary]),
+            native_dir="unused",
+            libraries=FakeNative(),  # type: ignore[arg-type]
+        )
+
+        with self.assertRaisesRegex(ValueError, "custom node"):
+            prepared.probe_carrier(ordinary, "Sqrt")
 
     def test_positional_mapping_rejects_dtype_mismatch(self) -> None:
         f32 = npu.input("f32", shape=(1, 32), dtype="f32")

@@ -39,6 +39,7 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 __all__ = [
     "ActGroup",
     "BuildPlan",
+    "CarrierProbe",
     "CompiledKernel",
     "CustomMapping",
     "DType",
@@ -371,6 +372,32 @@ class CustomMapping:
     status: str
     group_indices: tuple[int, ...]
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class CarrierProbe:
+    """Evidence from recompiling one custom node with another carrier."""
+
+    output: Tensor = field(repr=False, compare=False)
+    baseline_carrier: str
+    candidate_carrier: str
+    comparison: GraphComparison
+    baseline_ir_sha256: str
+    candidate_ir_sha256: str
+    baseline_graph_blob_sha256: str
+    candidate_graph_blob_sha256: str
+    candidate_ir: SerializedIR = field(repr=False, compare=False)
+    candidate_provenance: IrCompileResult = field(repr=False, compare=False)
+
+    @property
+    def accepted(self) -> bool:
+        return self.comparison.accepted
+
+    @property
+    def group_index(self) -> int | None:
+        if not self.accepted or len(self.comparison.changed_group_indices) != 1:
+            return None
+        return self.comparison.changed_group_indices[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1709,6 +1736,59 @@ class PreparedGraph:
             groups = ",".join(str(index) for index in mapping.group_indices) or "none"
             lines.append(f"  {mapping.name}: {mapping.status}; groups={groups}; {mapping.reason}")
         return "\n".join(lines)
+
+    def probe_carrier(
+        self,
+        output: Tensor,
+        carrier: str,
+        *,
+        ir_worker: str | None = None,
+    ) -> CarrierProbe:
+        """Recompile one custom node with a substitute carrier for mapping evidence.
+
+        The original graph and this prepared carrier are unchanged. An accepted
+        result is differential evidence only and is never used as an automatic
+        patch binding.
+        """
+
+        custom_nodes = self.serialized_ir.custom_nodes
+        if not isinstance(output, Tensor) or output.producer not in custom_nodes:
+            raise ValueError("carrier probe output must belong to a custom node in this prepared graph")
+        node = output.producer
+        if len(node.outputs) != 1 or output is not node.outputs[0]:
+            raise ValueError("carrier probes currently require the sole output of a custom node")
+        baseline_carrier = node.metadata.get("_carrier")
+        if not isinstance(baseline_carrier, str):
+            raise RuntimeError("prepared custom node has no carrier operator")
+
+        candidate_ir = serialize_ir(self.graph, _carrier_overrides={node: carrier})
+        if candidate_ir.weights != self.serialized_ir.weights or candidate_ir.custom_nodes != custom_nodes:
+            raise RuntimeError("carrier probe changed data outside the requested carrier substitution")
+        candidate_provenance = self._libraries.compile_ir(
+            candidate_ir.xml,
+            candidate_ir.weights,
+            build_flags=self._build_flags,
+            timeout_ms=self._timeout_ms,
+            worker=ir_worker,
+        )
+        if _provenance_json(candidate_provenance) != _provenance_json(self.ir_provenance):
+            raise RuntimeError("carrier probe candidate was compiled under different driver/compiler provenance")
+        comparison = self._libraries.compare_graphs(
+            self.ir_provenance.graph_blob,
+            candidate_provenance.graph_blob,
+        )
+        return CarrierProbe(
+            output,
+            baseline_carrier,
+            carrier,
+            comparison,
+            hashlib.sha256(self.serialized_ir.xml).hexdigest(),
+            hashlib.sha256(candidate_ir.xml).hexdigest(),
+            hashlib.sha256(self.ir_provenance.graph_blob).hexdigest(),
+            hashlib.sha256(candidate_provenance.graph_blob).hexdigest(),
+            candidate_ir,
+            candidate_provenance,
+        )
 
     def _normalize_binding(self, value: object) -> tuple[int, ...]:
         values: tuple[object, ...]

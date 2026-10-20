@@ -137,6 +137,22 @@ class GraphComparison:
     @property
     def mismatch_names(self) -> tuple[str, ...]: ...
 
+class CarrierProbe:
+    output: Tensor
+    baseline_carrier: str
+    candidate_carrier: str
+    comparison: GraphComparison
+    baseline_ir_sha256: str
+    candidate_ir_sha256: str
+    baseline_graph_blob_sha256: str
+    candidate_graph_blob_sha256: str
+    candidate_ir: SerializedIR
+    candidate_provenance: IrCompileResult
+    @property
+    def accepted(self) -> bool: ...
+    @property
+    def group_index(self) -> int | None: ...
+
 class InferenceInput:
     selector: int | str
     data: bytes
@@ -282,6 +298,13 @@ class PreparedGraph:
         input_1_scalar: bool | None = ...,
     ) -> ActGroup: ...
     def explain(self) -> str: ...
+    def probe_carrier(
+        self,
+        output: Tensor,
+        carrier: str,
+        *,
+        ir_worker: str | None = ...,
+    ) -> CarrierProbe: ...
     def plan(
         self,
         *,

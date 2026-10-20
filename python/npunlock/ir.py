@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
@@ -56,8 +57,24 @@ def _add_port(parent: ET.Element, port_id: int, tensor: Tensor, *, names: str | 
         ET.SubElement(port, "dim").text = str(dimension)
 
 
-def serialize_ir(graph: Graph) -> SerializedIR:
+def serialize_ir(
+    graph: Graph,
+    *,
+    _carrier_overrides: Mapping[Node, str] | None = None,
+) -> SerializedIR:
     nodes = graph.nodes
+    custom_node_set = {node for node in nodes if node.op == "Custom"}
+    if _carrier_overrides is None:
+        overrides: dict[Node, str] = {}
+    else:
+        if not isinstance(_carrier_overrides, Mapping):
+            raise TypeError("_carrier_overrides must map custom Node objects to operator names")
+        overrides = dict(_carrier_overrides)
+        for node, carrier in overrides.items():
+            if not isinstance(node, Node) or node not in custom_node_set:
+                raise ValueError("carrier override keys must be custom nodes in this graph")
+            if not isinstance(carrier, str) or not carrier or any(character.isspace() for character in carrier):
+                raise ValueError("carrier override values must be non-empty operator names without whitespace")
     ids = {node: index for index, node in enumerate(nodes)}
     root = ET.Element("net", {"name": graph.name, "version": "11"})
     layers = ET.SubElement(root, "layers")
@@ -69,7 +86,7 @@ def serialize_ir(graph: Graph) -> SerializedIR:
         name = node.name or f"{node.op}_{node_id}"
         layer_type = node.op
         if node.op == "Custom":
-            carrier = node.metadata.get("_carrier")
+            carrier = overrides.get(node, node.metadata.get("_carrier"))
             if not isinstance(carrier, str):
                 raise ValueError("custom node is missing a carrier operator")
             layer_type = carrier

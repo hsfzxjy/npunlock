@@ -119,6 +119,25 @@ print(comparison.mismatch_names)
 The native C equivalent is `patchblob_compare_graphs()`. Both APIs apply the
 same fail-closed parser and comparison rules as `npunlock-inspect`.
 
+When the baseline comes from `npu.prepare()`, Python can also produce one
+controlled candidate directly:
+
+```python
+prepared = npu.prepare(graph)
+probe = prepared.probe_carrier(custom_output, "Sqrt")
+print(probe.accepted, probe.group_index)
+print(probe.comparison.mismatch_names)
+```
+
+`probe_carrier()` changes only that custom node's serialized carrier operator,
+preserves its existing inputs, outputs, attributes, weights, and build flags,
+and compiles through the same native library instance. It rejects different
+driver/compiler provenance before comparing. The original graph and prepared
+blob are not modified. Operators that need different attributes or contracts
+are not synthesized; their candidate compile may fail or the strict comparison
+may reject them. A successful probe remains evidence for review, not an
+automatic binding.
+
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for
