@@ -249,6 +249,22 @@ typedef struct npunlock_graph_routing_observations {
   size_t act_dpu_edge_candidate_count;
 } npunlock_graph_routing_observations;
 
+#define NPUNLOCK_COMPARE_STRUCTURE_CHANGED UINT32_C(1)
+#define NPUNLOCK_COMPARE_INVOCATION_CONTRACT_CHANGED UINT32_C(2)
+#define NPUNLOCK_COMPARE_OUTPUT_ROUTING_CHANGED UINT32_C(4)
+#define NPUNLOCK_COMPARE_ACT_RELATIONS_CHANGED UINT32_C(8)
+#define NPUNLOCK_COMPARE_DPU_CHANGED UINT32_C(16)
+#define NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED UINT32_C(32)
+#define NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE UINT32_C(64)
+
+typedef struct npunlock_graph_routing_comparison {
+  uint32_t mismatch_flags;
+  uint32_t *changed_group_indices;
+  size_t changed_group_count;
+  bool contract_stable;
+  bool unique_changed_group;
+} npunlock_graph_routing_comparison;
+
 npunlock_status npunlock_patch_graph_blob(npunlock_view graph_blob, npunlock_view image,
                                           const patchblob_target *targets, size_t target_count,
                                           uint32_t image_alignment, uint32_t tail_padding,
@@ -299,5 +315,11 @@ npunlock_status npunlock_derive_act_group_completeness(
     size_t replica_candidate_count, npunlock_act_group_completeness_observation **completeness,
     size_t *completeness_count, npunlock_diagnostic *diagnostic);
 void npunlock_graph_routing_observations_release(npunlock_graph_routing_observations *observations);
+npunlock_status
+npunlock_compare_graph_routing_observations(const npunlock_graph_routing_observations *baseline,
+                                            const npunlock_graph_routing_observations *candidate,
+                                            npunlock_graph_routing_comparison *comparison,
+                                            npunlock_diagnostic *diagnostic);
+void npunlock_graph_routing_comparison_release(npunlock_graph_routing_comparison *comparison);
 
 #endif

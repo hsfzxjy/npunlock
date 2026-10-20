@@ -289,6 +289,68 @@ static int test_replica_candidate_bijection(void) {
   return 0;
 }
 
+static int test_routing_comparison(void) {
+  npunlock_invocation_routing_observation baseline_invocations[2];
+  npunlock_invocation_routing_observation candidate_invocations[2];
+  npunlock_graph_routing_observations baseline = {0};
+  npunlock_graph_routing_observations candidate = {0};
+  npunlock_graph_routing_comparison comparison = {0};
+  npunlock_diagnostic diagnostic = {0};
+
+  configure_edge_invocation(&baseline_invocations[0], 0, 0, 0, 16, 1, 2);
+  configure_edge_invocation(&baseline_invocations[1], 1, 1, 16, 32, 2, 4);
+  baseline_invocations[0].code_extent = 16;
+  baseline_invocations[0].code_sha256[0] = 1;
+  baseline_invocations[1].code_extent = 16;
+  baseline_invocations[1].code_sha256[0] = 2;
+  memcpy(candidate_invocations, baseline_invocations, sizeof(candidate_invocations));
+  candidate_invocations[1].code_sha256[0] = 3;
+  baseline.invocations = baseline_invocations;
+  baseline.invocation_count = 2;
+  baseline.group_count = 2;
+  baseline.tile_count_observed = 2;
+  candidate.invocations = candidate_invocations;
+  candidate.invocation_count = 2;
+  candidate.group_count = 2;
+  candidate.tile_count_observed = 2;
+
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(comparison.contract_stable);
+  CHECK(comparison.unique_changed_group);
+  CHECK(comparison.changed_group_count == 1);
+  CHECK(comparison.changed_group_indices[0] == 1);
+  npunlock_graph_routing_comparison_release(&comparison);
+
+  candidate_invocations[1].wait_mask_raw = 8;
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_INVOCATION_CONTRACT_CHANGED) != 0);
+  npunlock_graph_routing_comparison_release(&comparison);
+  candidate_invocations[1].wait_mask_raw = baseline_invocations[1].wait_mask_raw;
+
+  baseline.group_count = 1;
+  candidate.group_count = 1;
+  baseline_invocations[1].group_index = 0;
+  candidate_invocations[1].group_index = 0;
+  candidate_invocations[0].code_sha256[0] = 4;
+  candidate_invocations[1].code_sha256[0] = baseline_invocations[1].code_sha256[0];
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK(comparison.unique_changed_group);
+  CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE) != 0);
+  npunlock_graph_routing_comparison_release(&comparison);
+
+  baseline.invocations = NULL;
+  baseline.invocation_count = 1;
+  CHECK(npunlock_compare_graph_routing_observations(
+            &baseline, &candidate, &comparison, &diagnostic) == NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
 int main(void) {
   uint8_t graph[201];
   const uint8_t image[] = {1, 2, 3, 4};
@@ -301,6 +363,7 @@ int main(void) {
   CHECK(test_edge_candidate_transitive_schedule() == 0);
   CHECK(test_output_cover_observations() == 0);
   CHECK(test_replica_candidate_bijection() == 0);
+  CHECK(test_routing_comparison() == 0);
 
   target.struct_size = sizeof(target);
   target.invocation_index = 0;

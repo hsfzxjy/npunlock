@@ -18,6 +18,7 @@ typedef struct file_buffer {
 
 static void print_usage(const char *program) {
   printf("usage: %s --graph GRAPH.blob [--report REPORT.json]\n", program);
+  printf("       %s --graph BASE.blob --compare CANDIDATE.blob [--report REPORT.json]\n", program);
   printf("       %s --version\n", program);
 }
 
@@ -491,6 +492,77 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "discovery is not proof of execution compatibility\"\n}\n") >= 0;
 }
 
+static int write_mismatch_names(FILE *stream, uint32_t flags) {
+  static const struct {
+    uint32_t flag;
+    const char *name;
+  } names[] = {
+      {NPUNLOCK_COMPARE_STRUCTURE_CHANGED, "structure"},
+      {NPUNLOCK_COMPARE_INVOCATION_CONTRACT_CHANGED, "invocation_contract"},
+      {NPUNLOCK_COMPARE_OUTPUT_ROUTING_CHANGED, "output_routing"},
+      {NPUNLOCK_COMPARE_ACT_RELATIONS_CHANGED, "act_relations"},
+      {NPUNLOCK_COMPARE_DPU_CHANGED, "dpu"},
+      {NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED, "act_dpu_relations"},
+      {NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE, "partial_group_code_change"},
+  };
+  bool first = true;
+  size_t index;
+  for (index = 0; index < sizeof(names) / sizeof(names[0]); ++index) {
+    if ((flags & names[index].flag) != 0u) {
+      if (fprintf(stream, "%s\"%s\"", first ? "" : ", ", names[index].name) < 0) {
+        return 0;
+      }
+      first = false;
+    }
+  }
+  return 1;
+}
+
+static int write_comparison_report(FILE *stream, const char *baseline_path,
+                                   const file_buffer *baseline, const char *candidate_path,
+                                   const file_buffer *candidate,
+                                   const npunlock_graph_routing_comparison *comparison) {
+  char baseline_hash[65];
+  char candidate_hash[65];
+  size_t index;
+  bool accepted = comparison->contract_stable && comparison->unique_changed_group;
+  hash_view((npunlock_view){baseline->data, baseline->size}, baseline_hash);
+  hash_view((npunlock_view){candidate->data, candidate->size}, candidate_hash);
+  if (fprintf(stream,
+              "{\n  \"schema\": \"npunlock.porting.compare.v1\",\n  \"baseline\": {\"path\": ") <
+          0 ||
+      !write_json_string(stream, baseline_path) ||
+      fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", baseline->size, baseline_hash) <
+          0 ||
+      fprintf(stream, "  \"candidate\": {\"path\": ") < 0 ||
+      !write_json_string(stream, candidate_path) ||
+      fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", candidate->size, candidate_hash) <
+          0 ||
+      fprintf(stream,
+              "  \"comparison\": {\"contract_stable\": %s, "
+              "\"unique_changed_group\": %s, \"accepted\": %s, "
+              "\"mismatch_flags\": %u, \"mismatch_names\": [",
+              comparison->contract_stable ? "true" : "false",
+              comparison->unique_changed_group ? "true" : "false", accepted ? "true" : "false",
+              comparison->mismatch_flags) < 0 ||
+      !write_mismatch_names(stream, comparison->mismatch_flags) ||
+      fprintf(stream, "], \"changed_group_indices\": [") < 0) {
+    return 0;
+  }
+  for (index = 0; index < comparison->changed_group_count; ++index) {
+    if (fprintf(stream, "%s%u", index == 0 ? "" : ", ", comparison->changed_group_indices[index]) <
+        0) {
+      return 0;
+    }
+  }
+  return fprintf(stream,
+                 "]},\n  \"scope\": \"diagnostic comparison of validated NPU3720/compiler-8.3 "
+                 "native observations; code offsets and range indices may move, but every tensor, "
+                 "routing, scheduling, output, DPU, and derived relation must remain equal; "
+                 "accepted means one code group changed under a stable native contract, not that "
+                 "the group has a proven symbolic source identity\"\n}\n") >= 0;
+}
+
 static void print_diagnostic(const npunlock_diagnostic *diagnostic) {
   if (diagnostic != NULL && diagnostic->json.data != NULL) {
     fwrite(diagnostic->json.data, 1, diagnostic->json.size, stderr);
@@ -502,9 +574,13 @@ static void print_diagnostic(const npunlock_diagnostic *diagnostic) {
 
 int main(int argc, char **argv) {
   const char *graph_path = NULL;
+  const char *compare_path = NULL;
   const char *report_path = NULL;
   file_buffer graph = {0};
+  file_buffer compare_graph = {0};
   npunlock_graph_routing_observations routing = {0};
+  npunlock_graph_routing_observations compare_routing = {0};
+  npunlock_graph_routing_comparison comparison = {0};
   npunlock_diagnostic diagnostic = {0};
   npunlock_status status;
   FILE *report = stdout;
@@ -522,6 +598,8 @@ int main(int argc, char **argv) {
   for (index = 1; index < argc; ++index) {
     if (strcmp(argv[index], "--graph") == 0 && index + 1 < argc && graph_path == NULL) {
       graph_path = argv[++index];
+    } else if (strcmp(argv[index], "--compare") == 0 && index + 1 < argc && compare_path == NULL) {
+      compare_path = argv[++index];
     } else if (strcmp(argv[index], "--report") == 0 && index + 1 < argc && report_path == NULL) {
       report_path = argv[++index];
     } else {
@@ -530,8 +608,10 @@ int main(int argc, char **argv) {
       return 2;
     }
   }
-  if (graph_path == NULL || (report_path != NULL && strcmp(graph_path, report_path) == 0)) {
-    fprintf(stderr, "--graph is required and must not also be the report path\n");
+  if (graph_path == NULL ||
+      (report_path != NULL && (strcmp(graph_path, report_path) == 0 ||
+                               (compare_path != NULL && strcmp(compare_path, report_path) == 0)))) {
+    fprintf(stderr, "--graph is required and the report path must be distinct from inputs\n");
     print_usage(argv[0]);
     return 2;
   }
@@ -546,6 +626,24 @@ int main(int argc, char **argv) {
     print_diagnostic(&diagnostic);
     goto cleanup;
   }
+  if (compare_path != NULL) {
+    compare_graph = read_file(compare_path);
+    if (compare_graph.size == SIZE_MAX) {
+      goto cleanup;
+    }
+    status = npunlock_inspect_graph_routing((npunlock_view){compare_graph.data, compare_graph.size},
+                                            &compare_routing, &diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      print_diagnostic(&diagnostic);
+      goto cleanup;
+    }
+    status = npunlock_compare_graph_routing_observations(&routing, &compare_routing, &comparison,
+                                                         &diagnostic);
+    if (status != NPUNLOCK_STATUS_OK) {
+      print_diagnostic(&diagnostic);
+      goto cleanup;
+    }
+  }
   if (report_path != NULL) {
 #ifdef _WIN32
     if (fopen_s(&report, report_path, "wb") != 0) {
@@ -559,7 +657,10 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
   }
-  if (!write_report(report, graph_path, &graph, &routing) || fflush(report) != 0) {
+  if (!(compare_path == NULL ? write_report(report, graph_path, &graph, &routing)
+                             : write_comparison_report(report, graph_path, &graph, compare_path,
+                                                       &compare_graph, &comparison)) ||
+      fflush(report) != 0) {
     fprintf(stderr, "could not write inspection report\n");
     goto cleanup;
   }
@@ -579,7 +680,10 @@ cleanup:
     fclose(report);
   }
   npunlock_graph_routing_observations_release(&routing);
+  npunlock_graph_routing_observations_release(&compare_routing);
+  npunlock_graph_routing_comparison_release(&comparison);
   npunlock_diagnostic_release(&diagnostic);
   free(graph.data);
+  free(compare_graph.data);
   return success ? 0 : 1;
 }

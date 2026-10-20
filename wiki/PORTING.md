@@ -92,6 +92,21 @@ SHA-256 of exactly that bounded code slice. Equal fingerprints show code reuse;
 a differential compile can use changed fingerprints as evidence only when the
 rest of the invocation, routing, scheduling, and DPU contract is unchanged.
 
+To apply that strict comparison without a custom parser, inspect a controlled
+baseline and one-perturbation candidate together:
+
+```bash
+npunlock-inspect --graph baseline.blob --compare candidate.blob \
+  --report comparison.json
+```
+
+The `npunlock.porting.compare.v1` result is accepted only when exactly one ACT
+group changes code and every other validated invocation, tensor, route,
+schedule, output, DPU, and derived-relation observation remains equal. It names
+the mismatch classes when this fails. An accepted comparison is useful
+differential evidence, but it still does not by itself prove a symbolic source
+identity or authorize automatic patch selection.
+
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for

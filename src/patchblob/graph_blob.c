@@ -3507,6 +3507,157 @@ void npunlock_graph_routing_observations_release(
   memset(observations, 0, sizeof(*observations));
 }
 
+static bool observation_arrays_equal(const void *left, size_t left_count, const void *right,
+                                     size_t right_count, size_t element_size) {
+  size_t byte_count;
+  if (left_count != right_count || (left == NULL && left_count != 0u) ||
+      (right == NULL && right_count != 0u) ||
+      !npunlock_checked_mul_size(left_count, element_size, &byte_count)) {
+    return false;
+  }
+  return byte_count == 0u || memcmp(left, right, byte_count) == 0;
+}
+
+npunlock_status
+npunlock_compare_graph_routing_observations(const npunlock_graph_routing_observations *baseline,
+                                            const npunlock_graph_routing_observations *candidate,
+                                            npunlock_graph_routing_comparison *comparison,
+                                            npunlock_diagnostic *diagnostic) {
+  uint8_t *changed = NULL;
+  uint8_t *unchanged = NULL;
+  uint32_t *changed_groups = NULL;
+  size_t changed_group_count = 0u;
+  size_t changed_group_bytes;
+  size_t index;
+
+  if (baseline == NULL || candidate == NULL || comparison == NULL || diagnostic == NULL ||
+      (baseline->invocations == NULL && baseline->invocation_count != 0u) ||
+      (candidate->invocations == NULL && candidate->invocation_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(comparison, 0, sizeof(*comparison));
+  if (baseline->group_count != candidate->group_count ||
+      baseline->invocation_count != candidate->invocation_count ||
+      baseline->tile_count_observed != candidate->tile_count_observed) {
+    comparison->mismatch_flags |= NPUNLOCK_COMPARE_STRUCTURE_CHANGED;
+  } else {
+    if (!npunlock_checked_mul_size(baseline->group_count, sizeof(*changed_groups),
+                                   &changed_group_bytes)) {
+      return unsupported(diagnostic, "graph-comparison group allocation overflows");
+    }
+    changed = (uint8_t *)calloc(baseline->group_count, sizeof(*changed));
+    unchanged = (uint8_t *)calloc(baseline->group_count, sizeof(*unchanged));
+    changed_groups = (uint32_t *)malloc(changed_group_bytes);
+    if ((changed == NULL || unchanged == NULL || changed_groups == NULL) &&
+        baseline->group_count != 0u) {
+      free(changed);
+      free(unchanged);
+      free(changed_groups);
+      return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.compare_routing",
+                                     "could not allocate graph-comparison group state");
+    }
+    for (index = 0; index < baseline->invocation_count; ++index) {
+      npunlock_invocation_routing_observation left;
+      npunlock_invocation_routing_observation right;
+      uint32_t group_index = baseline->invocations[index].group_index;
+      bool code_equal;
+      if (group_index >= baseline->group_count ||
+          candidate->invocations[index].group_index != group_index) {
+        comparison->mismatch_flags |= NPUNLOCK_COMPARE_STRUCTURE_CHANGED;
+        continue;
+      }
+      code_equal =
+          baseline->invocations[index].code_extent == candidate->invocations[index].code_extent &&
+          memcmp(baseline->invocations[index].code_sha256,
+                 candidate->invocations[index].code_sha256,
+                 sizeof(baseline->invocations[index].code_sha256)) == 0;
+      if (code_equal) {
+        unchanged[group_index] = 1u;
+      } else {
+        changed[group_index] = 1u;
+      }
+      left = baseline->invocations[index];
+      right = candidate->invocations[index];
+      left.code_offset_raw = 0u;
+      right.code_offset_raw = 0u;
+      left.code_extent = 0u;
+      right.code_extent = 0u;
+      memset(left.code_sha256, 0, sizeof(left.code_sha256));
+      memset(right.code_sha256, 0, sizeof(right.code_sha256));
+      left.target.range_index = 0u;
+      right.target.range_index = 0u;
+      if (memcmp(&left, &right, sizeof(left)) != 0) {
+        comparison->mismatch_flags |= NPUNLOCK_COMPARE_INVOCATION_CONTRACT_CHANGED;
+      }
+    }
+    for (index = 0; index < baseline->group_count; ++index) {
+      if (changed[index] != 0u) {
+        changed_groups[changed_group_count++] = (uint32_t)index;
+        if (unchanged[index] != 0u) {
+          comparison->mismatch_flags |= NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE;
+        }
+      }
+    }
+  }
+
+  if (!observation_arrays_equal(
+          baseline->network_output_routes, baseline->network_output_route_count,
+          candidate->network_output_routes, candidate->network_output_route_count,
+          sizeof(*baseline->network_output_routes))) {
+    comparison->mismatch_flags |= NPUNLOCK_COMPARE_OUTPUT_ROUTING_CHANGED;
+  }
+  if (!observation_arrays_equal(
+          baseline->act_output_slice_candidates, baseline->act_output_slice_candidate_count,
+          candidate->act_output_slice_candidates, candidate->act_output_slice_candidate_count,
+          sizeof(*baseline->act_output_slice_candidates)) ||
+      !observation_arrays_equal(baseline->act_output_covers, baseline->act_output_cover_count,
+                                candidate->act_output_covers, candidate->act_output_cover_count,
+                                sizeof(*baseline->act_output_covers)) ||
+      !observation_arrays_equal(baseline->act_replica_groups, baseline->act_replica_group_count,
+                                candidate->act_replica_groups, candidate->act_replica_group_count,
+                                sizeof(*baseline->act_replica_groups)) ||
+      !observation_arrays_equal(
+          baseline->act_replica_candidates, baseline->act_replica_candidate_count,
+          candidate->act_replica_candidates, candidate->act_replica_candidate_count,
+          sizeof(*baseline->act_replica_candidates)) ||
+      !observation_arrays_equal(
+          baseline->act_group_completeness, baseline->act_group_completeness_count,
+          candidate->act_group_completeness, candidate->act_group_completeness_count,
+          sizeof(*baseline->act_group_completeness)) ||
+      !observation_arrays_equal(baseline->act_edge_candidates, baseline->act_edge_candidate_count,
+                                candidate->act_edge_candidates, candidate->act_edge_candidate_count,
+                                sizeof(*baseline->act_edge_candidates))) {
+    comparison->mismatch_flags |= NPUNLOCK_COMPARE_ACT_RELATIONS_CHANGED;
+  }
+  if (!observation_arrays_equal(baseline->dpu_invariants, baseline->dpu_invariant_count,
+                                candidate->dpu_invariants, candidate->dpu_invariant_count,
+                                sizeof(*baseline->dpu_invariants))) {
+    comparison->mismatch_flags |= NPUNLOCK_COMPARE_DPU_CHANGED;
+  }
+  if (!observation_arrays_equal(
+          baseline->act_dpu_edge_candidates, baseline->act_dpu_edge_candidate_count,
+          candidate->act_dpu_edge_candidates, candidate->act_dpu_edge_candidate_count,
+          sizeof(*baseline->act_dpu_edge_candidates))) {
+    comparison->mismatch_flags |= NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED;
+  }
+  free(changed);
+  free(unchanged);
+  comparison->changed_group_indices = changed_groups;
+  comparison->changed_group_count = changed_group_count;
+  comparison->contract_stable = comparison->mismatch_flags == 0u;
+  comparison->unique_changed_group = changed_group_count == 1u;
+  return NPUNLOCK_STATUS_OK;
+}
+
+void npunlock_graph_routing_comparison_release(npunlock_graph_routing_comparison *comparison) {
+  if (comparison == NULL) {
+    return;
+  }
+  free(comparison->changed_group_indices);
+  memset(comparison, 0, sizeof(*comparison));
+}
+
 npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
                                                npunlock_graph_routing_observations *observations,
                                                npunlock_diagnostic *diagnostic) {

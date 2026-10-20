@@ -61,6 +61,14 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
       -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_inspect_routing.cmake
   )
   add_test(
+    NAME porting_inspect_compare
+    COMMAND ${CMAKE_COMMAND}
+      -DINSPECTOR=$<TARGET_FILE:npunlock_inspect>
+      -DGRAPH=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs-add-1x16-tile1.blob
+      -DDIFFERENT_GRAPH=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/npu3720/abs-abs-1x32.blob
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_inspect_compare.cmake
+  )
+  add_test(
     NAME porting_inspect_partitioned_output_routes
     COMMAND ${CMAKE_COMMAND}
       -DINSPECTOR=$<TARGET_FILE:npunlock_inspect>
