@@ -156,6 +156,44 @@ typedef struct patchblob_comparison_result {
   npunlock_diagnostic diagnostic;
 } patchblob_comparison_result;
 
+typedef enum patchblob_group_completeness_state {
+  PATCHBLOB_GROUP_COMPLETENESS_NOT_OBSERVED = 0u,
+  PATCHBLOB_GROUP_COMPLETENESS_INCOMPLETE = 1u,
+  PATCHBLOB_GROUP_COMPLETENESS_COMPLETE = 2u
+} patchblob_group_completeness_state;
+
+typedef enum patchblob_group_completeness_flags {
+  PATCHBLOB_GROUP_OUTPUT_SYMBOL_AMBIGUOUS = 1u << 0,
+  PATCHBLOB_GROUP_OUTPUT_COVER_UNRESOLVED = 1u << 1,
+  PATCHBLOB_GROUP_ROUTE_AMBIGUOUS = 1u << 2,
+  PATCHBLOB_GROUP_REPLICA_UNRESOLVED = 1u << 3,
+  PATCHBLOB_GROUP_INVOCATION_UNCLASSIFIED = 1u << 4
+} patchblob_group_completeness_flags;
+
+/*
+ * Direct-output completeness is observed only for groups with a validated
+ * route to a graph output. NOT_OBSERVED is deliberately distinct from both
+ * COMPLETE and INCOMPLETE; intermediate groups commonly have no such proof.
+ */
+typedef struct patchblob_group_completeness {
+  uint32_t struct_size;
+  uint32_t group_index;
+  uint32_t state;
+  uint32_t output_symbol_raw;
+  uint32_t invocation_count;
+  uint32_t routed_invocation_count;
+  uint32_t replica_invocation_count;
+  uint32_t unresolved_invocation_count;
+  uint32_t unresolved_flags;
+} patchblob_group_completeness;
+
+typedef struct patchblob_group_completeness_result {
+  uint32_t struct_size;
+  patchblob_group_completeness *groups;
+  size_t group_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_group_completeness_result;
+
 NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
@@ -175,6 +213,10 @@ patchblob_compare_graphs(npunlock_view baseline_graph_blob, npunlock_view candid
                          patchblob_comparison_result *result);
 NPUNLOCK_PATCHBLOB_API void
 patchblob_comparison_result_release(patchblob_comparison_result *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_group_completeness(
+    npunlock_view graph_blob, patchblob_group_completeness_result *result);
+NPUNLOCK_PATCHBLOB_API void
+patchblob_group_completeness_result_release(patchblob_group_completeness_result *result);
 
 #ifdef __cplusplus
 }

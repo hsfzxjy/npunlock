@@ -433,6 +433,85 @@ void patchblob_comparison_result_release(patchblob_comparison_result *result) {
   memset(result, 0, sizeof(*result));
 }
 
+npunlock_status patchblob_inspect_group_completeness(npunlock_view graph_blob,
+                                                     patchblob_group_completeness_result *result) {
+  npunlock_graph_routing_observations observations = {0};
+  patchblob_group_completeness *groups = NULL;
+  size_t allocation_size;
+  size_t index;
+  npunlock_status status;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (!npunlock_view_is_valid(graph_blob) || graph_blob.size == 0u) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.inspect_group_completeness",
+                                   "graph blob view must be non-empty");
+  }
+  status = npunlock_inspect_graph_routing(graph_blob, &observations, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
+  if (observations.group_count > UINT32_MAX ||
+      !npunlock_checked_mul_size(observations.group_count, sizeof(*groups), &allocation_size)) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OVERFLOW,
+                                     "patchblob.inspect_group_completeness",
+                                     "group-completeness result allocation overflows");
+    goto cleanup;
+  }
+  groups = (patchblob_group_completeness *)calloc(1u, allocation_size);
+  if (groups == NULL && observations.group_count != 0u) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.inspect_group_completeness",
+                                     "could not allocate group-completeness results");
+    goto cleanup;
+  }
+  for (index = 0; index < observations.group_count; ++index) {
+    groups[index].struct_size = (uint32_t)sizeof(groups[index]);
+    groups[index].group_index = (uint32_t)index;
+    groups[index].state = PATCHBLOB_GROUP_COMPLETENESS_NOT_OBSERVED;
+  }
+  for (index = 0; index < observations.act_group_completeness_count; ++index) {
+    const npunlock_act_group_completeness_observation *source =
+        &observations.act_group_completeness[index];
+    patchblob_group_completeness *destination;
+    if (source->act_group_index >= observations.group_count) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_group_completeness",
+                                       "internal completeness group index is out of range");
+      goto cleanup;
+    }
+    destination = &groups[source->act_group_index];
+    destination->state = source->complete ? PATCHBLOB_GROUP_COMPLETENESS_COMPLETE
+                                          : PATCHBLOB_GROUP_COMPLETENESS_INCOMPLETE;
+    destination->output_symbol_raw = source->output_symbol_raw;
+    destination->invocation_count = source->invocation_count;
+    destination->routed_invocation_count = source->routed_invocation_count;
+    destination->replica_invocation_count = source->replica_invocation_count;
+    destination->unresolved_invocation_count = source->unresolved_invocation_count;
+    destination->unresolved_flags = source->unresolved_flags;
+  }
+  result->groups = groups;
+  result->group_count = observations.group_count;
+  groups = NULL;
+
+cleanup:
+  free(groups);
+  npunlock_graph_routing_observations_release(&observations);
+  return status;
+}
+
+void patchblob_group_completeness_result_release(patchblob_group_completeness_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->groups);
+  npunlock_diagnostic_release(&result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
 void patchblob_result_release(patchblob_result *result) {
   if (result == NULL) {
     return;

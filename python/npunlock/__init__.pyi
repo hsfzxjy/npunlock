@@ -137,6 +137,22 @@ class GraphComparison:
     @property
     def mismatch_names(self) -> tuple[str, ...]: ...
 
+class ActGroupCompleteness:
+    group_index: int
+    state: str
+    output_symbol_raw: int
+    invocation_count: int
+    routed_invocation_count: int
+    replica_invocation_count: int
+    unresolved_invocation_count: int
+    unresolved_flags: int
+    @property
+    def observed(self) -> bool: ...
+    @property
+    def complete(self) -> bool: ...
+    @property
+    def unresolved_names(self) -> tuple[str, ...]: ...
+
 class CarrierProbe:
     output: Tensor
     baseline_carrier: str
@@ -202,6 +218,7 @@ class NativeLibraries:
     def __init__(self, directory: str | PathLike[str] | None = ...) -> None: ...
     def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[PatchTargetV2, ...], ...]: ...
     def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> GraphComparison: ...
+    def inspect_group_completeness(self, graph_blob: bytes) -> tuple[ActGroupCompleteness, ...]: ...
     def query_ir_provenance(
         self,
         *,
@@ -323,6 +340,7 @@ class PreparedGraph:
         *,
         ir_worker: str | None = ...,
     ) -> CarrierMappingEvidence: ...
+    def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
     def plan(
         self,
         *,

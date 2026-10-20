@@ -431,6 +431,19 @@ print(evidence.explain())
 This reports `consistent` only when at least two accepted probes agree on one
 group. It still does not change the prepared graph's bindings.
 
+For a group that writes directly to a graph output, you can separately review
+the routing/replica coverage proof:
+
+```python
+coverage = prepared.inspect_group_completeness()
+if evidence.group_index is not None:
+    print(coverage[evidence.group_index].state)
+```
+
+`not_observed` is expected for many intermediate groups; it does not mean
+complete. The [porting guide](PORTING.md) defines the three states and their
+limits.
+
 For several kernels, filter groups with independent fields and bind them all:
 
 ```python

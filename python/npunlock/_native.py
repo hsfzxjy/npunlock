@@ -225,6 +225,29 @@ class _PatchComparisonResult(ctypes.Structure):
     ]
 
 
+class _PatchGroupCompleteness(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("group_index", ctypes.c_uint32),
+        ("state", ctypes.c_uint32),
+        ("output_symbol_raw", ctypes.c_uint32),
+        ("invocation_count", ctypes.c_uint32),
+        ("routed_invocation_count", ctypes.c_uint32),
+        ("replica_invocation_count", ctypes.c_uint32),
+        ("unresolved_invocation_count", ctypes.c_uint32),
+        ("unresolved_flags", ctypes.c_uint32),
+    ]
+
+
+class _PatchGroupCompletenessResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("groups", ctypes.POINTER(_PatchGroupCompleteness)),
+        ("group_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _InferOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -423,6 +446,39 @@ class GraphComparison:
     @property
     def mismatch_names(self) -> tuple[str, ...]:
         return tuple(name for flag, name in _GRAPH_COMPARISON_MISMATCH_NAMES.items() if self.mismatch_flags & flag)
+
+
+_GROUP_COMPLETENESS_FLAG_NAMES = {
+    1 << 0: "output_symbol_ambiguous",
+    1 << 1: "output_cover_unresolved",
+    1 << 2: "route_ambiguous",
+    1 << 3: "replica_unresolved",
+    1 << 4: "invocation_unclassified",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ActGroupCompleteness:
+    group_index: int
+    state: str
+    output_symbol_raw: int
+    invocation_count: int
+    routed_invocation_count: int
+    replica_invocation_count: int
+    unresolved_invocation_count: int
+    unresolved_flags: int
+
+    @property
+    def observed(self) -> bool:
+        return self.state != "not_observed"
+
+    @property
+    def complete(self) -> bool:
+        return self.state == "complete"
+
+    @property
+    def unresolved_names(self) -> tuple[str, ...]:
+        return tuple(name for flag, name in _GROUP_COMPLETENESS_FLAG_NAMES.items() if self.unresolved_flags & flag)
 
 
 @dataclass(frozen=True, slots=True)
@@ -781,6 +837,14 @@ class NativeLibraries:
         ]
         self.patch.patchblob_compare_graphs.restype = ctypes.c_int
         self.patch.patchblob_comparison_result_release.argtypes = [ctypes.POINTER(_PatchComparisonResult)]
+        self.patch.patchblob_inspect_group_completeness.argtypes = [
+            _View,
+            ctypes.POINTER(_PatchGroupCompletenessResult),
+        ]
+        self.patch.patchblob_inspect_group_completeness.restype = ctypes.c_int
+        self.patch.patchblob_group_completeness_result_release.argtypes = [
+            ctypes.POINTER(_PatchGroupCompletenessResult)
+        ]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -1194,6 +1258,45 @@ class NativeLibraries:
             )
         finally:
             self.patch.patchblob_comparison_result_release(ctypes.byref(result))
+
+    def inspect_group_completeness(self, graph_blob: bytes) -> tuple[ActGroupCompleteness, ...]:
+        if not isinstance(graph_blob, bytes) or not graph_blob:
+            raise ValueError("graph blob must be non-empty bytes")
+        graph_view, graph_owner = _owned_view(graph_blob)
+        _ = graph_owner
+        result = _PatchGroupCompletenessResult()
+        result.struct_size = ctypes.sizeof(_PatchGroupCompletenessResult)
+        status = self.patch.patchblob_inspect_group_completeness(graph_view, ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise("patchblob group completeness", status, result.diagnostic)
+            states = {0: "not_observed", 1: "incomplete", 2: "complete"}
+            if result.group_count and not bool(result.groups):
+                raise RuntimeError("patchblob returned a null group-completeness array")
+            groups: list[ActGroupCompleteness] = []
+            for index in range(result.group_count):
+                source = result.groups[index]
+                if (
+                    source.struct_size < ctypes.sizeof(_PatchGroupCompleteness)
+                    or source.group_index != index
+                    or source.state not in states
+                ):
+                    raise RuntimeError("patchblob returned an invalid group-completeness record")
+                groups.append(
+                    ActGroupCompleteness(
+                        source.group_index,
+                        states[source.state],
+                        source.output_symbol_raw,
+                        source.invocation_count,
+                        source.routed_invocation_count,
+                        source.replica_invocation_count,
+                        source.unresolved_invocation_count,
+                        source.unresolved_flags,
+                    )
+                )
+            return tuple(groups)
+        finally:
+            self.patch.patchblob_group_completeness_result_release(ctypes.byref(result))
 
     def infer_graph(
         self,

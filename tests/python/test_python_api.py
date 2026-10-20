@@ -603,6 +603,9 @@ class NativeLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(_native._PatchDiscoveredTarget), 48)
         self.assertEqual(ctypes.sizeof(_native._PatchDiscoveryResult), 72)
         self.assertEqual(ctypes.sizeof(_native._PatchResult), 112)
+        self.assertEqual(ctypes.sizeof(_native._PatchComparisonResult), 72)
+        self.assertEqual(ctypes.sizeof(_native._PatchGroupCompleteness), 36)
+        self.assertEqual(ctypes.sizeof(_native._PatchGroupCompletenessResult), 64)
         self.assertEqual(ctypes.sizeof(_native._InferOptions), 16)
         self.assertEqual(ctypes.sizeof(_native._InferInput), 40)
         self.assertEqual(ctypes.sizeof(_native._InferOutput), 104)
@@ -724,6 +727,7 @@ class FakeNative:
         self.sessions: list[FakeInferenceSession] = []
         self.comparison = npu.GraphComparison(0, (1,), True, True)
         self.comparisons: list[npu.GraphComparison] = []
+        self.completeness = (npu.ActGroupCompleteness(0, "complete", 1, 2, 2, 0, 0, 0),)
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.compile_ir_count += 1
@@ -760,6 +764,10 @@ class FakeNative:
     def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> npu.GraphComparison:
         self.compare_args = (baseline_graph_blob, candidate_graph_blob)
         return self.comparisons.pop(0) if self.comparisons else self.comparison
+
+    def inspect_group_completeness(self, graph_blob: bytes) -> tuple[npu.ActGroupCompleteness, ...]:
+        self.completeness_blob = graph_blob
+        return self.completeness
 
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
@@ -1055,6 +1063,24 @@ class CompilationFlowTests(unittest.TestCase):
 
         self.assertEqual(evidence.status, "conflicting")
         self.assertIsNone(evidence.group_index)
+
+    def test_prepared_group_completeness_is_read_only(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        completeness = prepared.inspect_group_completeness()
+
+        self.assertEqual(completeness, fake.completeness)
+        self.assertEqual(fake.completeness_blob, b"native")
+        self.assertTrue(completeness[0].observed)
+        self.assertTrue(completeness[0].complete)
+        self.assertEqual(completeness[0].unresolved_names, ())
 
     def test_positional_mapping_rejects_dtype_mismatch(self) -> None:
         f32 = npu.input("f32", shape=(1, 32), dtype="f32")

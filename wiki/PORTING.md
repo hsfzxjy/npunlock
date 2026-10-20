@@ -151,6 +151,22 @@ than two accepted probes produce `insufficient`. Rejected candidates remain in
 the report. Even `consistent` evidence does not update `PreparedGraph.mappings`
 or authorize automatic patch selection.
 
+Source-label evidence and invocation coverage are separate questions. Inspect
+the baseline carrier's direct-output proof explicitly:
+
+```python
+for group in prepared.inspect_group_completeness():
+    print(group.group_index, group.state, group.unresolved_names)
+```
+
+Every ACT group is returned. `complete` means all invocations contributing to
+one directly routed graph output are classified as a unique routed slice or a
+unique tile replica and jointly have exact output coverage. `incomplete` means
+that proof was attempted but unresolved. `not_observed` means the group has no
+validated direct graph-output slice—commonly because it is intermediate—and
+must not be read as either success or failure. This result remains diagnostic;
+it does not make intermediate-group coverage claims.
+
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for

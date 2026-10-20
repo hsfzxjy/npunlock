@@ -16,6 +16,7 @@ from typing import Any, Callable, Mapping
 import numpy as np
 
 from ._native import (
+    ActGroupCompleteness,
     InferenceInput,
     InferenceOutput,
     InferenceResult,
@@ -38,6 +39,7 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 
 __all__ = [
     "ActGroup",
+    "ActGroupCompleteness",
     "BuildPlan",
     "CarrierMappingEvidence",
     "CarrierProbe",
@@ -1863,6 +1865,11 @@ class PreparedGraph:
             raise ValueError("carrier substitutions must differ from the prepared baseline carrier")
         probes = tuple(self.probe_carrier(output, carrier, ir_worker=ir_worker) for carrier in values)
         return CarrierMappingEvidence(output, probes)
+
+    def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]:
+        """Return direct-output routing/replica completeness for every ACT group."""
+
+        return self._libraries.inspect_group_completeness(self.ir_provenance.graph_blob)
 
     def _normalize_binding(self, value: object) -> tuple[int, ...]:
         values: tuple[object, ...]

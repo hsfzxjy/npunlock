@@ -441,6 +441,7 @@ int main(void) {
   patchblob_target_v2 binary_u32_targets[4] = {{0}};
   patchblob_discovery_result discovery = {0};
   patchblob_discovery_result_v2 discovery_v2 = {0};
+  patchblob_group_completeness_result completeness = {0};
   patchblob_result result = {0};
   uint32_t flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
                    PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
@@ -486,6 +487,24 @@ int main(void) {
         multi_scalar_fp16_carrier.data != NULL && per_row_multi_scalar_fp16_carrier.data != NULL &&
         hybrid_scalar_fp16_carrier.data != NULL && global_hybrid_scalar_fp16_carrier.data != NULL &&
         elf.data != NULL && expected.data != NULL);
+
+  status = patchblob_inspect_group_completeness(
+      (npunlock_view){two_operation_carrier.data, two_operation_carrier.size}, &completeness);
+  if (status != NPUNLOCK_STATUS_OK && completeness.diagnostic.json.data != NULL) {
+    fprintf(stderr, "%s\n", (const char *)completeness.diagnostic.json.data);
+  }
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(completeness.group_count == 2);
+  CHECK(completeness.groups[0].group_index == 0);
+  CHECK(completeness.groups[0].state == PATCHBLOB_GROUP_COMPLETENESS_NOT_OBSERVED);
+  CHECK(completeness.groups[1].group_index == 1);
+  CHECK(completeness.groups[1].state == PATCHBLOB_GROUP_COMPLETENESS_COMPLETE);
+  CHECK(completeness.groups[1].invocation_count == 4);
+  CHECK(completeness.groups[1].routed_invocation_count == 2);
+  CHECK(completeness.groups[1].replica_invocation_count == 2);
+  CHECK(completeness.groups[1].unresolved_invocation_count == 0);
+  CHECK(completeness.groups[1].unresolved_flags == 0);
+  patchblob_group_completeness_result_release(&completeness);
 
   CHECK(check_scalar_carrier((npunlock_view){scalar_u16_carrier.data, scalar_u16_carrier.size},
                              (npunlock_view){elf.data, elf.size}, PATCHBLOB_TENSOR_PRECISION_U16_V2,
