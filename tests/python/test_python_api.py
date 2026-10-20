@@ -3074,10 +3074,13 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(comparison.mismatch_names, ())
 
     def test_graph_comparison_rejection_reasons(self) -> None:
-        comparison = npu.GraphComparison((1 << 2) | (1 << 6), (0, 1), False, False)
+        comparison = npu.GraphComparison((1 << 2) | (1 << 6) | (1 << 7) | (1 << 8), (0, 1), False, False)
 
         self.assertFalse(comparison.accepted)
-        self.assertEqual(comparison.mismatch_names, ("output_routing", "partial_group_code_change"))
+        self.assertEqual(
+            comparison.mismatch_names,
+            ("output_routing", "partial_group_code_change", "dma", "act_dma_relations"),
+        )
 
     def test_compare_native_graphs_validates_blobs(self) -> None:
         fake = FakeNative()

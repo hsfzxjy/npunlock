@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-20:** native DMA tasks can now be inspected from relocation-backed endpoints through transfer geometry and scheduling, exposing the missing intermediate routes without guessing from addresses. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#65-relocation-backed-dma-task-inspection).
+> **Latest breakthrough — 2026-10-20:** an intermediate ACT group's outputs can now be proven to form an exact scheduled DMA fan-in through DDR, exposing multi-tile data movement without claiming an unproven DPU edge. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#66-exact-act-to-dma-fan-in-coverage).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,

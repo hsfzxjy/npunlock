@@ -460,6 +460,7 @@ _GRAPH_COMPARISON_MISMATCH_NAMES = {
     1 << 5: "act_dpu_relations",
     1 << 6: "partial_group_code_change",
     1 << 7: "dma",
+    1 << 8: "act_dma_relations",
 }
 
 

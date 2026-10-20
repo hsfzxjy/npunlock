@@ -178,6 +178,16 @@ contract. They are not claimed for newer NPUs. A chain of compatible DMA
 endpoints and barriers is native scheduling evidence, not by itself a semantic
 source-graph edge.
 
+The inspector can derive one stricter relationship without assigning source
+semantics. An ACT-to-DMA source candidate requires the ACT output and a
+contiguous CMX-to-DDR transfer to have the same runtime symbol, exact address
+and byte span, plus a direct post/wait barrier intersection. Multiple such DDR
+destinations form an exact fan-in only when they are unique, non-overlapping,
+have one interval union, and one uniquely scheduled contiguous transfer reads
+that complete union into the observed NPU3720 multicast-CMX form. This proves
+the bytes and schedule through the DMA chain; it does not prove which DPU or
+source operation consumes the destination.
+
 Observed ACT relocation tables use 24-byte ELF64 `SHT_RELA` entries, flags
 `0x40`, alignment 8, and names derived from their target section, such as
 `.rlt.text.KernelParams`. Relocation type 4 is `R_VPU_32`: it writes

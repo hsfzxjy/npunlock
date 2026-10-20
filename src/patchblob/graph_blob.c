@@ -3175,6 +3175,386 @@ static size_t merge_output_byte_intervals(output_byte_interval *intervals, size_
   return merged_count;
 }
 
+static bool dma_task_is_simple_contiguous(const npunlock_dma_task_observation *task) {
+  return task->transfer_type_raw == 1u && task->length_bytes != 0u && task->num_planes_raw == 0u &&
+         task->source_plane_stride_raw == 0 && task->destination_plane_stride_raw == 0 &&
+         task->source_width_raw == task->length_bytes && task->source_stride_raw >= 0 &&
+         (uint32_t)task->source_stride_raw == task->length_bytes &&
+         task->destination_width_raw == task->length_bytes && task->destination_stride_raw >= 0 &&
+         (uint32_t)task->destination_stride_raw == task->length_bytes;
+}
+
+static bool act_dma_source_candidate_matches(const npunlock_invocation_routing_observation *act,
+                                             const npunlock_dma_task_observation *dma,
+                                             uint64_t *barrier_intersection) {
+  size_t tensor_index;
+  const npunlock_tensor_routing_observation *routing;
+  const patchblob_tensor_contract_v2 *tensor;
+
+  if (act->target.tensor_count == 0u) {
+    return false;
+  }
+  tensor_index = act->target.tensor_count - 1u;
+  routing = &act->tensors[tensor_index];
+  tensor = &act->target.tensors[tensor_index];
+  *barrier_intersection = act->post_mask_raw & dma->wait_mask_raw;
+  return tensor->role == PATCHBLOB_TENSOR_ROLE_OUTPUT_V2 && tensor->span_bytes != 0u &&
+         tensor->span_bytes <= UINT32_MAX && routing->data_addend >= 0 &&
+         dma_task_is_simple_contiguous(dma) &&
+         dma->source.memory_kind == NPUNLOCK_DMA_ENDPOINT_CMX &&
+         dma->source.relocation_type == R_VPU_64 && dma->source_value_raw == 0u &&
+         dma->source.symbol_raw == routing->data_symbol &&
+         dma->source.addend_raw == routing->data_addend &&
+         dma->length_bytes == (uint32_t)tensor->span_bytes &&
+         dma->destination.memory_kind == NPUNLOCK_DMA_ENDPOINT_DDR_BUFFER &&
+         dma->destination.relocation_type == R_VPU_64 && dma->destination_value_raw == 0u &&
+         dma->destination.addend_raw >= 0 && *barrier_intersection != 0u;
+}
+
+npunlock_status npunlock_derive_act_dma_source_candidates(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    const npunlock_dma_task_observation *dma_tasks, size_t dma_task_count,
+    npunlock_act_dma_source_candidate_observation **candidates, size_t *candidate_count,
+    npunlock_diagnostic *diagnostic) {
+  npunlock_act_dma_source_candidate_observation *result = NULL;
+  size_t result_count = 0u;
+  size_t result_index = 0u;
+  size_t comparisons;
+  size_t allocation_size;
+  size_t act_index;
+
+  if (candidates == NULL || candidate_count == NULL || diagnostic == NULL ||
+      (invocations == NULL && invocation_count != 0u) ||
+      (dma_tasks == NULL && dma_task_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *candidates = NULL;
+  *candidate_count = 0u;
+  if (!npunlock_checked_mul_size(invocation_count, dma_task_count, &comparisons) ||
+      !npunlock_checked_mul_size(comparisons, 2u, &comparisons) ||
+      comparisons > ACT_EDGE_MAX_COMPARISONS) {
+    return unsupported(diagnostic, "ACT/DMA candidate analysis exceeds its work bound");
+  }
+  for (act_index = 0; act_index < invocation_count; ++act_index) {
+    size_t dma_index;
+    for (dma_index = 0; dma_index < dma_task_count; ++dma_index) {
+      uint64_t barrier_intersection;
+      if (act_dma_source_candidate_matches(&invocations[act_index], &dma_tasks[dma_index],
+                                           &barrier_intersection)) {
+        if (result_count == SIZE_MAX) {
+          return unsupported(diagnostic, "ACT/DMA candidate count overflows");
+        }
+        ++result_count;
+      }
+    }
+  }
+  if (result_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (!npunlock_checked_mul_size(result_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT/DMA candidate allocation overflows");
+  }
+  result = (npunlock_act_dma_source_candidate_observation *)calloc(1u, allocation_size);
+  if (result == NULL) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT/DMA candidates");
+  }
+
+  for (act_index = 0; act_index < invocation_count; ++act_index) {
+    const npunlock_invocation_routing_observation *act = &invocations[act_index];
+    size_t tensor_index = act->target.tensor_count == 0u ? 0u : act->target.tensor_count - 1u;
+    size_t local_count = 0u;
+    size_t dma_index;
+    for (dma_index = 0; dma_index < dma_task_count; ++dma_index) {
+      uint64_t barrier_intersection;
+      if (act_dma_source_candidate_matches(act, &dma_tasks[dma_index], &barrier_intersection)) {
+        ++local_count;
+      }
+    }
+    if (local_count > UINT32_MAX) {
+      free(result);
+      return unsupported(diagnostic, "ACT/DMA ambiguity exceeds the supported range");
+    }
+    for (dma_index = 0; dma_index < dma_task_count; ++dma_index) {
+      const npunlock_dma_task_observation *dma = &dma_tasks[dma_index];
+      npunlock_act_dma_source_candidate_observation *candidate;
+      uint64_t barrier_intersection;
+      if (!act_dma_source_candidate_matches(act, dma, &barrier_intersection)) {
+        continue;
+      }
+      if (result_index >= result_count) {
+        free(result);
+        return unsupported(diagnostic, "ACT/DMA candidate count changed during inspection");
+      }
+      candidate = &result[result_index++];
+      candidate->act_group_index = act->group_index;
+      candidate->act_invocation_index = act->target.invocation_index;
+      candidate->act_tensor_record_index = (uint32_t)tensor_index;
+      candidate->dma_section_index = dma->section_index;
+      candidate->dma_task_index = dma->task_index;
+      candidate->dma_engine_index = dma->engine_index;
+      candidate->dma_candidate_count = (uint32_t)local_count;
+      candidate->ddr_symbol_table_index = dma->destination.symbol_table_index;
+      candidate->ddr_symbol_raw = dma->destination.symbol_raw;
+      candidate->act_data_addend_raw = act->tensors[tensor_index].data_addend;
+      candidate->dma_source_addend_raw = dma->source.addend_raw;
+      candidate->ddr_destination_addend_raw = dma->destination.addend_raw;
+      candidate->span_bytes = act->target.tensors[tensor_index].span_bytes;
+      candidate->barrier_intersection_raw = barrier_intersection;
+      candidate->dma_post_mask_raw = dma->post_mask_raw;
+    }
+  }
+  if (result_index != result_count) {
+    free(result);
+    return unsupported(diagnostic, "ACT/DMA candidate count changed during inspection");
+  }
+  *candidates = result;
+  *candidate_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
+static bool
+dma_fanin_task_matches(const npunlock_dma_task_observation *fanin,
+                       const npunlock_act_dma_source_candidate_observation *source_candidates,
+                       const size_t *selected_candidate_indices, size_t selected_count,
+                       uint32_t ddr_symbol_table_index, uint32_t ddr_symbol_raw, uint64_t ddr_start,
+                       uint64_t ddr_span) {
+  size_t index;
+  if (ddr_span == 0u || ddr_span > UINT32_MAX || ddr_start > INT64_MAX ||
+      !dma_task_is_simple_contiguous(fanin) ||
+      fanin->source.memory_kind != NPUNLOCK_DMA_ENDPOINT_DDR_BUFFER ||
+      fanin->source.relocation_type != R_VPU_64 || fanin->source_value_raw != 0u ||
+      fanin->source.symbol_table_index != ddr_symbol_table_index ||
+      fanin->source.symbol_raw != ddr_symbol_raw ||
+      fanin->source.addend_raw != (int64_t)ddr_start || fanin->length_bytes != (uint32_t)ddr_span ||
+      fanin->destination.memory_kind != NPUNLOCK_DMA_ENDPOINT_CMX ||
+      fanin->destination.relocation_type != R_VPU_64_OR ||
+      fanin->destination_value_raw != UINT64_C(0xc00000) || fanin->destination.addend_raw < 0) {
+    return false;
+  }
+  for (index = 0; index < selected_count; ++index) {
+    const npunlock_act_dma_source_candidate_observation *source =
+        &source_candidates[selected_candidate_indices[index]];
+    if ((source->dma_section_index == fanin->section_index &&
+         source->dma_task_index == fanin->task_index) ||
+        (source->dma_post_mask_raw & fanin->wait_mask_raw) == 0u) {
+      return false;
+    }
+  }
+  return true;
+}
+
+npunlock_status npunlock_derive_act_dma_fanin_observations(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, const npunlock_dma_task_observation *dma_tasks, size_t dma_task_count,
+    const npunlock_act_dma_source_candidate_observation *source_candidates,
+    size_t source_candidate_count, npunlock_act_dma_fanin_observation **observations,
+    size_t *observation_count, npunlock_diagnostic *diagnostic) {
+  npunlock_act_dma_fanin_observation *result = NULL;
+  output_byte_interval *intervals = NULL;
+  size_t *selected_candidate_indices = NULL;
+  size_t result_count = 0u;
+  size_t result_index = 0u;
+  size_t allocation_size;
+  size_t work_bound;
+  size_t work_term;
+  size_t group_index;
+
+  if (observations == NULL || observation_count == NULL || diagnostic == NULL ||
+      (invocations == NULL && invocation_count != 0u) ||
+      (dma_tasks == NULL && dma_task_count != 0u) ||
+      (source_candidates == NULL && source_candidate_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *observations = NULL;
+  *observation_count = 0u;
+  if (group_count > UINT32_MAX || invocation_count > UINT32_MAX ||
+      source_candidate_count > UINT32_MAX || dma_task_count > UINT32_MAX ||
+      !npunlock_checked_add_size(source_candidate_count, invocation_count, &work_term) ||
+      !npunlock_checked_add_size(work_term, dma_task_count, &work_term) ||
+      !npunlock_checked_mul_size(invocation_count, work_term, &work_bound) ||
+      !npunlock_checked_add_size(work_bound, source_candidate_count, &work_bound) ||
+      !npunlock_checked_mul_size(group_count, work_bound, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS) {
+    return unsupported(diagnostic, "ACT/DMA fan-in analysis exceeds its work bound");
+  }
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    size_t candidate_index;
+    for (candidate_index = 0; candidate_index < source_candidate_count; ++candidate_index) {
+      if (source_candidates[candidate_index].act_group_index == group_index) {
+        ++result_count;
+        break;
+      }
+    }
+  }
+  if (result_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (!npunlock_checked_mul_size(result_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT/DMA fan-in observation allocation overflows");
+  }
+  result = (npunlock_act_dma_fanin_observation *)calloc(1u, allocation_size);
+  if (!npunlock_checked_mul_size(invocation_count, sizeof(*intervals), &allocation_size)) {
+    free(result);
+    return unsupported(diagnostic, "ACT/DMA fan-in interval allocation overflows");
+  }
+  intervals = (output_byte_interval *)calloc(1u, allocation_size);
+  if (!npunlock_checked_mul_size(invocation_count, sizeof(*selected_candidate_indices),
+                                 &allocation_size)) {
+    free(result);
+    free(intervals);
+    return unsupported(diagnostic, "ACT/DMA fan-in selection allocation overflows");
+  }
+  selected_candidate_indices = (size_t *)calloc(1u, allocation_size);
+  if (result == NULL || (intervals == NULL && invocation_count != 0u) ||
+      (selected_candidate_indices == NULL && invocation_count != 0u)) {
+    free(result);
+    free(intervals);
+    free(selected_candidate_indices);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT/DMA fan-in observations");
+  }
+
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    npunlock_act_dma_fanin_observation *observation;
+    size_t selected_count = 0u;
+    size_t unique_task_count = 0u;
+    bool participates = false;
+    bool ddr_contract_set = false;
+    uint32_t ddr_symbol_table_index = 0u;
+    uint32_t ddr_symbol_raw = 0u;
+    size_t invocation_index;
+    size_t candidate_index;
+    for (candidate_index = 0; candidate_index < source_candidate_count; ++candidate_index) {
+      if (source_candidates[candidate_index].act_group_index == group_index) {
+        participates = true;
+        break;
+      }
+    }
+    if (!participates) {
+      continue;
+    }
+    observation = &result[result_index++];
+    observation->act_group_index = (uint32_t)group_index;
+    for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
+      const npunlock_invocation_routing_observation *invocation = &invocations[invocation_index];
+      const npunlock_act_dma_source_candidate_observation *selected = NULL;
+      size_t local_count = 0u;
+      if (invocation->group_index != group_index) {
+        continue;
+      }
+      ++observation->invocation_count;
+      for (candidate_index = 0; candidate_index < source_candidate_count; ++candidate_index) {
+        const npunlock_act_dma_source_candidate_observation *candidate =
+            &source_candidates[candidate_index];
+        if (candidate->act_group_index == group_index &&
+            candidate->act_invocation_index == invocation->target.invocation_index &&
+            candidate->act_tensor_record_index + 1u == invocation->target.tensor_count) {
+          selected = candidate;
+          ++local_count;
+        }
+      }
+      if (local_count != 1u || selected == NULL || selected->dma_candidate_count != 1u) {
+        observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_SOURCE_UNCLASSIFIED;
+        if (local_count > 1u || (selected != NULL && selected->dma_candidate_count != 1u)) {
+          observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_SOURCE_AMBIGUOUS;
+        }
+        continue;
+      }
+      selected_candidate_indices[selected_count] = (size_t)(selected - source_candidates);
+      intervals[selected_count].start = (uint64_t)selected->ddr_destination_addend_raw;
+      if (intervals[selected_count].start > UINT64_MAX - selected->span_bytes) {
+        observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_DDR_COVER_UNRESOLVED;
+        continue;
+      }
+      intervals[selected_count].end = intervals[selected_count].start + selected->span_bytes;
+      if (!ddr_contract_set) {
+        ddr_symbol_table_index = selected->ddr_symbol_table_index;
+        ddr_symbol_raw = selected->ddr_symbol_raw;
+        ddr_contract_set = true;
+      } else if (ddr_symbol_table_index != selected->ddr_symbol_table_index ||
+                 ddr_symbol_raw != selected->ddr_symbol_raw) {
+        observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_DDR_COVER_UNRESOLVED;
+      }
+      ++selected_count;
+      ++observation->matched_invocation_count;
+    }
+    for (candidate_index = 0; candidate_index < selected_count; ++candidate_index) {
+      const npunlock_act_dma_source_candidate_observation *candidate =
+          &source_candidates[selected_candidate_indices[candidate_index]];
+      size_t prior;
+      bool first = true;
+      for (prior = 0; prior < candidate_index; ++prior) {
+        const npunlock_act_dma_source_candidate_observation *earlier =
+            &source_candidates[selected_candidate_indices[prior]];
+        if (earlier->dma_section_index == candidate->dma_section_index &&
+            earlier->dma_task_index == candidate->dma_task_index) {
+          first = false;
+          observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_SOURCE_TASK_REUSED;
+          break;
+        }
+      }
+      if (first) {
+        ++unique_task_count;
+      }
+    }
+    observation->source_dma_task_count = (uint32_t)unique_task_count;
+    if (selected_count == observation->invocation_count && selected_count != 0u &&
+        (observation->unresolved_flags &
+         (NPUNLOCK_ACT_DMA_FANIN_SOURCE_UNCLASSIFIED | NPUNLOCK_ACT_DMA_FANIN_SOURCE_AMBIGUOUS |
+          NPUNLOCK_ACT_DMA_FANIN_SOURCE_TASK_REUSED |
+          NPUNLOCK_ACT_DMA_FANIN_DDR_COVER_UNRESOLVED)) == 0u) {
+      bool overlap;
+      size_t merged_count = merge_output_byte_intervals(intervals, selected_count, &overlap);
+      if (!overlap && merged_count == 1u) {
+        uint64_t ddr_start = intervals[0].start;
+        uint64_t ddr_span = intervals[0].end - intervals[0].start;
+        const npunlock_dma_task_observation *selected_fanin = NULL;
+        size_t dma_index;
+        for (dma_index = 0; dma_index < dma_task_count; ++dma_index) {
+          if (dma_fanin_task_matches(&dma_tasks[dma_index], source_candidates,
+                                     selected_candidate_indices, selected_count,
+                                     ddr_symbol_table_index, ddr_symbol_raw, ddr_start, ddr_span)) {
+            selected_fanin = &dma_tasks[dma_index];
+            ++observation->fanin_candidate_count;
+          }
+        }
+        if (observation->fanin_candidate_count == 1u && selected_fanin != NULL) {
+          observation->fanin_dma_section_index = selected_fanin->section_index;
+          observation->fanin_dma_task_index = selected_fanin->task_index;
+          observation->fanin_dma_engine_index = selected_fanin->engine_index;
+          observation->ddr_symbol_table_index = ddr_symbol_table_index;
+          observation->ddr_symbol_raw = ddr_symbol_raw;
+          observation->ddr_source_addend_raw = (int64_t)ddr_start;
+          observation->span_bytes = ddr_span;
+          observation->cmx_destination_addend_raw = selected_fanin->destination.addend_raw;
+          observation->cmx_destination_value_raw = selected_fanin->destination_value_raw;
+          observation->fanin_wait_mask_raw = selected_fanin->wait_mask_raw;
+          observation->fanin_post_mask_raw = selected_fanin->post_mask_raw;
+          observation->exact_cover = true;
+        } else {
+          observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_TASK_AMBIGUOUS;
+        }
+      } else {
+        observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_DDR_COVER_UNRESOLVED;
+      }
+    } else {
+      observation->unresolved_flags |= NPUNLOCK_ACT_DMA_FANIN_DDR_COVER_UNRESOLVED;
+    }
+  }
+  free(intervals);
+  free(selected_candidate_indices);
+  if (result_index != result_count) {
+    free(result);
+    return unsupported(diagnostic, "ACT/DMA fan-in count changed during inspection");
+  }
+  *observations = result;
+  *observation_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 static bool
 act_dpu_candidates_share_input(const npunlock_act_dpu_edge_candidate_observation *left,
                                const npunlock_act_dpu_edge_candidate_observation *right) {
@@ -4155,6 +4535,8 @@ void npunlock_graph_routing_observations_release(
   }
   free(observations->invocations);
   free(observations->dma_tasks);
+  free(observations->act_dma_source_candidates);
+  free(observations->act_dma_fanin_observations);
   free(observations->network_output_routes);
   free(observations->act_output_slice_candidates);
   free(observations->act_output_covers);
@@ -4268,6 +4650,16 @@ npunlock_compare_graph_routing_observations(const npunlock_graph_routing_observa
     comparison->mismatch_flags |= NPUNLOCK_COMPARE_DMA_CHANGED;
   }
   if (!observation_arrays_equal(
+          baseline->act_dma_source_candidates, baseline->act_dma_source_candidate_count,
+          candidate->act_dma_source_candidates, candidate->act_dma_source_candidate_count,
+          sizeof(*baseline->act_dma_source_candidates)) ||
+      !observation_arrays_equal(
+          baseline->act_dma_fanin_observations, baseline->act_dma_fanin_observation_count,
+          candidate->act_dma_fanin_observations, candidate->act_dma_fanin_observation_count,
+          sizeof(*baseline->act_dma_fanin_observations))) {
+    comparison->mismatch_flags |= NPUNLOCK_COMPARE_ACT_DMA_RELATIONS_CHANGED;
+  }
+  if (!observation_arrays_equal(
           baseline->network_output_routes, baseline->network_output_route_count,
           candidate->network_output_routes, candidate->network_output_route_count,
           sizeof(*baseline->network_output_routes))) {
@@ -4338,6 +4730,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   patchblob_discovered_target_v2 *discovered = NULL;
   npunlock_invocation_routing_observation *invocations = NULL;
   npunlock_dma_task_observation *dma_tasks = NULL;
+  npunlock_act_dma_source_candidate_observation *act_dma_source_candidates = NULL;
+  npunlock_act_dma_fanin_observation *act_dma_fanin_observations = NULL;
   npunlock_network_output_route_observation *network_output_routes = NULL;
   npunlock_act_output_slice_candidate_observation *act_output_slice_candidates = NULL;
   npunlock_act_output_cover_observation *act_output_covers = NULL;
@@ -4354,6 +4748,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t group_count = 0;
   size_t invocation_count = 0;
   size_t dma_task_count = 0;
+  size_t act_dma_source_candidate_count = 0;
+  size_t act_dma_fanin_observation_count = 0;
   size_t network_output_route_count = 0;
   size_t act_output_slice_candidate_count = 0;
   size_t act_output_cover_count = 0;
@@ -4471,6 +4867,19 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
              (size_t)contract.rank * sizeof(contract.strides_bits[0]));
     }
   }
+  status = npunlock_derive_act_dma_source_candidates(invocations, invocation_count, dma_tasks,
+                                                     dma_task_count, &act_dma_source_candidates,
+                                                     &act_dma_source_candidate_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
+  status = npunlock_derive_act_dma_fanin_observations(
+      invocations, invocation_count, group_count, dma_tasks, dma_task_count,
+      act_dma_source_candidates, act_dma_source_candidate_count, &act_dma_fanin_observations,
+      &act_dma_fanin_observation_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
   status = npunlock_derive_act_edge_candidates(invocations, invocation_count, &act_edge_candidates,
                                                &act_edge_candidate_count, diagnostic);
   if (status != NPUNLOCK_STATUS_OK) {
@@ -4534,6 +4943,10 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->tile_count_observed = tile_count_observed;
   observations->dma_tasks = dma_tasks;
   observations->dma_task_count = dma_task_count;
+  observations->act_dma_source_candidates = act_dma_source_candidates;
+  observations->act_dma_source_candidate_count = act_dma_source_candidate_count;
+  observations->act_dma_fanin_observations = act_dma_fanin_observations;
+  observations->act_dma_fanin_observation_count = act_dma_fanin_observation_count;
   observations->network_output_routes = network_output_routes;
   observations->network_output_route_count = network_output_route_count;
   observations->act_output_slice_candidates = act_output_slice_candidates;
@@ -4561,6 +4974,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
 fail:
   free(invocations);
   free(dma_tasks);
+  free(act_dma_source_candidates);
+  free(act_dma_fanin_observations);
   free(network_output_routes);
   free(act_output_slice_candidates);
   free(act_output_covers);

@@ -2010,6 +2010,34 @@ buffer lifetime, and uniqueness of multi-hop chains must still be proven
 before this evidence can complete an intermediate custom-node binding or
 select a patch target automatically.
 
+## 66. Exact ACT-to-DMA fan-in coverage
+
+On 2026-10-20, the section 65 records were joined to ACT tensor intervals and
+barriers under a deliberately narrower rule. Each ACT output must have exactly
+one contiguous CMX-to-DDR task with the same runtime symbol, address, byte
+span, and direct post/wait dependency. The DDR destinations must be unique and
+non-overlapping, and their interval union must exactly equal the source of one
+uniquely scheduled DDR-to-multicast-CMX task.
+
+The section 64 branched carrier satisfies that proof for ACT group 2. Its two
+32-byte invocation outputs at CMX addends 192 and 2,097,344 uniquely feed DMA
+engine/task pairs `(0,8)` and `(1,6)`. They become adjacent DDR intervals
+`[0,32)` and `[32,64)`. DMA `(0,9)` consumes exactly `[0,64)`, writes the
+64-byte multicast-CMX form at addend 128, and preserves the observed barrier
+chain from ACT post `0x20`, through source-task post/fan-in wait `0x40`, to
+fan-in post `0x80`.
+
+No address containment heuristic is used: a missing or duplicated task, an
+overlapping or gapped DDR union, a different symbol, a non-contiguous transfer,
+or a missing direct barrier dependency leaves the observation unresolved.
+Strict graph comparison also reports derived-chain changes separately as
+`act_dma_relations`.
+
+This proves a complete native ACT-to-DMA fan-in for this group. It does not yet
+decode the multicast target set, prove which DPU inputs receive the 64 bytes,
+or make the group eligible for automatic patch selection. That final
+DMA-to-DPU ownership proof remains separate.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

@@ -161,7 +161,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v18\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v19\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -458,6 +458,61 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"act_source_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dma_source_candidate_count; ++index) {
+    const npunlock_act_dma_source_candidate_observation *candidate =
+        &routing->act_dma_source_candidates[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"act_invocation_index\": %u, "
+                "\"act_tensor_record_index\": %u, \"dma_section_index\": %u, "
+                "\"dma_task_index\": %u, \"dma_engine_index\": %u, "
+                "\"dma_candidate_count\": %u, \"match_observation\": {"
+                "\"ddr_symbol_table_index\": %u, \"ddr_symbol_raw\": %u, "
+                "\"act_data_addend_raw\": %" PRId64 ", \"dma_source_addend_raw\": %" PRId64
+                ", \"ddr_destination_addend_raw\": %" PRId64 ", \"span_bytes\": %" PRIu64
+                ", \"barrier_intersection_raw\": %" PRIu64 ", \"dma_post_mask_raw\": %" PRIu64 "}}",
+                index == 0 ? "" : ",\n", candidate->act_group_index,
+                candidate->act_invocation_index, candidate->act_tensor_record_index,
+                candidate->dma_section_index, candidate->dma_task_index,
+                candidate->dma_engine_index, candidate->dma_candidate_count,
+                candidate->ddr_symbol_table_index, candidate->ddr_symbol_raw,
+                candidate->act_data_addend_raw, candidate->dma_source_addend_raw,
+                candidate->ddr_destination_addend_raw, candidate->span_bytes,
+                candidate->barrier_intersection_raw, candidate->dma_post_mask_raw) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"act_fanin_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dma_fanin_observation_count; ++index) {
+    const npunlock_act_dma_fanin_observation *observation =
+        &routing->act_dma_fanin_observations[index];
+    if (fprintf(
+            stream,
+            "%s    {\"act_group_index\": %u, \"invocation_count\": %u, "
+            "\"matched_invocation_count\": %u, \"source_dma_task_count\": %u, "
+            "\"fanin_candidate_count\": %u, \"fanin_dma_section_index\": %u, "
+            "\"fanin_dma_task_index\": %u, \"fanin_dma_engine_index\": %u, "
+            "\"ddr_symbol_table_index\": %u, \"ddr_symbol_raw\": %u, "
+            "\"ddr_source_addend_raw\": %" PRId64 ", \"span_bytes\": %" PRIu64
+            ", \"cmx_destination_addend_raw\": %" PRId64 ", \"cmx_destination_value_raw\": %" PRIu64
+            ", \"fanin_wait_mask_raw\": %" PRIu64 ", \"fanin_post_mask_raw\": %" PRIu64
+            ", \"exact_cover\": %s, \"unresolved_flags\": %u}",
+            index == 0 ? "" : ",\n", observation->act_group_index, observation->invocation_count,
+            observation->matched_invocation_count, observation->source_dma_task_count,
+            observation->fanin_candidate_count, observation->fanin_dma_section_index,
+            observation->fanin_dma_task_index, observation->fanin_dma_engine_index,
+            observation->ddr_symbol_table_index, observation->ddr_symbol_raw,
+            observation->ddr_source_addend_raw, observation->span_bytes,
+            observation->cmx_destination_addend_raw, observation->cmx_destination_value_raw,
+            observation->fanin_wait_mask_raw, observation->fanin_post_mask_raw,
+            observation->exact_cover ? "true" : "false", observation->unresolved_flags) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ]},\n  \"dpu\": {\"invariant_count\": %zu, \"invariants\": [\n",
               routing->dpu_invariant_count) < 0) {
     return 0;
@@ -571,9 +626,13 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   }
   return fprintf(stream,
                  "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
-                 "DPU-invariant, network-output DMA, and raw DMA-task contract; DMA endpoints "
+                 "network-output DMA, and raw DMA-task contract; DMA endpoints "
                  "come from validated relocations, while transfer geometry and scheduling "
-                 "fields remain raw observations; ACT edge candidates are exact "
+                 "fields remain raw observations; ACT/DMA source candidates require an exact "
+                 "CMX interval and direct schedule match; fan-in observations additionally "
+                 "require unique source tasks, an exact non-overlapping DDR union, and one "
+                 "scheduled DDR-to-multicast-CMX task, but do not establish DPU ownership; ACT "
+                 "edge candidates are exact "
                  "interval/ACT-schedule "
                  "correlations, including bounded transitive wait/post paths; ACT/DPU candidates "
                  "require interval containment and a direct schedule dependency; ACT "
@@ -608,6 +667,7 @@ static int write_mismatch_names(FILE *stream, uint32_t flags) {
       {NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED, "act_dpu_relations"},
       {NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE, "partial_group_code_change"},
       {NPUNLOCK_COMPARE_DMA_CHANGED, "dma"},
+      {NPUNLOCK_COMPARE_ACT_DMA_RELATIONS_CHANGED, "act_dma_relations"},
   };
   bool first = true;
   size_t index;

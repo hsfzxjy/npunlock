@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 18 JSON report records the blob size and SHA-256 plus every
+The version 19 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -122,6 +122,15 @@ constant, graph input, graph output, another runtime symbol, or unknown. This
 makes paths through intermediate DDR storage inspectable without guessing from
 address values. It is groundwork for later ACT-to-DMA-to-DPU correlation, not
 proof that a sequence of transfers represents a particular source-level edge.
+
+Schema v19 adds `act_source_candidates` and `act_fanin_observations`. A source
+candidate requires one ACT output to match a contiguous CMX-to-DDR task by
+symbol, exact byte interval, and a direct post/wait barrier intersection. A
+fan-in is exact only when every invocation in the ACT group has one unique
+source task, their non-overlapping DDR destinations have one exact interval
+union, and one uniquely scheduled DDR-to-multicast-CMX task consumes that
+union. The result proves the bounded native data-movement chain; it does not
+infer what consumes the multicast destination or identify a source node.
 
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
