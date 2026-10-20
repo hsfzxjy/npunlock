@@ -13,7 +13,7 @@ if(NOT result EQUAL 0)
 endif()
 
 foreach(expected
-    "\"schema\": \"npunlock.porting.inspect.v16\""
+    "\"schema\": \"npunlock.porting.inspect.v17\""
     "\"invocation_index\": 0"
     "\"wait_mask_raw\": 1, \"post_mask_raw\": 2"
     "\"data_addend_raw\": 64"
@@ -29,6 +29,13 @@ foreach(expected
     message(FATAL_ERROR "ACT schedule inspection changed a retained observation: ${expected}")
   endif()
 endforeach()
+
+string(FIND "${report}"
+  "{\"producer_group_index\": 0, \"producer_invocation_count\": 4, \"matched_producer_invocation_count\": 4, \"unresolved_producer_invocation_count\": 0, \"consumer_group_count\": 1, \"consumer_input_count\": 4, \"exact_cover\": true, \"unresolved_flags\": 0}"
+  consumer_cover_offset)
+if(consumer_cover_offset EQUAL -1)
+  message(FATAL_ERROR "intermediate ACT group was not classified as an exact consumer cover")
+endif()
 
 string(FIND "${report}"
   "{\"act_group_index\": 1, \"output_symbol_raw\": 1, \"invocation_count\": 4, \"routed_invocation_count\": 2, \"replica_invocation_count\": 2, \"unresolved_invocation_count\": 0, \"complete\": true, \"unresolved_flags\": 0}"
@@ -47,7 +54,8 @@ foreach(expected
   endif()
 endforeach()
 
-string(REGEX MATCHALL "\"producer_group_index\"" candidate_entries "${report}")
+string(REGEX MATCHALL "\"producer_group_index\": 0, \"producer_invocation_index\""
+  candidate_entries "${report}")
 list(LENGTH candidate_entries candidate_count)
 if(NOT candidate_count EQUAL 4)
   message(FATAL_ERROR "expected four ACT edge candidates, found ${candidate_count}")

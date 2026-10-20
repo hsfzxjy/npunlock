@@ -142,7 +142,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v16\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v17\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -260,6 +260,26 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 candidate->consumer_tensor_record_index, candidate->consumer_candidate_count,
                 candidate->data_symbol_raw, candidate->data_addend_raw, candidate->span_bytes,
                 candidate->schedule_hop_count, candidate->barrier_intersection_raw) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"act_consumer_cover_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_consumer_cover_count; ++index) {
+    const npunlock_act_consumer_cover_observation *observation =
+        &routing->act_consumer_covers[index];
+    if (fprintf(stream,
+                "%s    {\"producer_group_index\": %u, \"producer_invocation_count\": %u, "
+                "\"matched_producer_invocation_count\": %u, "
+                "\"unresolved_producer_invocation_count\": %u, \"consumer_group_count\": %u, "
+                "\"consumer_input_count\": %u, \"exact_cover\": %s, \"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", observation->producer_group_index,
+                observation->producer_invocation_count,
+                observation->matched_producer_invocation_count,
+                observation->unresolved_producer_invocation_count,
+                observation->consumer_group_count, observation->consumer_input_count,
+                observation->exact_cover ? "true" : "false", observation->unresolved_flags) < 0) {
       return 0;
     }
   }
@@ -497,7 +517,9 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "and network-output DMA contract; routing and scheduling fields are raw "
                  "validated observations; ACT edge candidates are exact interval/ACT-schedule "
                  "correlations, including bounded transitive wait/post paths; ACT/DPU candidates "
-                 "require interval containment and a direct schedule dependency; output-slice "
+                 "require interval containment and a direct schedule dependency; ACT "
+                 "consumer-cover observations require every producer invocation to have one "
+                 "unique whole-tensor ACT consumer input; output-slice "
                  "candidates translate only ACT output subranges contained by validated "
                  "network-output DMA routes; output-cover observations require unique, "
                  "non-overlapping slices with the same interval union as the output routes; "

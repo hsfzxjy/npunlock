@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v16\""
+    "\"schema\": \"npunlock.porting.inspect.v17\""
     "\"code_observation\""
     "\"offset_raw\""
     "\"extent\""
@@ -37,6 +37,7 @@ foreach(required
     "\"start_after_raw\""
     "\"clean_after_raw\""
     "\"act_edge_candidates\""
+    "\"act_consumer_cover_observations\""
     "\"data_symbol_raw\""
     "\"data_addend_raw\""
     "\"dimensions\""

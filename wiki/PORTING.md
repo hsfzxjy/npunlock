@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 16 JSON report records the blob size and SHA-256 plus every
+The version 17 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -100,6 +100,13 @@ endpoints are qualified by both section and invariant index because invariant
 indices are not globally unique. This proves a bounded native interval and
 schedule relationship; it does not establish a source-level semantic edge,
 classify tile replicas, or permit automatic patch selection.
+
+Schema v17 adds `act_consumer_cover_observations` for whole-tensor ACT-to-ACT
+relationships. A producer group is exact only when every invocation output
+has one unique consumer input and every such input has one candidate producer.
+Fan-out, multiple possible producers, duplicated inputs, and missing producer
+invocations remain unresolved. This is still native interval/schedule evidence,
+not proof that either group corresponds to a particular source operation.
 
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:

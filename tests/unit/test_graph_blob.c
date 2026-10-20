@@ -353,6 +353,63 @@ static int test_act_dpu_output_cover_observations(void) {
   return 0;
 }
 
+static int test_act_consumer_cover_observations(void) {
+  npunlock_invocation_routing_observation invocations[8];
+  npunlock_act_edge_candidate_observation candidates[4] = {{0}};
+  npunlock_act_consumer_cover_observation *covers = NULL;
+  size_t cover_count = 0;
+  size_t index;
+  npunlock_diagnostic diagnostic = {0};
+
+  for (index = 0; index < 4; ++index) {
+    configure_edge_invocation(&invocations[index], (uint32_t)index, 0, 0, 0, 1, 2);
+    configure_edge_invocation(&invocations[index + 4u], (uint32_t)(index + 4u), 1, 0, 0, 2, 4);
+    candidates[index].producer_group_index = 0;
+    candidates[index].producer_invocation_index = (uint32_t)index;
+    candidates[index].producer_tensor_record_index = 1;
+    candidates[index].consumer_group_index = 1;
+    candidates[index].consumer_invocation_index = (uint32_t)(index + 4u);
+    candidates[index].consumer_tensor_record_index = 0;
+    candidates[index].consumer_candidate_count = 1;
+  }
+
+  CHECK(npunlock_derive_act_consumer_cover_observations(invocations, 8, 2, candidates, 4, &covers,
+                                                        &cover_count,
+                                                        &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(covers[0].exact_cover);
+  CHECK(covers[0].producer_invocation_count == 4);
+  CHECK(covers[0].matched_producer_invocation_count == 4);
+  CHECK(covers[0].consumer_group_count == 1);
+  CHECK(covers[0].consumer_input_count == 4);
+  free(covers);
+  covers = NULL;
+
+  candidates[3].producer_invocation_index = 2;
+  CHECK(npunlock_derive_act_consumer_cover_observations(invocations, 8, 2, candidates, 4, &covers,
+                                                        &cover_count,
+                                                        &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(!covers[0].exact_cover);
+  CHECK(covers[0].unresolved_producer_invocation_count == 2);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_ACT_CONSUMER_COVER_EDGE_AMBIGUOUS) != 0);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_ACT_CONSUMER_COVER_PRODUCER_UNCLASSIFIED) != 0);
+  free(covers);
+  covers = NULL;
+
+  candidates[3].producer_invocation_index = 3;
+  candidates[3].consumer_invocation_index = 6;
+  CHECK(npunlock_derive_act_consumer_cover_observations(invocations, 8, 2, candidates, 4, &covers,
+                                                        &cover_count,
+                                                        &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(!covers[0].exact_cover);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_ACT_CONSUMER_COVER_INPUT_DUPLICATED) != 0);
+  free(covers);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
 static int test_routing_comparison(void) {
   npunlock_invocation_routing_observation baseline_invocations[2];
   npunlock_invocation_routing_observation candidate_invocations[2];
@@ -428,6 +485,7 @@ int main(void) {
   CHECK(test_output_cover_observations() == 0);
   CHECK(test_replica_candidate_bijection() == 0);
   CHECK(test_act_dpu_output_cover_observations() == 0);
+  CHECK(test_act_consumer_cover_observations() == 0);
   CHECK(test_routing_comparison() == 0);
 
   target.struct_size = sizeof(target);
