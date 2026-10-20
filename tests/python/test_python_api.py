@@ -731,7 +731,7 @@ class FakeNative:
         self.coverage = (
             npu.ActGroupCoverage(
                 0,
-                2,
+                1,
                 "not_observed",
                 "complete",
                 "not_observed",
@@ -740,9 +740,9 @@ class FakeNative:
                 0,
                 0,
                 0,
-                2,
                 1,
-                2,
+                1,
+                1,
                 0,
                 0,
             ),
@@ -1124,6 +1124,78 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(coverage[0].direct_output_unresolved_names, ())
         self.assertEqual(coverage[0].act_consumer_unresolved_names, ())
         self.assertEqual(coverage[0].dpu_consumer_unresolved_names, ())
+
+    def test_reviewed_binding_combines_consistent_mapping_and_complete_coverage(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"sqrt", b"tanh"]
+        fake.comparisons = [
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(0, (0,), True, True),
+        ]
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        evidence = prepared.probe_mapping(y, ("Sqrt", "Tanh"))
+        reviewed = prepared.review_binding(y, evidence, coverage_kind="act_consumer")
+        plan = prepared.plan(bindings={y: reviewed})
+
+        self.assertEqual(reviewed.group_index, 0)
+        self.assertEqual(reviewed.coverage_kind, "act_consumer")
+        self.assertEqual(reviewed.baseline_graph_blob_sha256, hashlib.sha256(b"baseline").hexdigest())
+        self.assertIn("accepted_carriers=Sqrt,Tanh", reviewed.explain())
+        self.assertEqual(plan.group_indices, ((0,),))
+
+    def test_reviewed_binding_requires_complete_selected_coverage(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"sqrt", b"tanh"]
+        fake.comparisons = [
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(0, (0,), True, True),
+        ]
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        evidence = prepared.probe_mapping(y, ("Sqrt", "Tanh"))
+
+        with self.assertRaisesRegex(ValueError, "not_observed, not complete"):
+            prepared.review_binding(y, evidence, coverage_kind="direct_output")
+
+    def test_plan_revalidates_reviewed_binding(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"sqrt", b"tanh"]
+        fake.comparisons = [
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(0, (0,), True, True),
+        ]
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        evidence = prepared.probe_mapping(y, ("Sqrt", "Tanh"))
+        reviewed = prepared.review_binding(y, evidence, coverage_kind="act_consumer")
+        altered = npu.ReviewedBinding(
+            reviewed.output,
+            reviewed.group_index,
+            reviewed.coverage_kind,
+            "0" * 64,
+            reviewed.evidence,
+            reviewed.coverage,
+        )
+
+        with self.assertRaisesRegex(ValueError, "no longer matches"):
+            prepared.plan(bindings={y: altered})
 
     def test_positional_mapping_rejects_dtype_mismatch(self) -> None:
         f32 = npu.input("f32", shape=(1, 32), dtype="f32")

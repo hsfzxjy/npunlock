@@ -207,6 +207,15 @@ class CarrierMappingEvidence:
     def group_index(self) -> int | None: ...
     def explain(self) -> str: ...
 
+class ReviewedBinding:
+    output: Tensor
+    group_index: int
+    coverage_kind: str
+    baseline_graph_blob_sha256: str
+    evidence: CarrierMappingEvidence
+    coverage: ActGroupCoverage
+    def explain(self) -> str: ...
+
 class InferenceInput:
     selector: int | str
     data: bytes
@@ -370,6 +379,13 @@ class PreparedGraph:
     ) -> CarrierMappingEvidence: ...
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]: ...
+    def review_binding(
+        self,
+        output: Tensor,
+        evidence: CarrierMappingEvidence,
+        *,
+        coverage_kind: str,
+    ) -> ReviewedBinding: ...
     def plan(
         self,
         *,

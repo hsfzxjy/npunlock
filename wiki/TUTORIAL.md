@@ -457,6 +457,26 @@ Each record keeps `direct_output_state`, `act_consumer_state`, and
 proves bounded native invocation coverage, not source identity, and is not an
 automatic patch binding.
 
+After reviewing both kinds of evidence, you can deliberately combine them in
+an immutable binding:
+
+```python
+reviewed = prepared.review_binding(
+    custom_output,
+    evidence,
+    coverage_kind="act_consumer",
+)
+program = prepared.build(bindings={custom_output: reviewed})
+```
+
+`review_binding()` requires consistent evidence from at least two accepted
+carrier probes, requires the chosen `direct_output`, `act_consumer`, or
+`dpu_consumer` coverage state to be `complete`, and records the exact prepared
+native-blob hash. Planning rechecks those conditions. You must choose the
+coverage kind; npunlock does not merge the three meanings or silently use this
+object for another custom output. This opt-in path does not change ordinary
+positional mapping, and raw explicit `ActGroup` bindings remain available.
+
 For several kernels, filter groups with independent fields and bind them all:
 
 ```python

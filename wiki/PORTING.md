@@ -197,6 +197,26 @@ flags. The native C equivalent is `patchblob_inspect_group_coverage()`. Neither
 API chooses which evidence kind is sufficient for a binding, and neither
 combines coverage with a symbolic source label.
 
+Python callers can make that policy choice explicitly after inspecting both
+reports:
+
+```python
+reviewed = prepared.review_binding(
+    custom_output,
+    evidence,
+    coverage_kind="act_consumer",
+)
+plan = prepared.plan(bindings={custom_output: reviewed})
+```
+
+This accepts only `consistent` multi-probe evidence and a caller-selected
+coverage kind whose state is `complete`. The immutable result records the
+prepared native-blob hash, group, evidence, and coverage; `plan()` revalidates
+them before resolving the existing explicit group binding. It is a review aid,
+not an automatic source mapper or an unforgeable authorization token: callers
+can still bind an `ActGroup` or integer index directly when they have external
+evidence.
+
 The same report includes the exact compiler-8.3/NPU3720 DPU invariant form.
 For each 304-byte invariant
 it reports raw wait/post scheduling fields and the CMX runtime relocations for

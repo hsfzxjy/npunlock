@@ -64,6 +64,7 @@ __all__ = [
     "PatchTensorContract",
     "PreparedGraph",
     "Program",
+    "ReviewedBinding",
     "SerializedIR",
     "Shape",
     "SharedArray",
@@ -447,6 +448,25 @@ class CarrierMappingEvidence:
                 f"changed_groups={changed}; mismatches={mismatches}"
             )
         return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedBinding:
+    """An explicit ACT-group binding backed by source-label and coverage evidence."""
+
+    output: Tensor = field(repr=False, compare=False)
+    group_index: int
+    coverage_kind: str
+    baseline_graph_blob_sha256: str
+    evidence: CarrierMappingEvidence = field(repr=False, compare=False)
+    coverage: ActGroupCoverage
+
+    def explain(self) -> str:
+        carriers = ",".join(probe.candidate_carrier for probe in self.evidence.accepted_probes)
+        return (
+            f"reviewed binding: group={self.group_index}; coverage={self.coverage_kind}; "
+            f"accepted_carriers={carriers}; baseline_graph_blob_sha256={self.baseline_graph_blob_sha256}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1878,7 +1898,56 @@ class PreparedGraph:
 
         return self._libraries.inspect_group_coverage(self.ir_provenance.graph_blob)
 
-    def _normalize_binding(self, value: object) -> tuple[int, ...]:
+    def review_binding(
+        self,
+        output: Tensor,
+        evidence: CarrierMappingEvidence,
+        *,
+        coverage_kind: str,
+    ) -> ReviewedBinding:
+        """Create an explicit binding from consistent probes and one complete coverage kind."""
+
+        if not isinstance(output, Tensor) or output.producer not in self.serialized_ir.custom_nodes:
+            raise ValueError("reviewed binding output must belong to a custom node in this prepared graph")
+        if not isinstance(evidence, CarrierMappingEvidence) or evidence.output is not output:
+            raise ValueError("carrier mapping evidence must belong to the reviewed custom output")
+        if evidence.status != "consistent" or evidence.group_index is None:
+            raise ValueError("reviewed binding requires consistent carrier mapping evidence")
+        if any(probe.output is not output for probe in evidence.probes):
+            raise ValueError("carrier mapping probes must belong to the reviewed custom output")
+        baseline_hash = hashlib.sha256(self.ir_provenance.graph_blob).hexdigest()
+        if any(probe.baseline_graph_blob_sha256 != baseline_hash for probe in evidence.probes):
+            raise ValueError("carrier mapping evidence belongs to a different native graph blob")
+        group_index = evidence.group_index
+        if not 0 <= group_index < len(self.groups):
+            raise ValueError(f"carrier mapping evidence group {group_index} is out of range")
+        if coverage_kind not in {"direct_output", "act_consumer", "dpu_consumer"}:
+            raise ValueError("coverage_kind must be 'direct_output', 'act_consumer', or 'dpu_consumer'")
+        coverage_records = self.inspect_group_coverage()
+        if len(coverage_records) != len(self.groups):
+            raise RuntimeError("group coverage count does not match prepared ACT groups")
+        coverage = coverage_records[group_index]
+        if coverage.group_index != group_index or coverage.invocation_count != len(self.groups[group_index].targets):
+            raise RuntimeError("group coverage does not match the prepared ACT group")
+        coverage_state = {
+            "direct_output": coverage.direct_output_state,
+            "act_consumer": coverage.act_consumer_state,
+            "dpu_consumer": coverage.dpu_consumer_state,
+        }[coverage_kind]
+        if coverage_state != "complete":
+            raise ValueError(
+                f"ACT group {group_index} coverage kind {coverage_kind!r} is {coverage_state}, not complete"
+            )
+        return ReviewedBinding(output, group_index, coverage_kind, baseline_hash, evidence, coverage)
+
+    def _normalize_binding(self, value: object, *, output: Tensor | None = None) -> tuple[int, ...]:
+        if isinstance(value, ReviewedBinding):
+            if output is None or value.output is not output:
+                raise ValueError("ReviewedBinding does not belong to this custom output")
+            current = self.review_binding(output, value.evidence, coverage_kind=value.coverage_kind)
+            if current != value:
+                raise ValueError("ReviewedBinding no longer matches this prepared graph")
+            return (value.group_index,)
         values: tuple[object, ...]
         if isinstance(value, (int, ActGroup)) and not isinstance(value, bool):
             values = (value,)
@@ -1932,7 +2001,7 @@ class PreparedGraph:
                     raise ValueError(f"custom node {node.name or '<unnamed>'!r} is bound more than once")
                 if len(node.outputs) != 1:
                     raise ValueError("prepared group bindings currently require one output per custom node")
-                bound_indices[node] = self._normalize_binding(value)
+                bound_indices[node] = self._normalize_binding(value, output=output)
 
             default_indices = self._saved_indices if self._saved_indices is not None else self._automatic_indices
             automatic = dict(zip(custom_nodes, default_indices)) if default_indices is not None else {}
