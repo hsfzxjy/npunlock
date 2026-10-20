@@ -22,7 +22,12 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v17\""
+    "\"schema\": \"npunlock.porting.inspect.v18\""
+    "\"dma\""
+    "\"tasks\""
+    "\"transfer_observation\""
+    "\"scheduling_observation\""
+    "\"memory\": \"cmx\""
     "\"code_observation\""
     "\"offset_raw\""
     "\"extent\""
@@ -76,6 +81,22 @@ foreach(required
     "candidates do not classify unrouted invocations as replicas")
   if(NOT first_output MATCHES "${required}")
     message(FATAL_ERROR "routing inspection omitted required observation: ${required}")
+  endif()
+endforeach()
+
+foreach(expected
+    "\"task_count\": 3"
+    "\"task_index\": 0, \"engine_index\": 0, \"transfer_observation\": {\"type_raw\": 1, \"length_bytes\": 32"
+    "\"source\": {\"memory\": \"network_input\", \"value_raw\": 0"
+    "\"destination\": {\"memory\": \"cmx\", \"value_raw\": 0, \"relocation_section_index\": 28, \"symbol_table_index\": 65312, \"symbol_raw\": 0, \"relocation_type\": 0, \"addend_raw\": 768}"
+    "\"task_index\": 1, \"engine_index\": 0, \"transfer_observation\": {\"type_raw\": 1, \"length_bytes\": 768"
+    "\"source\": {\"memory\": \"constant\", \"value_raw\": 0"
+    "\"task_index\": 2, \"engine_index\": 0, \"transfer_observation\": {\"type_raw\": 1, \"length_bytes\": 32"
+    "\"scheduling_observation\": {\"wait_mask_raw\": 4, \"post_mask_raw\": 8, \"start_after_raw\": 4, \"clean_after_raw\": 3}"
+    "\"destination\": {\"memory\": \"network_output\", \"value_raw\": 0")
+  string(FIND "${first_output}" "${expected}" expected_offset)
+  if(expected_offset EQUAL -1)
+    message(FATAL_ERROR "DMA task inspection changed a retained observation: ${expected}")
   endif()
 endforeach()
 

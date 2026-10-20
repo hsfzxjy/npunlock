@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-20:** a branched graph can now prove which ACT group owns a direct output even when a later operation reuses the same CMX addresses. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#64-group-local-output-coverage-in-a-branched-graph).
+> **Latest breakthrough — 2026-10-20:** native DMA tasks can now be inspected from relocation-backed endpoints through transfer geometry and scheduling, exposing the missing intermediate routes without guessing from addresses. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#65-relocation-backed-dma-task-inspection).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,

@@ -73,6 +73,47 @@ typedef struct npunlock_invocation_routing_observation {
   npunlock_tensor_routing_observation tensors[PATCHBLOB_TARGET_V2_MAX_TENSORS];
 } npunlock_invocation_routing_observation;
 
+#define NPUNLOCK_DMA_ENDPOINT_UNKNOWN 0u
+#define NPUNLOCK_DMA_ENDPOINT_CMX 1u
+#define NPUNLOCK_DMA_ENDPOINT_DDR_BUFFER 2u
+#define NPUNLOCK_DMA_ENDPOINT_CONSTANT 3u
+#define NPUNLOCK_DMA_ENDPOINT_NETWORK_INPUT 4u
+#define NPUNLOCK_DMA_ENDPOINT_NETWORK_OUTPUT 5u
+#define NPUNLOCK_DMA_ENDPOINT_RUNTIME 6u
+
+typedef struct npunlock_dma_endpoint_observation {
+  uint32_t memory_kind;
+  uint32_t relocation_section_index;
+  uint32_t symbol_table_index;
+  uint32_t symbol_raw;
+  uint32_t relocation_type;
+  int64_t addend_raw;
+} npunlock_dma_endpoint_observation;
+
+typedef struct npunlock_dma_task_observation {
+  uint32_t section_index;
+  uint32_t task_index;
+  uint32_t engine_index;
+  uint32_t transfer_type_raw;
+  uint32_t length_bytes;
+  uint32_t num_planes_raw;
+  uint32_t task_id_raw;
+  int32_t source_plane_stride_raw;
+  int32_t destination_plane_stride_raw;
+  uint32_t source_width_raw;
+  int32_t source_stride_raw;
+  uint32_t destination_width_raw;
+  int32_t destination_stride_raw;
+  uint64_t wait_mask_raw;
+  uint64_t post_mask_raw;
+  uint32_t start_after_raw;
+  uint32_t clean_after_raw;
+  uint64_t source_value_raw;
+  uint64_t destination_value_raw;
+  npunlock_dma_endpoint_observation source;
+  npunlock_dma_endpoint_observation destination;
+} npunlock_dma_task_observation;
+
 typedef struct npunlock_network_output_route_observation {
   uint32_t dma_section_index;
   uint32_t dma_task_index;
@@ -261,6 +302,8 @@ typedef struct npunlock_graph_routing_observations {
   size_t invocation_count;
   size_t group_count;
   uint32_t tile_count_observed;
+  npunlock_dma_task_observation *dma_tasks;
+  size_t dma_task_count;
   npunlock_network_output_route_observation *network_output_routes;
   size_t network_output_route_count;
   npunlock_act_output_slice_candidate_observation *act_output_slice_candidates;
@@ -292,6 +335,7 @@ typedef struct npunlock_graph_routing_observations {
 #define NPUNLOCK_COMPARE_DPU_CHANGED PATCHBLOB_COMPARE_DPU_CHANGED
 #define NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED PATCHBLOB_COMPARE_ACT_DPU_RELATIONS_CHANGED
 #define NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE PATCHBLOB_COMPARE_PARTIAL_GROUP_CODE_CHANGE
+#define NPUNLOCK_COMPARE_DMA_CHANGED PATCHBLOB_COMPARE_DMA_CHANGED
 
 typedef struct npunlock_graph_routing_comparison {
   uint32_t mismatch_flags;

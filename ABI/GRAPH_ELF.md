@@ -145,6 +145,39 @@ The exact section set, order, size, and file offsets vary by graph. Absolute
 file offsets are not an ABI. `npunlock` follows section references and
 relocations instead.
 
+### DMA task records
+
+For the NPU3720/compiler-8.3 contract, each `.text.dmaTasksN` section contains
+128-byte task records and `N` identifies the DMA engine. The fields currently
+used by the inspector are:
+
+| Record offset | Size | Observed meaning |
+| ---: | ---: | --- |
+| `0x08` | 8 | configuration; low two bits select the transfer record form |
+| `0x10` | 8 | source address, resolved by relocation |
+| `0x18` | 8 | destination address, resolved by relocation |
+| `0x20` | 4 | transfer length in bytes |
+| `0x24` | 4 | low byte plane count; upper 24 bits task identifier |
+| `0x28`, `0x2c` | 4 each | signed source and destination plane strides |
+| `0x30..0x3f` | 16 | type 0 barrier masks, or type 1 width/stride geometry |
+| `0x40`, `0x48` | 8 each | type 1 post and wait barrier masks |
+| `0x50`, `0x54` | 4 each | start-after and clean-after scheduling values |
+
+Every accepted task has exactly one relocation for its source field and one
+for its destination field. Relocation type 0 (`R_VPU_64`) writes a relocated
+64-bit address; relocation type 1 (`R_VPU_64_OR`) preserves the record's raw
+address bits while combining them with the relocated base. Relocation symbol
+tables distinguish
+CMX runtime addresses, graph inputs and outputs, constants, and intermediate
+DDR buffers. The inspector reports the unrelocated field value, relocation
+type, symbol and addend so callers do not have to infer memory kinds from raw
+addresses.
+
+These offsets are confirmed for the stated NPU3720/compiler-8.3 container
+contract. They are not claimed for newer NPUs. A chain of compatible DMA
+endpoints and barriers is native scheduling evidence, not by itself a semantic
+source-graph edge.
+
 Observed ACT relocation tables use 24-byte ELF64 `SHT_RELA` entries, flags
 `0x40`, alignment 8, and names derived from their target section, such as
 `.rlt.text.KernelParams`. Relocation type 4 is `R_VPU_32`: it writes

@@ -482,6 +482,8 @@ static int test_act_consumer_cover_observations(void) {
 static int test_routing_comparison(void) {
   npunlock_invocation_routing_observation baseline_invocations[2];
   npunlock_invocation_routing_observation candidate_invocations[2];
+  npunlock_dma_task_observation baseline_dma = {0};
+  npunlock_dma_task_observation candidate_dma = {0};
   npunlock_graph_routing_observations baseline = {0};
   npunlock_graph_routing_observations candidate = {0};
   npunlock_graph_routing_comparison comparison = {0};
@@ -499,10 +501,14 @@ static int test_routing_comparison(void) {
   baseline.invocation_count = 2;
   baseline.group_count = 2;
   baseline.tile_count_observed = 2;
+  baseline.dma_tasks = &baseline_dma;
+  baseline.dma_task_count = 1;
   candidate.invocations = candidate_invocations;
   candidate.invocation_count = 2;
   candidate.group_count = 2;
   candidate.tile_count_observed = 2;
+  candidate.dma_tasks = &candidate_dma;
+  candidate.dma_task_count = 1;
 
   CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
                                                     &diagnostic) == NPUNLOCK_STATUS_OK);
@@ -511,6 +517,14 @@ static int test_routing_comparison(void) {
   CHECK(comparison.changed_group_count == 1);
   CHECK(comparison.changed_group_indices[0] == 1);
   npunlock_graph_routing_comparison_release(&comparison);
+
+  candidate_dma.length_bytes = 32;
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_DMA_CHANGED) != 0);
+  npunlock_graph_routing_comparison_release(&comparison);
+  candidate_dma.length_bytes = 0;
 
   candidate_invocations[1].wait_mask_raw = 8;
   CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,

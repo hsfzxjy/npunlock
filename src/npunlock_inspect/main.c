@@ -136,13 +136,32 @@ static const char *target_precision_name(const patchblob_target_v2 *target) {
   return tensor_precision_name(precision);
 }
 
+static const char *dma_endpoint_kind_name(uint32_t kind) {
+  switch (kind) {
+  case NPUNLOCK_DMA_ENDPOINT_CMX:
+    return "cmx";
+  case NPUNLOCK_DMA_ENDPOINT_DDR_BUFFER:
+    return "ddr_buffer";
+  case NPUNLOCK_DMA_ENDPOINT_CONSTANT:
+    return "constant";
+  case NPUNLOCK_DMA_ENDPOINT_NETWORK_INPUT:
+    return "network_input";
+  case NPUNLOCK_DMA_ENDPOINT_NETWORK_OUTPUT:
+    return "network_output";
+  case NPUNLOCK_DMA_ENDPOINT_RUNTIME:
+    return "runtime";
+  default:
+    return "unknown";
+  }
+}
+
 static int write_report(FILE *stream, const char *graph_path, const file_buffer *graph,
                         const npunlock_graph_routing_observations *routing) {
   char graph_hash[65];
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v17\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v18\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -401,6 +420,44 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ]},\n  \"dma\": {\"task_count\": %zu, \"tasks\": [\n",
+              routing->dma_task_count) < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->dma_task_count; ++index) {
+    const npunlock_dma_task_observation *task = &routing->dma_tasks[index];
+    if (fprintf(stream,
+                "%s    {\"section_index\": %u, \"task_index\": %u, \"engine_index\": %u, "
+                "\"transfer_observation\": {\"type_raw\": %u, \"length_bytes\": %u, "
+                "\"num_planes_raw\": %u, \"task_id_raw\": %u, "
+                "\"source_plane_stride_raw\": %d, \"destination_plane_stride_raw\": %d, "
+                "\"source_width_raw\": %u, \"source_stride_raw\": %d, "
+                "\"destination_width_raw\": %u, \"destination_stride_raw\": %d}, "
+                "\"scheduling_observation\": {\"wait_mask_raw\": %" PRIu64
+                ", \"post_mask_raw\": %" PRIu64
+                ", \"start_after_raw\": %u, \"clean_after_raw\": %u}, "
+                "\"source\": {\"memory\": \"%s\", \"value_raw\": %" PRIu64
+                ", \"relocation_section_index\": %u, \"symbol_table_index\": %u, "
+                "\"symbol_raw\": %u, \"relocation_type\": %u, \"addend_raw\": %" PRId64
+                "}, \"destination\": {\"memory\": \"%s\", \"value_raw\": %" PRIu64
+                ", \"relocation_section_index\": %u, \"symbol_table_index\": %u, "
+                "\"symbol_raw\": %u, \"relocation_type\": %u, \"addend_raw\": %" PRId64 "}}",
+                index == 0 ? "" : ",\n", task->section_index, task->task_index, task->engine_index,
+                task->transfer_type_raw, task->length_bytes, task->num_planes_raw,
+                task->task_id_raw, task->source_plane_stride_raw,
+                task->destination_plane_stride_raw, task->source_width_raw, task->source_stride_raw,
+                task->destination_width_raw, task->destination_stride_raw, task->wait_mask_raw,
+                task->post_mask_raw, task->start_after_raw, task->clean_after_raw,
+                dma_endpoint_kind_name(task->source.memory_kind), task->source_value_raw,
+                task->source.relocation_section_index, task->source.symbol_table_index,
+                task->source.symbol_raw, task->source.relocation_type, task->source.addend_raw,
+                dma_endpoint_kind_name(task->destination.memory_kind), task->destination_value_raw,
+                task->destination.relocation_section_index, task->destination.symbol_table_index,
+                task->destination.symbol_raw, task->destination.relocation_type,
+                task->destination.addend_raw) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ]},\n  \"dpu\": {\"invariant_count\": %zu, \"invariants\": [\n",
               routing->dpu_invariant_count) < 0) {
     return 0;
@@ -514,8 +571,10 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   }
   return fprintf(stream,
                  "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
-                 "and network-output DMA contract; routing and scheduling fields are raw "
-                 "validated observations; ACT edge candidates are exact interval/ACT-schedule "
+                 "DPU-invariant, network-output DMA, and raw DMA-task contract; DMA endpoints "
+                 "come from validated relocations, while transfer geometry and scheduling "
+                 "fields remain raw observations; ACT edge candidates are exact "
+                 "interval/ACT-schedule "
                  "correlations, including bounded transitive wait/post paths; ACT/DPU candidates "
                  "require interval containment and a direct schedule dependency; ACT "
                  "consumer-cover observations require every producer invocation to have one "
@@ -529,7 +588,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "ACT/DPU output-cover observations require every group invocation to have one "
                  "unique DPU consumer and exact non-overlapping coverage of each DPU input; "
                  "code fingerprints cover validated range slices but are not semantic operation "
-                 "identifiers; "
+                 "identifiers; DMA observations do not establish semantic graph edges; "
                  "DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
                  "intervals; candidates do not classify unrouted invocations as replicas; "
@@ -548,6 +607,7 @@ static int write_mismatch_names(FILE *stream, uint32_t flags) {
       {NPUNLOCK_COMPARE_DPU_CHANGED, "dpu"},
       {NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED, "act_dpu_relations"},
       {NPUNLOCK_COMPARE_PARTIAL_GROUP_CODE_CHANGE, "partial_group_code_change"},
+      {NPUNLOCK_COMPARE_DMA_CHANGED, "dma"},
   };
   bool first = true;
   size_t index;

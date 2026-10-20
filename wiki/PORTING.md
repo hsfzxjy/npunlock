@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 17 JSON report records the blob size and SHA-256 plus every
+The version 18 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -113,6 +113,15 @@ has one unique consumer input and every such input has one candidate producer.
 Fan-out, multiple possible producers, duplicated inputs, and missing producer
 invocations remain unresolved. This is still native interval/schedule evidence,
 not proof that either group corresponds to a particular source operation.
+
+Schema v18 adds a raw, validated observation for every NPU3720 DMA task. Each
+entry identifies its DMA engine and task index, transfer length, type-specific
+geometry, barrier schedule, and source and destination relocation provenance.
+Endpoints are classified conservatively as CMX, intermediate DDR buffer,
+constant, graph input, graph output, another runtime symbol, or unknown. This
+makes paths through intermediate DDR storage inspectable without guessing from
+address values. It is groundwork for later ACT-to-DMA-to-DPU correlation, not
+proof that a sequence of transfers represents a particular source-level edge.
 
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
@@ -235,10 +244,11 @@ chain in a controlled graph.
 
 These observations are still not a complete route from every native task to a
 symbolic source tensor. Only the first two of the four architectural input and
-output address fields have appeared in the retained fixtures so far. Internal
-DMA paths, address reuse, and ambiguous schedules remain unresolved, and the
-inspector does not promote a matching address/schedule chain into a semantic
-edge or automatic patch target.
+output address fields have appeared in the retained fixtures so far. Raw DMA
+tasks now expose internal transfer endpoints, extents, and schedules, but
+address reuse and ambiguous chains remain unresolved. The inspector does not
+promote a matching address/schedule chain into a semantic edge or automatic
+patch target.
 
 The `act_dpu_edge_candidates` list performs the next bounded correlation. An
 ACT tensor must be fully contained in a DPU dense CMX interval with the same

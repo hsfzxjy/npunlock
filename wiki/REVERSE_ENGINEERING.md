@@ -1980,6 +1980,36 @@ general lifetime model, map the two intermediate custom nodes, explain the
 unobserved ACT-to-DMA-to-DPU transfer between them, or authorize mappings on
 other compiler versions or NPU generations.
 
+## 65. Relocation-backed DMA task inspection
+
+On 2026-10-20, the native-graph inspector began validating and reporting the
+complete set of 128-byte DMA task records emitted by compiler 8.3 for NPU3720.
+For each task it now exposes the DMA engine and task index, transfer type and
+byte length, type-specific geometry, wait/post barriers, scheduling values,
+raw source and destination fields, and the relocation behind each endpoint.
+The relocation provenance distinguishes CMX, graph inputs and outputs,
+constants, intermediate DDR buffers, other runtime symbols, and unknown
+symbols without guessing from address values.
+
+In the section 64 branched carrier, this reveals a concrete three-transfer
+fan-in: two 32-byte transfers copy ACT results from separate CMX tile addresses
+to adjacent halves of one DDR buffer, then one 64-byte transfer copies that
+buffer to a multicast CMX destination. The first pair waits on barrier `0x20`
+and posts `0x40`; the final transfer waits on `0x40` and posts `0x80`. This is
+the previously hidden native route between an intermediate ACT group and the
+DPU region.
+
+The inspector report is schema v18, and strict differential comparison now
+treats any DMA-task change as its own `dma` mismatch. Retained fixtures pin
+input-to-CMX, constant-to-CMX, CMX-to-output, CMX-to-DDR, and DDR-to-CMX
+endpoint forms on this compiler/device contract.
+
+This establishes exact native transfer and scheduling observations, not yet a
+semantic ACT-to-DPU graph edge. Address reuse, multicast interpretation,
+buffer lifetime, and uniqueness of multi-hop chains must still be proven
+before this evidence can complete an intermediate custom-node binding or
+select a patch target automatically.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
