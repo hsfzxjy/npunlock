@@ -142,7 +142,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v15\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v16\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -458,17 +458,37 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 "%s    {\"direction\": \"%s\", \"act_group_index\": %u, "
                 "\"act_invocation_index\": %u, \"act_tensor_record_index\": %u, "
                 "\"dpu_invariant_index\": %u, \"dpu_field_mask_raw\": %u, "
-                "\"act_candidate_count\": %u, \"match_observation\": "
+                "\"act_candidate_count\": %u, \"dpu_section_index\": %u, "
+                "\"match_observation\": "
                 "{\"data_symbol_raw\": %u, \"act_data_addend_raw\": %" PRId64
                 ", \"act_span_bytes\": %" PRIu64 ", \"dpu_data_addend_raw\": %" PRId64
                 ", \"dpu_span_bytes\": %" PRIu64 ", \"barrier_intersection_raw\": %" PRIu64 "}}",
                 index == 0 ? "" : ",\n", direction, candidate->act_group_index,
                 candidate->act_invocation_index, candidate->act_tensor_record_index,
                 candidate->dpu_invariant_index, candidate->dpu_field_mask_raw,
-                candidate->act_candidate_count, candidate->data_symbol_raw,
-                candidate->act_data_addend_raw, candidate->act_span_bytes,
-                candidate->dpu_data_addend_raw, candidate->dpu_span_bytes,
-                candidate->barrier_intersection_raw) < 0) {
+                candidate->act_candidate_count, candidate->dpu_section_index,
+                candidate->data_symbol_raw, candidate->act_data_addend_raw,
+                candidate->act_span_bytes, candidate->dpu_data_addend_raw,
+                candidate->dpu_span_bytes, candidate->barrier_intersection_raw) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"act_dpu_output_cover_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dpu_output_cover_count; ++index) {
+    const npunlock_act_dpu_output_cover_observation *observation =
+        &routing->act_dpu_output_covers[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"invocation_count\": %u, "
+                "\"matched_invocation_count\": %u, \"unresolved_invocation_count\": %u, "
+                "\"dpu_input_count\": %u, \"exact_cover_input_count\": %u, "
+                "\"exact_cover\": %s, \"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", observation->act_group_index,
+                observation->invocation_count, observation->matched_invocation_count,
+                observation->unresolved_invocation_count, observation->dpu_input_count,
+                observation->exact_cover_input_count, observation->exact_cover ? "true" : "false",
+                observation->unresolved_flags) < 0) {
       return 0;
     }
   }
@@ -484,6 +504,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "replica candidates require a unique complete CMX-translation bijection; "
                  "group completeness requires an exact output cover and one routed or replica "
                  "classification for every participating invocation; "
+                 "ACT/DPU output-cover observations require every group invocation to have one "
+                 "unique DPU consumer and exact non-overlapping coverage of each DPU input; "
                  "code fingerprints cover validated range slices but are not semantic operation "
                  "identifiers; "
                  "DPU CMX "

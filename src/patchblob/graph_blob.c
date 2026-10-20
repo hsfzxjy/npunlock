@@ -2557,6 +2557,7 @@ static npunlock_status derive_act_dpu_edge_candidates(
             candidate->act_group_index = act->group_index;
             candidate->act_invocation_index = act->target.invocation_index;
             candidate->act_tensor_record_index = (uint32_t)tensor_index;
+            candidate->dpu_section_index = dpu->section_index;
             candidate->dpu_invariant_index = dpu->invariant_index;
             candidate->dpu_field_mask_raw =
                 dpu_address_field_mask(addresses, address_count, address_index);
@@ -2776,6 +2777,186 @@ static size_t merge_output_byte_intervals(output_byte_interval *intervals, size_
     }
   }
   return merged_count;
+}
+
+static bool
+act_dpu_candidates_share_input(const npunlock_act_dpu_edge_candidate_observation *left,
+                               const npunlock_act_dpu_edge_candidate_observation *right) {
+  return left->direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU &&
+         right->direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU &&
+         left->dpu_section_index == right->dpu_section_index &&
+         left->dpu_invariant_index == right->dpu_invariant_index &&
+         left->data_symbol_raw == right->data_symbol_raw &&
+         left->dpu_data_addend_raw == right->dpu_data_addend_raw &&
+         left->dpu_span_bytes == right->dpu_span_bytes;
+}
+
+npunlock_status npunlock_derive_act_dpu_output_cover_observations(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, const npunlock_act_dpu_edge_candidate_observation *candidates,
+    size_t candidate_count, npunlock_act_dpu_output_cover_observation **covers, size_t *cover_count,
+    npunlock_diagnostic *diagnostic) {
+  npunlock_act_dpu_output_cover_observation *result = NULL;
+  output_byte_interval *intervals = NULL;
+  size_t allocation_size;
+  size_t work_bound;
+  size_t work_term;
+  size_t result_count = 0u;
+  size_t group_index;
+
+  if (covers == NULL || cover_count == NULL || diagnostic == NULL ||
+      (invocations == NULL && invocation_count != 0u) ||
+      (candidates == NULL && candidate_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *covers = NULL;
+  *cover_count = 0u;
+  if (group_count == 0u || candidate_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (invocation_count > UINT32_MAX || group_count > UINT32_MAX || candidate_count > UINT32_MAX ||
+      !npunlock_checked_add_size(invocation_count, candidate_count, &work_term) ||
+      !npunlock_checked_mul_size(candidate_count, work_term, &work_bound) ||
+      !npunlock_checked_mul_size(group_count, work_bound, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS ||
+      !npunlock_checked_mul_size(group_count, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "ACT/DPU output-cover analysis exceeds its work bound");
+  }
+  result = (npunlock_act_dpu_output_cover_observation *)calloc(1u, allocation_size);
+  if (!npunlock_checked_mul_size(candidate_count, sizeof(*intervals), &allocation_size)) {
+    free(result);
+    return unsupported(diagnostic, "ACT/DPU output-cover interval allocation overflows");
+  }
+  intervals = (output_byte_interval *)calloc(1u, allocation_size);
+  if ((result == NULL && group_count != 0u) || (intervals == NULL && candidate_count != 0u)) {
+    free(result);
+    free(intervals);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate ACT/DPU output-cover observations");
+  }
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    npunlock_act_dpu_output_cover_observation *observation;
+    bool participates = false;
+    size_t invocation_index;
+    size_t candidate_index;
+    for (candidate_index = 0; candidate_index < candidate_count; ++candidate_index) {
+      if (candidates[candidate_index].direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU &&
+          candidates[candidate_index].act_group_index == group_index) {
+        participates = true;
+        break;
+      }
+    }
+    if (!participates) {
+      continue;
+    }
+    observation = &result[result_count++];
+    observation->act_group_index = (uint32_t)group_index;
+    for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
+      const npunlock_act_dpu_edge_candidate_observation *unique = NULL;
+      const npunlock_invocation_routing_observation *invocation = &invocations[invocation_index];
+      size_t local_count = 0u;
+      if (invocation->group_index != group_index) {
+        continue;
+      }
+      ++observation->invocation_count;
+      if (invocation->target.tensor_count == 0u) {
+        ++observation->unresolved_invocation_count;
+        observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_INVOCATION_UNCLASSIFIED;
+        continue;
+      }
+      for (candidate_index = 0; candidate_index < candidate_count; ++candidate_index) {
+        const npunlock_act_dpu_edge_candidate_observation *candidate = &candidates[candidate_index];
+        if (candidate->direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU &&
+            candidate->act_group_index == group_index &&
+            candidate->act_invocation_index == invocation->target.invocation_index &&
+            candidate->act_tensor_record_index == invocation->target.tensor_count - 1u) {
+          unique = candidate;
+          ++local_count;
+        }
+      }
+      if (local_count == 1u && unique != NULL && unique->act_candidate_count == 1u) {
+        ++observation->matched_invocation_count;
+      } else {
+        ++observation->unresolved_invocation_count;
+        observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_INVOCATION_UNCLASSIFIED;
+        if (local_count > 1u || (unique != NULL && unique->act_candidate_count != 1u)) {
+          observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_CONSUMER_AMBIGUOUS;
+        }
+      }
+    }
+    for (candidate_index = 0; candidate_index < candidate_count; ++candidate_index) {
+      const npunlock_act_dpu_edge_candidate_observation *endpoint = &candidates[candidate_index];
+      size_t earlier_index;
+      size_t interval_count = 0u;
+      size_t merged_count;
+      bool first = true;
+      bool overlap;
+      uint64_t endpoint_start;
+      uint64_t endpoint_end;
+      if (endpoint->direction != NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ||
+          endpoint->act_group_index != group_index || endpoint->act_candidate_count != 1u) {
+        continue;
+      }
+      for (earlier_index = 0; earlier_index < candidate_index; ++earlier_index) {
+        if (candidates[earlier_index].act_group_index == group_index &&
+            candidates[earlier_index].act_candidate_count == 1u &&
+            act_dpu_candidates_share_input(&candidates[earlier_index], endpoint)) {
+          first = false;
+          break;
+        }
+      }
+      if (!first) {
+        continue;
+      }
+      ++observation->dpu_input_count;
+      for (earlier_index = 0; earlier_index < candidate_count; ++earlier_index) {
+        const npunlock_act_dpu_edge_candidate_observation *candidate = &candidates[earlier_index];
+        uint64_t start;
+        if (candidate->act_group_index != group_index || candidate->act_candidate_count != 1u ||
+            !act_dpu_candidates_share_input(candidate, endpoint)) {
+          continue;
+        }
+        if (candidate->act_data_addend_raw < 0 ||
+            (uint64_t)candidate->act_data_addend_raw > UINT64_MAX - candidate->act_span_bytes) {
+          observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_UNION_MISMATCH;
+          continue;
+        }
+        start = (uint64_t)candidate->act_data_addend_raw;
+        intervals[interval_count].start = start;
+        intervals[interval_count].end = start + candidate->act_span_bytes;
+        ++interval_count;
+      }
+      merged_count = merge_output_byte_intervals(intervals, interval_count, &overlap);
+      if (overlap) {
+        observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_SLICE_OVERLAP;
+      }
+      if (endpoint->dpu_data_addend_raw < 0 ||
+          (uint64_t)endpoint->dpu_data_addend_raw > UINT64_MAX - endpoint->dpu_span_bytes) {
+        observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_UNION_MISMATCH;
+        continue;
+      }
+      endpoint_start = (uint64_t)endpoint->dpu_data_addend_raw;
+      endpoint_end = endpoint_start + endpoint->dpu_span_bytes;
+      if (!overlap && merged_count == 1u && intervals[0].start == endpoint_start &&
+          intervals[0].end == endpoint_end) {
+        ++observation->exact_cover_input_count;
+      } else {
+        observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_UNION_MISMATCH;
+      }
+    }
+    if (observation->dpu_input_count == 0u) {
+      observation->unresolved_flags |= NPUNLOCK_ACT_DPU_COVER_CONSUMER_AMBIGUOUS;
+    }
+    observation->exact_cover =
+        observation->unresolved_flags == 0u && observation->invocation_count != 0u &&
+        observation->matched_invocation_count == observation->invocation_count &&
+        observation->exact_cover_input_count == observation->dpu_input_count;
+  }
+  free(intervals);
+  *covers = result;
+  *cover_count = result_count;
+  return NPUNLOCK_STATUS_OK;
 }
 
 static bool
@@ -3504,6 +3685,7 @@ void npunlock_graph_routing_observations_release(
   free(observations->act_edge_candidates);
   free(observations->dpu_invariants);
   free(observations->act_dpu_edge_candidates);
+  free(observations->act_dpu_output_covers);
   memset(observations, 0, sizeof(*observations));
 }
 
@@ -3638,7 +3820,11 @@ npunlock_compare_graph_routing_observations(const npunlock_graph_routing_observa
   if (!observation_arrays_equal(
           baseline->act_dpu_edge_candidates, baseline->act_dpu_edge_candidate_count,
           candidate->act_dpu_edge_candidates, candidate->act_dpu_edge_candidate_count,
-          sizeof(*baseline->act_dpu_edge_candidates))) {
+          sizeof(*baseline->act_dpu_edge_candidates)) ||
+      !observation_arrays_equal(
+          baseline->act_dpu_output_covers, baseline->act_dpu_output_cover_count,
+          candidate->act_dpu_output_covers, candidate->act_dpu_output_cover_count,
+          sizeof(*baseline->act_dpu_output_covers))) {
     comparison->mismatch_flags |= NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED;
   }
   free(changed);
@@ -3673,6 +3859,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_act_edge_candidate_observation *act_edge_candidates = NULL;
   npunlock_dpu_invariant_observation *dpu_invariants = NULL;
   npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates = NULL;
+  npunlock_act_dpu_output_cover_observation *act_dpu_output_covers = NULL;
   uint64_t *parameter_bases = NULL;
   size_t target_count = 0;
   size_t group_count = 0;
@@ -3686,6 +3873,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t act_edge_candidate_count = 0;
   size_t dpu_invariant_count = 0;
   size_t act_dpu_edge_candidate_count = 0;
+  size_t act_dpu_output_cover_count = 0;
   size_t index;
   uint32_t tile_count_observed = 0;
   npunlock_status status;
@@ -3828,6 +4016,13 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = npunlock_derive_act_dpu_output_cover_observations(
+      invocations, invocation_count, group_count, act_dpu_edge_candidates,
+      act_dpu_edge_candidate_count, &act_dpu_output_covers, &act_dpu_output_cover_count,
+      diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
 
   free(discovered);
   free(parameter_bases);
@@ -3854,6 +4049,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->dpu_invariant_count = dpu_invariant_count;
   observations->act_dpu_edge_candidates = act_dpu_edge_candidates;
   observations->act_dpu_edge_candidate_count = act_dpu_edge_candidate_count;
+  observations->act_dpu_output_covers = act_dpu_output_covers;
+  observations->act_dpu_output_cover_count = act_dpu_output_cover_count;
   return NPUNLOCK_STATUS_OK;
 
 fail:
@@ -3867,6 +4064,7 @@ fail:
   free(act_edge_candidates);
   free(dpu_invariants);
   free(act_dpu_edge_candidates);
+  free(act_dpu_output_covers);
   free(discovered);
   free(parameter_bases);
   graph_layout_release(&layout);

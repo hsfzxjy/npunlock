@@ -213,6 +213,7 @@ typedef struct npunlock_act_dpu_edge_candidate_observation {
   uint32_t act_group_index;
   uint32_t act_invocation_index;
   uint32_t act_tensor_record_index;
+  uint32_t dpu_section_index;
   uint32_t dpu_invariant_index;
   uint32_t dpu_field_mask_raw;
   uint32_t act_candidate_count;
@@ -223,6 +224,22 @@ typedef struct npunlock_act_dpu_edge_candidate_observation {
   uint64_t dpu_span_bytes;
   uint64_t barrier_intersection_raw;
 } npunlock_act_dpu_edge_candidate_observation;
+
+#define NPUNLOCK_ACT_DPU_COVER_CONSUMER_AMBIGUOUS UINT32_C(1)
+#define NPUNLOCK_ACT_DPU_COVER_INVOCATION_UNCLASSIFIED UINT32_C(2)
+#define NPUNLOCK_ACT_DPU_COVER_SLICE_OVERLAP UINT32_C(4)
+#define NPUNLOCK_ACT_DPU_COVER_UNION_MISMATCH UINT32_C(8)
+
+typedef struct npunlock_act_dpu_output_cover_observation {
+  uint32_t act_group_index;
+  uint32_t invocation_count;
+  uint32_t matched_invocation_count;
+  uint32_t unresolved_invocation_count;
+  uint32_t dpu_input_count;
+  uint32_t exact_cover_input_count;
+  uint32_t unresolved_flags;
+  bool exact_cover;
+} npunlock_act_dpu_output_cover_observation;
 
 typedef struct npunlock_graph_routing_observations {
   npunlock_invocation_routing_observation *invocations;
@@ -247,6 +264,8 @@ typedef struct npunlock_graph_routing_observations {
   size_t dpu_invariant_count;
   npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates;
   size_t act_dpu_edge_candidate_count;
+  npunlock_act_dpu_output_cover_observation *act_dpu_output_covers;
+  size_t act_dpu_output_cover_count;
 } npunlock_graph_routing_observations;
 
 #define NPUNLOCK_COMPARE_STRUCTURE_CHANGED PATCHBLOB_COMPARE_STRUCTURE_CHANGED
@@ -314,6 +333,11 @@ npunlock_status npunlock_derive_act_group_completeness(
     const npunlock_act_replica_candidate_observation *replica_candidates,
     size_t replica_candidate_count, npunlock_act_group_completeness_observation **completeness,
     size_t *completeness_count, npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_derive_act_dpu_output_cover_observations(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, const npunlock_act_dpu_edge_candidate_observation *candidates,
+    size_t candidate_count, npunlock_act_dpu_output_cover_observation **covers, size_t *cover_count,
+    npunlock_diagnostic *diagnostic);
 void npunlock_graph_routing_observations_release(npunlock_graph_routing_observations *observations);
 npunlock_status
 npunlock_compare_graph_routing_observations(const npunlock_graph_routing_observations *baseline,

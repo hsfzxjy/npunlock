@@ -35,7 +35,7 @@ cmake --build --preset linux-inspect
   --report inspect.json
 ```
 
-The version 15 JSON report records the blob size and SHA-256 plus every
+The version 16 JSON report records the blob size and SHA-256 plus every
 discovered ACT group, invocation/range index, arity, output size, and each
 tensor record's role, FP16/FP32/U8/U16/U32/I32/I16/I8 precision, element count, byte
 span, and observed flags. It also reports the validated raw invocation tile
@@ -91,6 +91,15 @@ contains the relocated offset and extent within `.text.KernelText` plus the
 SHA-256 of exactly that bounded code slice. Equal fingerprints show code reuse;
 a differential compile can use changed fingerprints as evidence only when the
 rest of the invocation, routing, scheduling, and DPU contract is unchanged.
+
+Schema v16 adds `act_dpu_output_cover_observations` for intermediate ACT
+groups whose outputs feed DPU inputs. A result is exact only when every
+invocation output has one unique ACT-to-DPU candidate and the non-overlapping
+ACT byte slices exactly cover every participating DPU input interval. DPU
+endpoints are qualified by both section and invariant index because invariant
+indices are not globally unique. This proves a bounded native interval and
+schedule relationship; it does not establish a source-level semantic edge,
+classify tile replicas, or permit automatic patch selection.
 
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
