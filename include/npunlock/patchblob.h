@@ -235,6 +235,36 @@ typedef struct patchblob_group_coverage_result {
   npunlock_diagnostic diagnostic;
 } patchblob_group_coverage_result;
 
+typedef enum patchblob_dma_dpu_group_coverage_flags {
+  PATCHBLOB_DMA_DPU_FANIN_UNRESOLVED = 1u << 0,
+  PATCHBLOB_DMA_DPU_TILE_SET_UNRESOLVED = 1u << 1,
+  PATCHBLOB_DMA_DPU_INPUT_AMBIGUOUS = 1u << 2,
+  PATCHBLOB_DMA_DPU_INPUT_REUSED = 1u << 3
+} patchblob_dma_dpu_group_coverage_flags;
+
+/*
+ * DMA-mediated DPU-consumer evidence is separate from direct ACT-to-DPU
+ * coverage. It requires an exact ACT-to-DDR-to-multicast-CMX fan-in and a
+ * unique translated DPU input for every observed tile.
+ */
+typedef struct patchblob_dma_dpu_group_coverage {
+  uint32_t struct_size;
+  uint32_t group_index;
+  uint32_t invocation_count;
+  uint32_t state;
+  uint32_t unresolved_flags;
+  uint32_t tile_count_expected;
+  uint32_t translated_tile_count;
+  uint32_t matched_dpu_input_count;
+} patchblob_dma_dpu_group_coverage;
+
+typedef struct patchblob_dma_dpu_group_coverage_result {
+  uint32_t struct_size;
+  patchblob_dma_dpu_group_coverage *groups;
+  size_t group_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_dma_dpu_group_coverage_result;
+
 NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
@@ -262,6 +292,10 @@ NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_inspect_group_coverage(npunlock_view graph_blob, patchblob_group_coverage_result *result);
 NPUNLOCK_PATCHBLOB_API void
 patchblob_group_coverage_result_release(patchblob_group_coverage_result *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_dma_dpu_group_coverage(
+    npunlock_view graph_blob, patchblob_dma_dpu_group_coverage_result *result);
+NPUNLOCK_PATCHBLOB_API void
+patchblob_dma_dpu_group_coverage_result_release(patchblob_dma_dpu_group_coverage_result *result);
 
 #ifdef __cplusplus
 }

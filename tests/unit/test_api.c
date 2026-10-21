@@ -56,6 +56,10 @@ _Static_assert(sizeof(patchblob_group_completeness_result) == 64,
                "group-completeness result ABI changed");
 _Static_assert(sizeof(patchblob_group_coverage) == 64, "group-coverage record ABI changed");
 _Static_assert(sizeof(patchblob_group_coverage_result) == 64, "group-coverage result ABI changed");
+_Static_assert(sizeof(patchblob_dma_dpu_group_coverage) == 32,
+               "DMA/DPU group-coverage record ABI changed");
+_Static_assert(sizeof(patchblob_dma_dpu_group_coverage_result) == 64,
+               "DMA/DPU group-coverage result ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&

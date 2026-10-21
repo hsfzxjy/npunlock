@@ -4,7 +4,7 @@ import ctypes
 import os
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
@@ -278,6 +278,28 @@ class _PatchGroupCoverageResult(ctypes.Structure):
     ]
 
 
+class _PatchDmaDpuGroupCoverage(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("group_index", ctypes.c_uint32),
+        ("invocation_count", ctypes.c_uint32),
+        ("state", ctypes.c_uint32),
+        ("unresolved_flags", ctypes.c_uint32),
+        ("tile_count_expected", ctypes.c_uint32),
+        ("translated_tile_count", ctypes.c_uint32),
+        ("matched_dpu_input_count", ctypes.c_uint32),
+    ]
+
+
+class _PatchDmaDpuGroupCoverageResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("groups", ctypes.POINTER(_PatchDmaDpuGroupCoverage)),
+        ("group_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _InferOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -527,6 +549,13 @@ _DPU_CONSUMER_COVERAGE_FLAG_NAMES = {
     1 << 3: "union_mismatch",
 }
 
+_DMA_DPU_CONSUMER_COVERAGE_FLAG_NAMES = {
+    1 << 0: "fanin_unresolved",
+    1 << 1: "tile_set_unresolved",
+    1 << 2: "input_ambiguous",
+    1 << 3: "input_reused",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ActGroupCoverage:
@@ -545,6 +574,11 @@ class ActGroupCoverage:
     act_consumer_input_count: int
     dpu_matched_invocation_count: int
     dpu_input_count: int
+    dma_dpu_consumer_state: str = "not_observed"
+    dma_dpu_consumer_unresolved_flags: int = 0
+    dma_dpu_tile_count_expected: int = 0
+    dma_dpu_translated_tile_count: int = 0
+    dma_dpu_matched_input_count: int = 0
 
     @property
     def observed_kinds(self) -> tuple[str, ...]:
@@ -554,6 +588,7 @@ class ActGroupCoverage:
                 ("direct_output", self.direct_output_state),
                 ("act_consumer", self.act_consumer_state),
                 ("dpu_consumer", self.dpu_consumer_state),
+                ("dma_dpu_consumer", self.dma_dpu_consumer_state),
             )
             if state != "not_observed"
         )
@@ -566,6 +601,7 @@ class ActGroupCoverage:
                 ("direct_output", self.direct_output_state),
                 ("act_consumer", self.act_consumer_state),
                 ("dpu_consumer", self.dpu_consumer_state),
+                ("dma_dpu_consumer", self.dma_dpu_consumer_state),
             )
             if state == "complete"
         )
@@ -590,6 +626,14 @@ class ActGroupCoverage:
             name
             for flag, name in _DPU_CONSUMER_COVERAGE_FLAG_NAMES.items()
             if self.dpu_consumer_unresolved_flags & flag
+        )
+
+    @property
+    def dma_dpu_consumer_unresolved_names(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for flag, name in _DMA_DPU_CONSUMER_COVERAGE_FLAG_NAMES.items()
+            if self.dma_dpu_consumer_unresolved_flags & flag
         )
 
 
@@ -963,6 +1007,14 @@ class NativeLibraries:
         ]
         self.patch.patchblob_inspect_group_coverage.restype = ctypes.c_int
         self.patch.patchblob_group_coverage_result_release.argtypes = [ctypes.POINTER(_PatchGroupCoverageResult)]
+        self.patch.patchblob_inspect_dma_dpu_group_coverage.argtypes = [
+            _View,
+            ctypes.POINTER(_PatchDmaDpuGroupCoverageResult),
+        ]
+        self.patch.patchblob_inspect_dma_dpu_group_coverage.restype = ctypes.c_int
+        self.patch.patchblob_dma_dpu_group_coverage_result_release.argtypes = [
+            ctypes.POINTER(_PatchDmaDpuGroupCoverageResult)
+        ]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -1460,9 +1512,38 @@ class NativeLibraries:
                         source.dpu_input_count,
                     )
                 )
-            return tuple(groups)
         finally:
             self.patch.patchblob_group_coverage_result_release(ctypes.byref(result))
+        dma_dpu_result = _PatchDmaDpuGroupCoverageResult()
+        dma_dpu_result.struct_size = ctypes.sizeof(_PatchDmaDpuGroupCoverageResult)
+        status = self.patch.patchblob_inspect_dma_dpu_group_coverage(graph_view, ctypes.byref(dma_dpu_result))
+        try:
+            if status != 0:
+                self._raise("patchblob DMA/DPU group coverage", status, dma_dpu_result.diagnostic)
+            if dma_dpu_result.group_count != len(groups) or (
+                dma_dpu_result.group_count and not bool(dma_dpu_result.groups)
+            ):
+                raise RuntimeError("patchblob returned an inconsistent DMA/DPU group-coverage array")
+            for index in range(dma_dpu_result.group_count):
+                source = dma_dpu_result.groups[index]
+                if (
+                    source.struct_size < ctypes.sizeof(_PatchDmaDpuGroupCoverage)
+                    or source.group_index != index
+                    or source.invocation_count != groups[index].invocation_count
+                    or source.state not in states
+                ):
+                    raise RuntimeError("patchblob returned an invalid DMA/DPU group-coverage record")
+                groups[index] = replace(
+                    groups[index],
+                    dma_dpu_consumer_state=states[source.state],
+                    dma_dpu_consumer_unresolved_flags=source.unresolved_flags,
+                    dma_dpu_tile_count_expected=source.tile_count_expected,
+                    dma_dpu_translated_tile_count=source.translated_tile_count,
+                    dma_dpu_matched_input_count=source.matched_dpu_input_count,
+                )
+            return tuple(groups)
+        finally:
+            self.patch.patchblob_dma_dpu_group_coverage_result_release(ctypes.byref(dma_dpu_result))
 
     def infer_graph(
         self,

@@ -452,10 +452,12 @@ for group in prepared.inspect_group_coverage():
     print(group.group_index, group.complete_kinds)
 ```
 
-Each record keeps `direct_output_state`, `act_consumer_state`, and
-`dpu_consumer_state` independent. A complete ACT- or DPU-consumer relationship
-proves bounded native invocation coverage, not source identity, and is not an
-automatic patch binding.
+Each record keeps `direct_output_state`, `act_consumer_state`,
+`dpu_consumer_state`, and `dma_dpu_consumer_state` independent. The last kind
+is the narrow multi-tile route where ACT outputs form an exact DMA fan-in and
+the translated multicast destinations uniquely match DPU inputs. A complete
+ACT- or DPU-consumer relationship proves bounded native invocation coverage,
+not source identity, and is not an automatic patch binding.
 
 After reviewing both kinds of evidence, you can deliberately combine them in
 an immutable binding:
@@ -470,12 +472,28 @@ program = prepared.build(bindings={custom_output: reviewed})
 ```
 
 `review_binding()` requires consistent evidence from at least two accepted
-carrier probes, requires the chosen `direct_output`, `act_consumer`, or
-`dpu_consumer` coverage state to be `complete`, and records the exact prepared
-native-blob hash. Planning rechecks those conditions. You must choose the
-coverage kind; npunlock does not merge the three meanings or silently use this
-object for another custom output. This opt-in path does not change ordinary
-positional mapping, and raw explicit `ActGroup` bindings remain available.
+carrier probes, requires the chosen `direct_output`, `act_consumer`,
+`dpu_consumer`, or `dma_dpu_consumer` coverage state to be `complete`, and
+records the exact prepared native-blob hash. Planning rechecks those
+conditions. You must choose the coverage kind; npunlock does not merge the
+four meanings or silently use this object for another custom output. This
+opt-in path does not change ordinary positional mapping, and raw explicit
+`ActGroup` bindings remain available.
+
+For example, a custom elementwise operation immediately before a DPU
+`MatMul` may use the DMA-mediated form:
+
+```python
+evidence = prepared.probe_mapping(custom_output, ("Minimum", "Subtract"))
+reviewed = prepared.review_binding(
+    custom_output,
+    evidence,
+    coverage_kind="dma_dpu_consumer",
+)
+```
+
+This succeeds only when both controlled carrier substitutions identify the
+same ACT group and every observed tile has one uniquely translated DPU input.
 
 For several kernels, filter groups with independent fields and bind them all:
 

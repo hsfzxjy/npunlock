@@ -607,9 +607,10 @@ rediscovers the ACT groups from the bundled carrier, compares every target
 contract with the manifest, and revalidates saved bindings for arity, dtype,
 exact cover, uniqueness, and range. Evidence-backed bindings additionally
 rerun every bundled baseline/candidate comparison and the selected direct,
-ACT-consumer, or DPU-consumer coverage check. A stale driver, changed graph,
-corrupt candidate, altered contract, inconsistent evidence, or incompatible
-saved binding is rejected before MoviTools runs. V1 bundles remain readable.
+ACT-consumer, direct-DPU-consumer, or DMA-mediated-DPU-consumer coverage check.
+A stale driver, changed graph, corrupt candidate, altered contract,
+inconsistent evidence, or incompatible saved binding is rejected before
+MoviTools runs. V1 bundles remain readable.
 There is deliberately no stale-provenance override; executing the eventual
 program remains the separate semantic check.
 

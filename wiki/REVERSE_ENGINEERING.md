@@ -2063,6 +2063,15 @@ tile stride, a source-level semantic edge, or automatic patch eligibility.
 Strict comparison names changes in this derived proof separately as
 `act_dma_dpu_relations`.
 
+The public API keeps this route distinct as `dma_dpu_consumer` coverage. On
+the same retained branched graph, controlled `Maximum`→`Minimum` and
+`Maximum`→`Subtract` carrier substitutions independently changed only ACT
+group 2. Combining those two source-label probes with the exact two-tile
+DMA/DPU cover produced a reviewed binding for the custom elementwise kernel
+immediately before `MatMul`. This improves explicit binding ergonomics; it
+does not enable automatic source mapping or make the carrier perturbations a
+semantic oracle.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

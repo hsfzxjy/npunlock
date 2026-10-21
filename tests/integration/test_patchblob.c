@@ -443,6 +443,7 @@ int main(void) {
   patchblob_discovery_result_v2 discovery_v2 = {0};
   patchblob_group_completeness_result completeness = {0};
   patchblob_group_coverage_result coverage = {0};
+  patchblob_dma_dpu_group_coverage_result dma_dpu_coverage = {0};
   patchblob_result result = {0};
   uint32_t flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
                    PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
@@ -526,6 +527,15 @@ int main(void) {
   CHECK(coverage.groups[1].direct_routed_invocation_count == 2);
   CHECK(coverage.groups[1].direct_replica_invocation_count == 2);
   patchblob_group_coverage_result_release(&coverage);
+
+  status = patchblob_inspect_dma_dpu_group_coverage(
+      (npunlock_view){two_operation_carrier.data, two_operation_carrier.size}, &dma_dpu_coverage);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(dma_dpu_coverage.group_count == 2);
+  CHECK(dma_dpu_coverage.groups[0].invocation_count == 4);
+  CHECK(dma_dpu_coverage.groups[0].state == PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED);
+  CHECK(dma_dpu_coverage.groups[1].state == PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED);
+  patchblob_dma_dpu_group_coverage_result_release(&dma_dpu_coverage);
 
   status = patchblob_inspect_group_coverage(
       (npunlock_view){convert_f32_to_f16.data, convert_f32_to_f16.size}, &coverage);

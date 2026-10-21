@@ -2887,10 +2887,12 @@ npunlock_status npunlock_derive_act_dma_dpu_input_observations(
     cover->act_group_index = fanin->act_group_index;
     cover->tile_count_expected = tile_count;
     if (!fanin->exact_cover) {
+      cover->invocation_count = fanin->invocation_count;
       cover->unresolved_flags |= NPUNLOCK_ACT_DMA_DPU_FANIN_UNRESOLVED;
       continue;
     }
     if (fanin->act_group_index >= group_count || tile_count == 0u) {
+      cover->invocation_count = fanin->invocation_count;
       cover->unresolved_flags |= NPUNLOCK_ACT_DMA_DPU_TILE_SET_UNRESOLVED;
       continue;
     }

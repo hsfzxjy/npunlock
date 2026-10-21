@@ -141,7 +141,9 @@ one same-cluster DPU input with the translated address, equal byte span, and a
 direct fan-in-post/DPU-wait barrier dependency. A cover is exact only when all
 tiles form a one-to-one mapping. This is a native address-and-schedule proof;
 it still does not identify the source-level operation or authorize automatic
-patch selection.
+patch selection. The public C API exposes it separately through
+`patchblob_inspect_dma_dpu_group_coverage()`, and Python reports the distinct
+`dma_dpu_consumer` coverage kind.
 
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:

@@ -310,6 +310,17 @@ the serialized platform-info record must identify NPU3720; and every ACT
 invocation tile index must be below `t`. The JSON patch report records that
 validated graph contract.
 
+Read-only coverage APIs keep different native routes separate.
+`patchblob_inspect_group_coverage()` reports direct graph-output,
+ACT-consumer, and direct DPU-consumer evidence.
+`patchblob_inspect_dma_dpu_group_coverage()` separately reports the narrower
+ACT-to-DDR-to-multicast-CMX-to-DPU path. Its `COMPLETE` state requires one ACT
+invocation and one unique translated DPU input for every observed tile, equal
+byte spans, and direct barrier continuity. Neither API maps a source node or
+selects a patch target; callers must combine complete coverage with separate
+source-label evidence. Release the separate result with
+`patchblob_dma_dpu_group_coverage_result_release()`.
+
 The additive version 2 API describes every tensor record independently:
 
 ```text
