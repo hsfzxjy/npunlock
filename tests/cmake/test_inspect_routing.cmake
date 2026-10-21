@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v20\""
+    "\"schema\": \"npunlock.porting.inspect.v21\""
     "\"dma\""
     "\"tasks\""
     "\"transfer_observation\""
@@ -71,6 +71,7 @@ foreach(required
     "\"dpu\""
     "\"invariant_count\": 1"
     "\"input_cmx_relocations\""
+    "\"input_ambiguous_fields_raw\""
     "\"output_cmx_relocations\""
     "\"register_offset\""
     "\"variant_count_raw\""

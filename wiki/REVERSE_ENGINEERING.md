@@ -2072,6 +2072,36 @@ immediately before `MatMul`. This improves explicit binding ergonomics; it
 does not enable automatic source mapping or make the carrier perturbations a
 semantic oracle.
 
+## 68. Repeated DPU input relocations
+
+On 2026-10-21, two controlled carrier variants stopped strict graph comparison
+before producing evidence because their DPU relocation tables targeted one
+input register more than once. This is not sufficient reason to treat the
+native graph as malformed. An earlier compiler-8.3 compound `exp + abs` graph
+contains the same pattern in two of its six DPU invariants and completed NPU
+execution successfully.
+
+The repeated entries are ordinary type-4 CMX relocations with the same target
+register and symbol. Their addends can differ: one newly compiled invariant
+targets input register `+0x5c` first with addend 64 and later with addend 0.
+The historical executed graph likewise contains a register targeted first at
+128 and later at 0. This confirms that repeated targets are a compiler-emitted,
+loadable structure. It does **not** establish relocation application order or
+which address the firmware ultimately uses.
+
+Inspector schema v21 therefore preserves every relocation entry and marks the
+repeated register in `input_ambiguous_fields_raw`. Native routing derivations
+exclude all addresses for that field instead of selecting first or last. They
+may still use another unique register in the same invariant. Strict comparison
+retains the full sequence and mask, so differing duplicates remain visible as
+a DPU contract change.
+
+With this rule, both controlled variants produce complete comparison reports
+instead of an unsupported-input error. They are still rejected as source-label
+evidence because their graph structure, routing, DPU, and other native
+observations differ from the baseline. This expands inspectable graph structure
+without weakening the reviewed-binding acceptance rule.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

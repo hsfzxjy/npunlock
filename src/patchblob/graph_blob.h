@@ -42,6 +42,7 @@ typedef struct npunlock_patch_summary {
 
 #define NPUNLOCK_ROUTING_MAX_RANK 15u
 #define NPUNLOCK_DPU_MAX_INPUT_ADDRESSES 4u
+#define NPUNLOCK_DPU_MAX_INPUT_RELOCATIONS 8u
 #define NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES 4u
 
 /*
@@ -334,8 +335,9 @@ typedef struct npunlock_dpu_invariant_observation {
   uint32_t output_sparse_raw;
   uint64_t output_element_count;
   uint64_t output_span_bytes;
-  npunlock_dpu_cmx_address_observation inputs[NPUNLOCK_DPU_MAX_INPUT_ADDRESSES];
+  npunlock_dpu_cmx_address_observation inputs[NPUNLOCK_DPU_MAX_INPUT_RELOCATIONS];
   uint32_t input_count;
+  uint32_t input_ambiguous_fields_raw;
   npunlock_dpu_cmx_address_observation outputs[NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES];
   uint32_t output_count;
 } npunlock_dpu_invariant_observation;

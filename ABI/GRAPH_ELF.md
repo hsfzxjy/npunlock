@@ -286,6 +286,23 @@ Automatic grouping must distinguish replicas from partitions: summing their
 element counts would double-count the logical tensor, while patching only the
 currently visible replica would depend on compiler routing.
 
+### Repeated DPU input relocations
+
+Some compiler-8.3 graphs contain more than one type-4 CMX relocation for the
+same DPU input register. The entries can carry different addends, so the graph
+inspector must not infer that the first or last entry is the effective runtime
+address. At least one six-invariant compound graph with this structure loaded
+and executed successfully, confirming that a repeated target is not by itself
+a malformed native graph.
+
+The inspector preserves every observed input relocation and reports a bit for
+the repeated register in `input_ambiguous_fields_raw`. Routing proofs ignore
+that field entirely; another unique input register in the same invariant may
+still participate. Strict comparison includes all retained entries and the
+ambiguity mask. This documents uncertainty instead of turning relocation order
+into an ABI assumption. Repeated output-register relocations are not yet
+accepted.
+
 The same warning also applies to ordinary same-precision groups, not only the
 conversion example above. A logical 32-element FP16 unary carrier exposed one
 group containing four 16-element invocations. Runtime validation showed that

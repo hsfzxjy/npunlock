@@ -161,7 +161,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v20\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v21\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -580,7 +580,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 ", \"span_bytes\": %" PRIu64 "}, "
                 "\"output_tensor_observation\": {\"dimensions_xyz\": [%u, %u, %u], "
                 "\"dtype_raw\": %u, \"sparse_raw\": %u, \"element_count\": %" PRIu64
-                ", \"span_bytes\": %" PRIu64 "}, \"input_cmx_relocations\": [",
+                ", \"span_bytes\": %" PRIu64
+                "}, \"input_ambiguous_fields_raw\": %u, \"input_cmx_relocations\": [",
                 index == 0 ? "" : ",\n", invariant->section_index, invariant->invariant_index,
                 invariant->cluster_raw, invariant->wait_mask_raw, invariant->post_mask_raw,
                 invariant->barrier_group_raw, invariant->barrier_mask_raw,
@@ -592,7 +593,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 invariant->output_dimensions_xyz[0], invariant->output_dimensions_xyz[1],
                 invariant->output_dimensions_xyz[2], invariant->output_dtype_raw,
                 invariant->output_sparse_raw, invariant->output_element_count,
-                invariant->output_span_bytes) < 0) {
+                invariant->output_span_bytes, invariant->input_ambiguous_fields_raw) < 0) {
       return 0;
     }
     for (address_index = 0; address_index < invariant->input_count; ++address_index) {

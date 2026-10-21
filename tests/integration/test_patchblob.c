@@ -428,6 +428,7 @@ int main(void) {
   npunlock_buffer unsupported_tiles = {0};
   npunlock_buffer unsupported_platform = {0};
   npunlock_buffer malformed_sections = {0};
+  npunlock_buffer duplicate_dpu_relocation = {0};
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
@@ -444,6 +445,7 @@ int main(void) {
   patchblob_group_completeness_result completeness = {0};
   patchblob_group_coverage_result coverage = {0};
   patchblob_dma_dpu_group_coverage_result dma_dpu_coverage = {0};
+  patchblob_comparison_result comparison = {0};
   patchblob_result result = {0};
   uint32_t flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
                    PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
@@ -536,6 +538,43 @@ int main(void) {
   CHECK(dma_dpu_coverage.groups[0].state == PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED);
   CHECK(dma_dpu_coverage.groups[1].state == PATCHBLOB_GROUP_COVERAGE_NOT_OBSERVED);
   patchblob_dma_dpu_group_coverage_result_release(&dma_dpu_coverage);
+
+  duplicate_dpu_relocation.data = (uint8_t *)malloc(carrier.size);
+  CHECK(duplicate_dpu_relocation.data != NULL);
+  duplicate_dpu_relocation.size = carrier.size;
+  memcpy(duplicate_dpu_relocation.data, carrier.data, carrier.size);
+  {
+    uint8_t *relocations =
+        find_section_header(duplicate_dpu_relocation.data, duplicate_dpu_relocation.size,
+                            ".rlt.text.DPUInvariants", 0xff20u);
+    size_t relocation_offset;
+    size_t relocation_size;
+    uint8_t *first;
+    uint8_t *replacement;
+    CHECK(relocations != NULL);
+    CHECK(read_u64(relocations + 0x18u) <= SIZE_MAX && read_u64(relocations + 0x20u) <= SIZE_MAX);
+    relocation_offset = (size_t)read_u64(relocations + 0x18u);
+    relocation_size = (size_t)read_u64(relocations + 0x20u);
+    CHECK(relocation_size >= 2u * 24u && relocation_size % 24u == 0u &&
+          relocation_offset <= duplicate_dpu_relocation.size - relocation_size);
+    first = duplicate_dpu_relocation.data + relocation_offset;
+    replacement = first + relocation_size - 24u;
+    CHECK(read_u64(first) == 0x5cu);
+    write_u64(replacement, read_u64(first));
+    write_u64(replacement + 8u, read_u64(first + 8u));
+    write_u64(replacement + 16u, read_u64(first + 16u) + 64u);
+  }
+  status = patchblob_inspect_group_coverage(
+      (npunlock_view){duplicate_dpu_relocation.data, duplicate_dpu_relocation.size}, &coverage);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  patchblob_group_coverage_result_release(&coverage);
+  status = patchblob_compare_graphs(
+      (npunlock_view){carrier.data, carrier.size},
+      (npunlock_view){duplicate_dpu_relocation.data, duplicate_dpu_relocation.size}, &comparison);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK((comparison.mismatch_flags & PATCHBLOB_COMPARE_DPU_CHANGED) != 0u);
+  patchblob_comparison_result_release(&comparison);
 
   status = patchblob_inspect_group_coverage(
       (npunlock_view){convert_f32_to_f16.data, convert_f32_to_f16.size}, &coverage);
@@ -1360,6 +1399,7 @@ int main(void) {
   free(unsupported_tiles.data);
   free(unsupported_platform.data);
   free(malformed_sections.data);
+  free(duplicate_dpu_relocation.data);
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);

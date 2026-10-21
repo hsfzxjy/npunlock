@@ -145,6 +145,16 @@ patch selection. The public C API exposes it separately through
 `patchblob_inspect_dma_dpu_group_coverage()`, and Python reports the distinct
 `dma_dpu_consumer` coverage kind.
 
+Schema v21 accepts one additional compiler-8.3 structure: several CMX
+relocations may target the same DPU input register. The report preserves every
+entry and sets `input_ambiguous_fields_raw` for the repeated field. It does not
+choose the first or last addend. ACT/DPU and DMA/DPU derivations ignore all
+relocations for that field, but may still use another unique input register in
+the same invariant. Strict comparison includes the complete retained
+relocation sequence and ambiguity mask, so a change cannot disappear merely
+because the field is excluded from routing proofs. Output-field duplicates and
+more than eight input relocations per invariant remain unsupported.
+
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
 

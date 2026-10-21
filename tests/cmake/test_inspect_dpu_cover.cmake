@@ -13,7 +13,7 @@ if(NOT result EQUAL 0)
 endif()
 
 foreach(expected
-    "\"schema\": \"npunlock.porting.inspect.v20\""
+    "\"schema\": \"npunlock.porting.inspect.v21\""
     "\"precision\": \"mixed\""
     "\"dpu_section_index\": 14"
     "\"act_dpu_output_cover_observations\""

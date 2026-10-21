@@ -2363,12 +2363,14 @@ static npunlock_status inspect_dpu_invariants(const graph_layout *layout,
     field_bit = (uint8_t)(1u << field_index);
     observation = &observations[invariant_index];
     if (is_input) {
-      if ((input_fields_seen[invariant_index] & field_bit) != 0u ||
-          observation->input_count == NPUNLOCK_DPU_MAX_INPUT_ADDRESSES) {
+      if (observation->input_count == NPUNLOCK_DPU_MAX_INPUT_RELOCATIONS) {
         free(observations);
         free(input_fields_seen);
         free(output_fields_seen);
-        return unsupported(diagnostic, "DPU input CMX relocation is duplicated");
+        return unsupported(diagnostic, "DPU input CMX relocation count exceeds the observed bound");
+      }
+      if ((input_fields_seen[invariant_index] & field_bit) != 0u) {
+        observation->input_ambiguous_fields_raw |= field_bit;
       }
       input_fields_seen[invariant_index] |= field_bit;
       address = &observation->inputs[observation->input_count++];
@@ -2768,10 +2770,14 @@ npunlock_status npunlock_derive_act_consumer_cover_observations(
 }
 
 static bool dpu_address_is_first(const npunlock_dpu_cmx_address_observation *addresses,
-                                 size_t address_index) {
+                                 size_t address_index, uint32_t ambiguous_fields_raw) {
   size_t index;
+  if ((ambiguous_fields_raw & (UINT32_C(1) << addresses[address_index].field_index)) != 0u) {
+    return false;
+  }
   for (index = 0; index < address_index; ++index) {
-    if (addresses[index].data_symbol_raw == addresses[address_index].data_symbol_raw &&
+    if ((ambiguous_fields_raw & (UINT32_C(1) << addresses[index].field_index)) == 0u &&
+        addresses[index].data_symbol_raw == addresses[address_index].data_symbol_raw &&
         addresses[index].data_addend_raw == addresses[address_index].data_addend_raw) {
       return false;
     }
@@ -2780,11 +2786,13 @@ static bool dpu_address_is_first(const npunlock_dpu_cmx_address_observation *add
 }
 
 static uint32_t dpu_address_field_mask(const npunlock_dpu_cmx_address_observation *addresses,
-                                       size_t address_count, size_t address_index) {
+                                       size_t address_count, size_t address_index,
+                                       uint32_t ambiguous_fields_raw) {
   uint32_t mask = 0u;
   size_t index;
   for (index = 0; index < address_count; ++index) {
-    if (addresses[index].data_symbol_raw == addresses[address_index].data_symbol_raw &&
+    if ((ambiguous_fields_raw & (UINT32_C(1) << addresses[index].field_index)) == 0u &&
+        addresses[index].data_symbol_raw == addresses[address_index].data_symbol_raw &&
         addresses[index].data_addend_raw == addresses[address_index].data_addend_raw) {
       mask |= UINT32_C(1) << addresses[index].field_index;
     }
@@ -2845,7 +2853,7 @@ npunlock_status npunlock_derive_act_dma_dpu_input_observations(
       source_candidate_count > UINT32_MAX || fanin_observation_count > UINT32_MAX ||
       dpu_invariant_count > UINT32_MAX ||
       !npunlock_checked_mul_size(invocation_count, dpu_invariant_count, &work_bound) ||
-      !npunlock_checked_mul_size(work_bound, NPUNLOCK_DPU_MAX_INPUT_ADDRESSES, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, NPUNLOCK_DPU_MAX_INPUT_RELOCATIONS, &work_bound) ||
       work_bound > ACT_EDGE_MAX_COMPARISONS ||
       !npunlock_checked_mul_size(fanin_observation_count, tile_count, &candidate_capacity) ||
       !npunlock_checked_mul_size(candidate_capacity, sizeof(*candidate_result), &allocation_size)) {
@@ -2968,7 +2976,7 @@ npunlock_status npunlock_derive_act_dma_dpu_input_observations(
         }
         for (address_index = 0; address_index < dpu->input_count; ++address_index) {
           const npunlock_dpu_cmx_address_observation *address = &dpu->inputs[address_index];
-          if (!dpu_address_is_first(dpu->inputs, address_index) ||
+          if (!dpu_address_is_first(dpu->inputs, address_index, dpu->input_ambiguous_fields_raw) ||
               address->data_symbol_raw != fanin->cmx_destination_symbol_raw ||
               address->data_addend_raw != translated_destination) {
             continue;
@@ -2989,7 +2997,8 @@ npunlock_status npunlock_derive_act_dma_dpu_input_observations(
       candidate->dpu_invariant_index = selected_dpu->invariant_index;
       candidate->dpu_field_mask_raw =
           dpu_address_field_mask(selected_dpu->inputs, selected_dpu->input_count,
-                                 (size_t)(selected_address - selected_dpu->inputs));
+                                 (size_t)(selected_address - selected_dpu->inputs),
+                                 selected_dpu->input_ambiguous_fields_raw);
       candidate->dpu_input_addend_raw = selected_address->data_addend_raw;
       candidate->barrier_intersection_raw =
           fanin->fanin_post_mask_raw & selected_dpu->wait_mask_raw;
@@ -3083,10 +3092,13 @@ static npunlock_status derive_act_dpu_edge_candidates(
           size_t address_count = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
                                      ? dpu->input_count
                                      : dpu->output_count;
+          uint32_t ambiguous_fields_raw = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                                              ? dpu->input_ambiguous_fields_raw
+                                              : 0u;
           size_t address_index;
           for (address_index = 0; address_index < address_count; ++address_index) {
             uint64_t barrier_intersection;
-            if (!dpu_address_is_first(addresses, address_index)) {
+            if (!dpu_address_is_first(addresses, address_index, ambiguous_fields_raw)) {
               continue;
             }
             if (comparisons == ACT_EDGE_MAX_COMPARISONS) {
@@ -3139,10 +3151,13 @@ static npunlock_status derive_act_dpu_edge_candidates(
           size_t address_count = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
                                      ? dpu->input_count
                                      : dpu->output_count;
+          uint32_t ambiguous_fields_raw = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                                              ? dpu->input_ambiguous_fields_raw
+                                              : 0u;
           size_t address_index;
           for (address_index = 0; address_index < address_count; ++address_index) {
             uint64_t barrier_intersection;
-            if (dpu_address_is_first(addresses, address_index) &&
+            if (dpu_address_is_first(addresses, address_index, ambiguous_fields_raw) &&
                 act_dpu_candidate_matches(act, tensor_index, dpu, &addresses[address_index],
                                           direction, &barrier_intersection)) {
               ++local_count;
@@ -3161,12 +3176,15 @@ static npunlock_status derive_act_dpu_edge_candidates(
           size_t address_count = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
                                      ? dpu->input_count
                                      : dpu->output_count;
+          uint32_t ambiguous_fields_raw = direction == NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU
+                                              ? dpu->input_ambiguous_fields_raw
+                                              : 0u;
           size_t address_index;
           for (address_index = 0; address_index < address_count; ++address_index) {
             const npunlock_dpu_cmx_address_observation *address = &addresses[address_index];
             npunlock_act_dpu_edge_candidate_observation *candidate;
             uint64_t barrier_intersection;
-            if (!dpu_address_is_first(addresses, address_index) ||
+            if (!dpu_address_is_first(addresses, address_index, ambiguous_fields_raw) ||
                 !act_dpu_candidate_matches(act, tensor_index, dpu, address, direction,
                                            &barrier_intersection)) {
               continue;
@@ -3183,8 +3201,8 @@ static npunlock_status derive_act_dpu_edge_candidates(
             candidate->act_tensor_record_index = (uint32_t)tensor_index;
             candidate->dpu_section_index = dpu->section_index;
             candidate->dpu_invariant_index = dpu->invariant_index;
-            candidate->dpu_field_mask_raw =
-                dpu_address_field_mask(addresses, address_count, address_index);
+            candidate->dpu_field_mask_raw = dpu_address_field_mask(
+                addresses, address_count, address_index, ambiguous_fields_raw);
             candidate->act_candidate_count = (uint32_t)local_count;
             candidate->data_symbol_raw = address->data_symbol_raw;
             candidate->act_data_addend_raw = act->tensors[tensor_index].data_addend;

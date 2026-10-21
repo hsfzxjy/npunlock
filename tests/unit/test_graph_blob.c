@@ -613,6 +613,39 @@ static int test_act_dma_fanin_observations(void) {
   dpu_candidates = NULL;
   dpu_covers = NULL;
 
+  dpu_invariants[0].input_ambiguous_fields_raw = 1;
+  dpu_invariants[1].input_ambiguous_fields_raw = 1;
+  CHECK(npunlock_derive_act_dma_dpu_input_observations(
+            invocations, 2, 1, 2, candidates, candidate_count, observations, observation_count,
+            dpu_invariants, 2, &dpu_candidates, &dpu_candidate_count, &dpu_covers, &dpu_cover_count,
+            &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(dpu_candidate_count == 2);
+  CHECK(dpu_covers[0].exact_cover);
+  CHECK(dpu_candidates[0].dpu_field_mask_raw == 2);
+  CHECK(dpu_candidates[1].dpu_field_mask_raw == 2);
+  free(dpu_candidates);
+  free(dpu_covers);
+  dpu_candidates = NULL;
+  dpu_covers = NULL;
+
+  dpu_invariants[0].input_ambiguous_fields_raw = 3;
+  dpu_invariants[1].input_ambiguous_fields_raw = 3;
+  CHECK(npunlock_derive_act_dma_dpu_input_observations(
+            invocations, 2, 1, 2, candidates, candidate_count, observations, observation_count,
+            dpu_invariants, 2, &dpu_candidates, &dpu_candidate_count, &dpu_covers, &dpu_cover_count,
+            &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(dpu_candidate_count == 2);
+  CHECK(!dpu_covers[0].exact_cover);
+  CHECK(dpu_covers[0].matched_dpu_input_count == 0);
+  CHECK((dpu_covers[0].unresolved_flags & NPUNLOCK_ACT_DMA_DPU_INPUT_AMBIGUOUS) != 0);
+  free(dpu_candidates);
+  free(dpu_covers);
+  dpu_candidates = NULL;
+  dpu_covers = NULL;
+
+  dpu_invariants[0].input_ambiguous_fields_raw = 0;
+  dpu_invariants[1].input_ambiguous_fields_raw = 0;
+
   dpu_invariants[1].wait_mask_raw = 0;
   CHECK(npunlock_derive_act_dma_dpu_input_observations(
             invocations, 2, 1, 2, candidates, candidate_count, observations, observation_count,
