@@ -2172,6 +2172,37 @@ contracts. The previously executed exact NumPy oracle remains the semantic
 check for the complete custom-conversion, custom-binary, DPU-`MatMul`, and
 custom-conversion graph.
 
+## 71. Exact DPU-to-ACT input coverage
+
+On 2026-10-22, inspection completed the other side of the same connected
+mixed-precision graph. Its two `MatMul` DPU invariants run on clusters 0 and 1,
+post barrier `0x80`, and describe 32-element/64-byte FP16 outputs. Both output
+relocation pairs use the same addend, `16960`, because the compiler emits the
+observed multicast form. The following FP16-to-FP32 ACT conversion has one
+full-tensor invocation per tile. Its input addresses are `16960` and
+`2114112`, a difference of `0x200000`, and both invocations wait on barrier
+`0x80`.
+
+The new derivation does not compare the tile-1 ACT address directly with the
+raw multicast addend. It first requires the two ACT invocations to have equal
+tensor, shape, stride, scheduling, and target contracts under one nonzero CMX
+translation. For each tile it subtracts that observed translation from the ACT
+input address, then requires exactly one DPU invariant on the same cluster with
+the resulting output base, equal element and byte extents, and a direct
+post/wait dependency. The two output relocation fields within one invariant
+are treated as one address while their field mask remains visible. Reused DPU
+outputs, missing tiles, contract differences, or zero/multiple matches leave
+the cover unresolved.
+
+Inspector schema v23 reports two exact `dpu_act_input_candidates` and one
+complete `dpu_act_input_cover_observations` record for ACT group 2 input 0.
+Together with sections 70 and 67, this reconstructs the native data path from
+the first custom conversion through the binary custom kernel, DMA fan-in, DPU
+`MatMul`, and final custom conversion. It still does not establish arbitrary
+source-name mapping, a universal tile stride or multicast encoding, or
+automatic patch eligibility. The relation is retained as topology evidence;
+unlike an output coverage kind, it is not accepted by `ReviewedBinding`.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

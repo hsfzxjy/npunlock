@@ -403,6 +403,40 @@ typedef struct npunlock_act_dpu_edge_candidate_observation {
   uint64_t barrier_intersection_raw;
 } npunlock_act_dpu_edge_candidate_observation;
 
+typedef struct npunlock_dpu_act_input_candidate_observation {
+  uint32_t consumer_group_index;
+  uint32_t consumer_invocation_index;
+  uint32_t consumer_tensor_record_index;
+  uint32_t tile_candidate_raw;
+  uint32_t dpu_section_index;
+  uint32_t dpu_invariant_index;
+  uint32_t dpu_cluster_raw;
+  uint32_t dpu_field_mask_raw;
+  uint32_t dpu_candidate_count;
+  uint32_t data_symbol_raw;
+  int64_t dpu_base_addend_raw;
+  int64_t tile_translation_candidate;
+  int64_t translated_destination_addend_raw;
+  int64_t act_input_addend_raw;
+  uint64_t span_bytes;
+  uint64_t barrier_intersection_raw;
+} npunlock_dpu_act_input_candidate_observation;
+
+#define NPUNLOCK_DPU_ACT_INPUT_TILE_SET_UNRESOLVED UINT32_C(1)
+#define NPUNLOCK_DPU_ACT_INPUT_AMBIGUOUS UINT32_C(2)
+#define NPUNLOCK_DPU_ACT_OUTPUT_REUSED UINT32_C(4)
+
+typedef struct npunlock_dpu_act_input_cover_observation {
+  uint32_t consumer_group_index;
+  uint32_t consumer_tensor_record_index;
+  uint32_t tile_count_expected;
+  uint32_t invocation_count;
+  uint32_t translated_tile_count;
+  uint32_t matched_dpu_output_count;
+  uint32_t unresolved_flags;
+  bool exact_cover;
+} npunlock_dpu_act_input_cover_observation;
+
 #define NPUNLOCK_ACT_DPU_COVER_CONSUMER_AMBIGUOUS UINT32_C(1)
 #define NPUNLOCK_ACT_DPU_COVER_INVOCATION_UNCLASSIFIED UINT32_C(2)
 #define NPUNLOCK_ACT_DPU_COVER_SLICE_OVERLAP UINT32_C(4)
@@ -460,6 +494,10 @@ typedef struct npunlock_graph_routing_observations {
   size_t act_dpu_edge_candidate_count;
   npunlock_act_dpu_output_cover_observation *act_dpu_output_covers;
   size_t act_dpu_output_cover_count;
+  npunlock_dpu_act_input_candidate_observation *dpu_act_input_candidates;
+  size_t dpu_act_input_candidate_count;
+  npunlock_dpu_act_input_cover_observation *dpu_act_input_covers;
+  size_t dpu_act_input_cover_count;
 } npunlock_graph_routing_observations;
 
 #define NPUNLOCK_COMPARE_STRUCTURE_CHANGED PATCHBLOB_COMPARE_STRUCTURE_CHANGED
@@ -569,6 +607,13 @@ npunlock_status npunlock_derive_act_dpu_output_cover_observations(
     const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
     size_t group_count, const npunlock_act_dpu_edge_candidate_observation *candidates,
     size_t candidate_count, npunlock_act_dpu_output_cover_observation **covers, size_t *cover_count,
+    npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_derive_dpu_act_input_observations(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, uint32_t tile_count,
+    const npunlock_dpu_invariant_observation *dpu_invariants, size_t dpu_invariant_count,
+    npunlock_dpu_act_input_candidate_observation **candidates, size_t *candidate_count,
+    npunlock_dpu_act_input_cover_observation **covers, size_t *cover_count,
     npunlock_diagnostic *diagnostic);
 void npunlock_graph_routing_observations_release(npunlock_graph_routing_observations *observations);
 npunlock_status

@@ -4780,6 +4780,246 @@ static bool replica_contracts_match(const npunlock_invocation_routing_observatio
   return true;
 }
 
+static const npunlock_invocation_routing_observation *
+find_group_tile_invocation(const npunlock_invocation_routing_observation *invocations,
+                           size_t invocation_count, uint32_t group_index, uint32_t tile_index,
+                           size_t *match_count) {
+  const npunlock_invocation_routing_observation *result = NULL;
+  size_t index;
+  *match_count = 0u;
+  for (index = 0; index < invocation_count; ++index) {
+    if (invocations[index].group_index == group_index &&
+        invocations[index].tile_candidate_raw == tile_index) {
+      result = &invocations[index];
+      ++*match_count;
+    }
+  }
+  return result;
+}
+
+static size_t dpu_act_input_match_count(
+    const npunlock_invocation_routing_observation *invocation, size_t tensor_index,
+    int64_t translation, const npunlock_dpu_invariant_observation *dpu_invariants,
+    size_t dpu_invariant_count, const npunlock_dpu_invariant_observation **selected_dpu,
+    const npunlock_dpu_cmx_address_observation **selected_address, int64_t *base_addend) {
+  const patchblob_tensor_contract_v2 *tensor = &invocation->target.tensors[tensor_index];
+  const npunlock_tensor_routing_observation *routing = &invocation->tensors[tensor_index];
+  size_t result = 0u;
+  size_t dpu_index;
+  *selected_dpu = NULL;
+  *selected_address = NULL;
+  if (routing->data_addend < 0 ||
+      !checked_subtract_i64(routing->data_addend, translation, base_addend)) {
+    return 0u;
+  }
+  for (dpu_index = 0; dpu_index < dpu_invariant_count; ++dpu_index) {
+    const npunlock_dpu_invariant_observation *dpu = &dpu_invariants[dpu_index];
+    size_t address_index;
+    if (dpu->cluster_raw != invocation->tile_candidate_raw ||
+        dpu->output_element_count != tensor->element_count ||
+        dpu->output_span_bytes != tensor->span_bytes ||
+        (dpu->post_mask_raw & invocation->wait_mask_raw) == 0u) {
+      continue;
+    }
+    for (address_index = 0; address_index < dpu->output_count; ++address_index) {
+      const npunlock_dpu_cmx_address_observation *address = &dpu->outputs[address_index];
+      if (!dpu_address_is_first(dpu->outputs, address_index, 0u) ||
+          address->data_symbol_raw != routing->data_symbol ||
+          address->data_addend_raw != *base_addend) {
+        continue;
+      }
+      if (result == 0u) {
+        *selected_dpu = dpu;
+        *selected_address = address;
+      }
+      ++result;
+    }
+  }
+  return result;
+}
+
+npunlock_status npunlock_derive_dpu_act_input_observations(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, uint32_t tile_count,
+    const npunlock_dpu_invariant_observation *dpu_invariants, size_t dpu_invariant_count,
+    npunlock_dpu_act_input_candidate_observation **candidates, size_t *candidate_count,
+    npunlock_dpu_act_input_cover_observation **covers, size_t *cover_count,
+    npunlock_diagnostic *diagnostic) {
+  npunlock_dpu_act_input_candidate_observation *candidate_result = NULL;
+  npunlock_dpu_act_input_cover_observation *cover_result = NULL;
+  size_t cover_result_count = 0u;
+  size_t candidate_result_count = 0u;
+  size_t candidate_capacity;
+  size_t allocation_size;
+  size_t work_bound;
+  size_t group_index;
+
+  if (candidates == NULL || candidate_count == NULL || covers == NULL || cover_count == NULL ||
+      diagnostic == NULL || (invocations == NULL && invocation_count != 0u) ||
+      (dpu_invariants == NULL && dpu_invariant_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *candidates = NULL;
+  *candidate_count = 0u;
+  *covers = NULL;
+  *cover_count = 0u;
+  if (tile_count == 0u || invocation_count == 0u || dpu_invariant_count == 0u) {
+    return NPUNLOCK_STATUS_OK;
+  }
+  if (group_count > UINT32_MAX ||
+      !npunlock_checked_mul_size(group_count, PATCHBLOB_TARGET_V2_MAX_TENSORS, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, invocation_count, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, dpu_invariant_count, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, NPUNLOCK_DPU_MAX_OUTPUT_ADDRESSES, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS) {
+    return unsupported(diagnostic, "DPU/ACT input analysis exceeds its work bound");
+  }
+
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    const npunlock_invocation_routing_observation *reference;
+    size_t reference_count;
+    size_t tensor_index;
+    reference = find_group_tile_invocation(invocations, invocation_count, (uint32_t)group_index, 0u,
+                                           &reference_count);
+    if (reference_count != 1u || reference == NULL) {
+      continue;
+    }
+    for (tensor_index = 0; tensor_index + 1u < reference->target.tensor_count; ++tensor_index) {
+      const npunlock_dpu_invariant_observation *selected_dpu;
+      const npunlock_dpu_cmx_address_observation *selected_address;
+      int64_t base_addend;
+      if (dpu_act_input_match_count(reference, tensor_index, 0, dpu_invariants, dpu_invariant_count,
+                                    &selected_dpu, &selected_address, &base_addend) != 0u) {
+        ++cover_result_count;
+      }
+    }
+  }
+  if (!npunlock_checked_mul_size(cover_result_count, sizeof(*cover_result), &allocation_size) ||
+      !npunlock_checked_mul_size(cover_result_count, tile_count, &candidate_capacity) ||
+      !npunlock_checked_mul_size(candidate_capacity, sizeof(*candidate_result), &allocation_size)) {
+    return unsupported(diagnostic, "DPU/ACT input result allocation overflows");
+  }
+  cover_result =
+      (npunlock_dpu_act_input_cover_observation *)calloc(cover_result_count, sizeof(*cover_result));
+  candidate_result = (npunlock_dpu_act_input_candidate_observation *)calloc(
+      candidate_capacity, sizeof(*candidate_result));
+  if ((cover_result == NULL && cover_result_count != 0u) ||
+      (candidate_result == NULL && candidate_capacity != 0u)) {
+    free(cover_result);
+    free(candidate_result);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate DPU/ACT input observations");
+  }
+
+  cover_result_count = 0u;
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    const npunlock_invocation_routing_observation *reference;
+    size_t reference_count;
+    size_t tensor_index;
+    reference = find_group_tile_invocation(invocations, invocation_count, (uint32_t)group_index, 0u,
+                                           &reference_count);
+    if (reference_count != 1u || reference == NULL) {
+      continue;
+    }
+    for (tensor_index = 0; tensor_index + 1u < reference->target.tensor_count; ++tensor_index) {
+      const npunlock_dpu_invariant_observation *reference_dpu;
+      const npunlock_dpu_cmx_address_observation *reference_address;
+      npunlock_dpu_act_input_cover_observation *cover;
+      int64_t reference_base;
+      size_t invocation_index;
+      uint32_t tile_index;
+      if (dpu_act_input_match_count(reference, tensor_index, 0, dpu_invariants, dpu_invariant_count,
+                                    &reference_dpu, &reference_address, &reference_base) == 0u) {
+        continue;
+      }
+      cover = &cover_result[cover_result_count++];
+      cover->consumer_group_index = (uint32_t)group_index;
+      cover->consumer_tensor_record_index = (uint32_t)tensor_index;
+      cover->tile_count_expected = tile_count;
+      for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
+        if (invocations[invocation_index].group_index == group_index) {
+          ++cover->invocation_count;
+        }
+      }
+      if (cover->invocation_count != tile_count) {
+        cover->unresolved_flags |= NPUNLOCK_DPU_ACT_INPUT_TILE_SET_UNRESOLVED;
+      }
+      for (tile_index = 0; tile_index < tile_count; ++tile_index) {
+        const npunlock_invocation_routing_observation *invocation;
+        const npunlock_dpu_invariant_observation *selected_dpu;
+        const npunlock_dpu_cmx_address_observation *selected_address;
+        npunlock_dpu_act_input_candidate_observation *candidate;
+        size_t invocation_matches;
+        size_t local_count;
+        int64_t translation = 0;
+        int64_t base_addend = 0;
+        invocation = find_group_tile_invocation(
+            invocations, invocation_count, (uint32_t)group_index, tile_index, &invocation_matches);
+        candidate = &candidate_result[candidate_result_count++];
+        candidate->consumer_group_index = (uint32_t)group_index;
+        candidate->consumer_tensor_record_index = (uint32_t)tensor_index;
+        candidate->tile_candidate_raw = tile_index;
+        if (invocation_matches != 1u || invocation == NULL ||
+            (tile_index != 0u && !replica_contracts_match(invocation, reference, &translation))) {
+          cover->unresolved_flags |= NPUNLOCK_DPU_ACT_INPUT_TILE_SET_UNRESOLVED;
+          continue;
+        }
+        candidate->consumer_invocation_index = invocation->target.invocation_index;
+        candidate->tile_translation_candidate = translation;
+        candidate->act_input_addend_raw = invocation->tensors[tensor_index].data_addend;
+        candidate->translated_destination_addend_raw = candidate->act_input_addend_raw;
+        candidate->span_bytes = invocation->target.tensors[tensor_index].span_bytes;
+        ++cover->translated_tile_count;
+        local_count = dpu_act_input_match_count(invocation, tensor_index, translation,
+                                                dpu_invariants, dpu_invariant_count, &selected_dpu,
+                                                &selected_address, &base_addend);
+        if (local_count > UINT32_MAX) {
+          free(cover_result);
+          free(candidate_result);
+          return unsupported(diagnostic, "DPU/ACT input ambiguity exceeds the supported range");
+        }
+        candidate->dpu_candidate_count = (uint32_t)local_count;
+        candidate->dpu_base_addend_raw = base_addend;
+        if (local_count != 1u || selected_dpu == NULL || selected_address == NULL) {
+          cover->unresolved_flags |= NPUNLOCK_DPU_ACT_INPUT_AMBIGUOUS;
+          continue;
+        }
+        candidate->dpu_section_index = selected_dpu->section_index;
+        candidate->dpu_invariant_index = selected_dpu->invariant_index;
+        candidate->dpu_cluster_raw = selected_dpu->cluster_raw;
+        candidate->data_symbol_raw = selected_address->data_symbol_raw;
+        candidate->dpu_field_mask_raw =
+            dpu_address_field_mask(selected_dpu->outputs, selected_dpu->output_count,
+                                   (size_t)(selected_address - selected_dpu->outputs), 0u);
+        candidate->barrier_intersection_raw =
+            selected_dpu->post_mask_raw & invocation->wait_mask_raw;
+        for (invocation_index = 0; invocation_index + 1u < candidate_result_count;
+             ++invocation_index) {
+          const npunlock_dpu_act_input_candidate_observation *prior =
+              &candidate_result[invocation_index];
+          if (prior->consumer_group_index == candidate->consumer_group_index &&
+              prior->consumer_tensor_record_index == candidate->consumer_tensor_record_index &&
+              prior->dpu_candidate_count == 1u &&
+              prior->dpu_section_index == candidate->dpu_section_index &&
+              prior->dpu_invariant_index == candidate->dpu_invariant_index) {
+            cover->unresolved_flags |= NPUNLOCK_DPU_ACT_OUTPUT_REUSED;
+          }
+        }
+        ++cover->matched_dpu_output_count;
+      }
+      cover->exact_cover = cover->unresolved_flags == 0u &&
+                           cover->translated_tile_count == tile_count &&
+                           cover->matched_dpu_output_count == tile_count;
+    }
+  }
+  *candidates = candidate_result;
+  *candidate_count = candidate_result_count;
+  *covers = cover_result;
+  *cover_count = cover_result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 static bool replica_translation_solves_group(
     const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
     const npunlock_act_output_slice_candidate_observation *slice_candidates,
@@ -5268,6 +5508,8 @@ void npunlock_graph_routing_observations_release(
   free(observations->dpu_invariants);
   free(observations->act_dpu_edge_candidates);
   free(observations->act_dpu_output_covers);
+  free(observations->dpu_act_input_candidates);
+  free(observations->dpu_act_input_covers);
   memset(observations, 0, sizeof(*observations));
 }
 
@@ -5443,7 +5685,15 @@ npunlock_compare_graph_routing_observations(const npunlock_graph_routing_observa
       !observation_arrays_equal(
           baseline->act_dpu_output_covers, baseline->act_dpu_output_cover_count,
           candidate->act_dpu_output_covers, candidate->act_dpu_output_cover_count,
-          sizeof(*baseline->act_dpu_output_covers))) {
+          sizeof(*baseline->act_dpu_output_covers)) ||
+      !observation_arrays_equal(
+          baseline->dpu_act_input_candidates, baseline->dpu_act_input_candidate_count,
+          candidate->dpu_act_input_candidates, candidate->dpu_act_input_candidate_count,
+          sizeof(*baseline->dpu_act_input_candidates)) ||
+      !observation_arrays_equal(baseline->dpu_act_input_covers, baseline->dpu_act_input_cover_count,
+                                candidate->dpu_act_input_covers,
+                                candidate->dpu_act_input_cover_count,
+                                sizeof(*baseline->dpu_act_input_covers))) {
     comparison->mismatch_flags |= NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED;
   }
   free(changed);
@@ -5487,6 +5737,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_dpu_invariant_observation *dpu_invariants = NULL;
   npunlock_act_dpu_edge_candidate_observation *act_dpu_edge_candidates = NULL;
   npunlock_act_dpu_output_cover_observation *act_dpu_output_covers = NULL;
+  npunlock_dpu_act_input_candidate_observation *dpu_act_input_candidates = NULL;
+  npunlock_dpu_act_input_cover_observation *dpu_act_input_covers = NULL;
   uint64_t *parameter_bases = NULL;
   size_t target_count = 0;
   size_t group_count = 0;
@@ -5509,6 +5761,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t dpu_invariant_count = 0;
   size_t act_dpu_edge_candidate_count = 0;
   size_t act_dpu_output_cover_count = 0;
+  size_t dpu_act_input_candidate_count = 0;
+  size_t dpu_act_input_cover_count = 0;
   size_t index;
   uint32_t tile_count_observed = 0;
   npunlock_status status;
@@ -5698,6 +5952,13 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = npunlock_derive_dpu_act_input_observations(
+      invocations, invocation_count, group_count, tile_count_observed, dpu_invariants,
+      dpu_invariant_count, &dpu_act_input_candidates, &dpu_act_input_candidate_count,
+      &dpu_act_input_covers, &dpu_act_input_cover_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
 
   free(discovered);
   free(parameter_bases);
@@ -5742,6 +6003,10 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->act_dpu_edge_candidate_count = act_dpu_edge_candidate_count;
   observations->act_dpu_output_covers = act_dpu_output_covers;
   observations->act_dpu_output_cover_count = act_dpu_output_cover_count;
+  observations->dpu_act_input_candidates = dpu_act_input_candidates;
+  observations->dpu_act_input_candidate_count = dpu_act_input_candidate_count;
+  observations->dpu_act_input_covers = dpu_act_input_covers;
+  observations->dpu_act_input_cover_count = dpu_act_input_cover_count;
   return NPUNLOCK_STATUS_OK;
 
 fail:
@@ -5764,6 +6029,8 @@ fail:
   free(dpu_invariants);
   free(act_dpu_edge_candidates);
   free(act_dpu_output_covers);
+  free(dpu_act_input_candidates);
+  free(dpu_act_input_covers);
   free(discovered);
   free(parameter_bases);
   graph_layout_release(&layout);

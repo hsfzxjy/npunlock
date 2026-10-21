@@ -770,6 +770,69 @@ static int test_act_dma_act_input_observations(void) {
   return 0;
 }
 
+static int test_dpu_act_input_observations(void) {
+  npunlock_invocation_routing_observation invocations[2];
+  npunlock_dpu_invariant_observation dpu[2] = {{0}};
+  npunlock_dpu_act_input_candidate_observation *candidates = NULL;
+  npunlock_dpu_act_input_cover_observation *covers = NULL;
+  size_t candidate_count = 0;
+  size_t cover_count = 0;
+  size_t index;
+  npunlock_diagnostic diagnostic = {0};
+
+  configure_edge_invocation(&invocations[0], 0, 0, 16960, 64, 128, 256);
+  configure_edge_invocation(&invocations[1], 1, 0, 2114112, 2097216, 128, 256);
+  invocations[1].tile_candidate_raw = 1;
+  for (index = 0; index < 2; ++index) {
+    invocations[index].target.tensors[0].element_count = 32;
+    invocations[index].target.tensors[0].span_bytes = 64;
+    invocations[index].target.tensors[1].element_count = 32;
+    invocations[index].target.tensors[1].span_bytes = 64;
+    dpu[index].section_index = 14;
+    dpu[index].invariant_index = (uint32_t)index;
+    dpu[index].cluster_raw = (uint32_t)index;
+    dpu[index].post_mask_raw = 128;
+    dpu[index].output_element_count = 32;
+    dpu[index].output_span_bytes = 64;
+    dpu[index].output_count = 2;
+    dpu[index].outputs[0].field_index = 0;
+    dpu[index].outputs[0].data_symbol_raw = 0;
+    dpu[index].outputs[0].data_addend_raw = 16960;
+    dpu[index].outputs[1] = dpu[index].outputs[0];
+    dpu[index].outputs[1].field_index = 1;
+  }
+
+  CHECK(npunlock_derive_dpu_act_input_observations(invocations, 2, 1, 2, dpu, 2, &candidates,
+                                                   &candidate_count, &covers, &cover_count,
+                                                   &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(candidate_count == 2);
+  CHECK(cover_count == 1);
+  CHECK(covers[0].exact_cover);
+  CHECK(covers[0].translated_tile_count == 2);
+  CHECK(covers[0].matched_dpu_output_count == 2);
+  CHECK(candidates[0].dpu_candidate_count == 1);
+  CHECK(candidates[1].tile_translation_candidate == 2097152);
+  CHECK(candidates[1].dpu_base_addend_raw == 16960);
+  CHECK(candidates[1].dpu_cluster_raw == 1);
+  free(candidates);
+  free(covers);
+  candidates = NULL;
+  covers = NULL;
+
+  dpu[1].post_mask_raw = 0;
+  CHECK(npunlock_derive_dpu_act_input_observations(invocations, 2, 1, 2, dpu, 2, &candidates,
+                                                   &candidate_count, &covers, &cover_count,
+                                                   &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(candidate_count == 2);
+  CHECK(cover_count == 1);
+  CHECK(!covers[0].exact_cover);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_DPU_ACT_INPUT_AMBIGUOUS) != 0);
+  free(candidates);
+  free(covers);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
 static int test_routing_comparison(void) {
   npunlock_invocation_routing_observation baseline_invocations[2];
   npunlock_invocation_routing_observation candidate_invocations[2];
@@ -783,6 +846,10 @@ static int test_routing_comparison(void) {
   npunlock_act_dma_act_input_candidate_observation candidate_act_dma_act = {0};
   npunlock_act_dma_act_input_cover_observation baseline_act_dma_act_cover = {0};
   npunlock_act_dma_act_input_cover_observation candidate_act_dma_act_cover = {0};
+  npunlock_dpu_act_input_candidate_observation baseline_dpu_act = {0};
+  npunlock_dpu_act_input_candidate_observation candidate_dpu_act = {0};
+  npunlock_dpu_act_input_cover_observation baseline_dpu_act_cover = {0};
+  npunlock_dpu_act_input_cover_observation candidate_dpu_act_cover = {0};
   npunlock_graph_routing_observations baseline = {0};
   npunlock_graph_routing_observations candidate = {0};
   npunlock_graph_routing_comparison comparison = {0};
@@ -810,6 +877,10 @@ static int test_routing_comparison(void) {
   baseline.act_dma_act_input_candidate_count = 1;
   baseline.act_dma_act_input_covers = &baseline_act_dma_act_cover;
   baseline.act_dma_act_input_cover_count = 1;
+  baseline.dpu_act_input_candidates = &baseline_dpu_act;
+  baseline.dpu_act_input_candidate_count = 1;
+  baseline.dpu_act_input_covers = &baseline_dpu_act_cover;
+  baseline.dpu_act_input_cover_count = 1;
   candidate.invocations = candidate_invocations;
   candidate.invocation_count = 2;
   candidate.group_count = 2;
@@ -824,6 +895,10 @@ static int test_routing_comparison(void) {
   candidate.act_dma_act_input_candidate_count = 1;
   candidate.act_dma_act_input_covers = &candidate_act_dma_act_cover;
   candidate.act_dma_act_input_cover_count = 1;
+  candidate.dpu_act_input_candidates = &candidate_dpu_act;
+  candidate.dpu_act_input_candidate_count = 1;
+  candidate.dpu_act_input_covers = &candidate_dpu_act_cover;
+  candidate.dpu_act_input_cover_count = 1;
 
   CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
                                                     &diagnostic) == NPUNLOCK_STATUS_OK);
@@ -873,6 +948,22 @@ static int test_routing_comparison(void) {
   npunlock_graph_routing_comparison_release(&comparison);
   candidate_act_dma_act_cover.consumer_input_count = 0;
 
+  candidate_dpu_act.tile_translation_candidate = 2097152;
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED) != 0);
+  npunlock_graph_routing_comparison_release(&comparison);
+  candidate_dpu_act.tile_translation_candidate = 0;
+
+  candidate_dpu_act_cover.matched_dpu_output_count = 1;
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_ACT_DPU_RELATIONS_CHANGED) != 0);
+  npunlock_graph_routing_comparison_release(&comparison);
+  candidate_dpu_act_cover.matched_dpu_output_count = 0;
+
   candidate_invocations[1].wait_mask_raw = 8;
   CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
                                                     &diagnostic) == NPUNLOCK_STATUS_OK);
@@ -919,6 +1010,7 @@ int main(void) {
   CHECK(test_act_consumer_cover_observations() == 0);
   CHECK(test_act_dma_fanin_observations() == 0);
   CHECK(test_act_dma_act_input_observations() == 0);
+  CHECK(test_dpu_act_input_observations() == 0);
   CHECK(test_routing_comparison() == 0);
 
   target.struct_size = sizeof(target);

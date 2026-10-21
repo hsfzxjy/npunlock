@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-21:** native routing analysis now proves an exact ACT-to-DDR-to-ACT path across the first two custom operations in a connected mixed-precision graph. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#70-dma-mediated-act-to-act-coverage).
+> **Latest breakthrough — 2026-10-22:** native routing analysis now reconstructs the complete ACT→DMA→ACT→DMA→DPU→ACT path through a connected mixed-precision custom/DPU graph. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#71-exact-dpu-to-act-input-coverage).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,

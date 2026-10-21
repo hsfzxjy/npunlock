@@ -210,6 +210,17 @@ tile replica. This proves a bounded ACT-to-DMA-to-DDR-to-DMA-to-ACT route; it
 does not establish source-node identity, a general DDR lifetime, or automatic
 patch eligibility.
 
+For the observed full-tensor DPU-to-ACT case, the inspector can also resolve
+multicast DPU outputs without treating their common relocation addend as a
+global CMX address. It requires one complete ACT invocation per observed tile,
+uses the full descriptor contract to derive each invocation's translation from
+tile 0, and subtracts that translation from the ACT input address. The result
+must match exactly one output of a DPU invariant on the same cluster, with the
+same element count and byte span and a direct DPU-post/ACT-wait dependency.
+Every tile must match once and no DPU output may be reused. This is a bounded
+DPU-to-ACT input-cover proof, not a general multicast encoding or a source-node
+mapping rule.
+
 Observed ACT relocation tables use 24-byte ELF64 `SHT_RELA` entries, flags
 `0x40`, alignment 8, and names derived from their target section, such as
 `.rlt.text.KernelParams`. Relocation type 4 is `R_VPU_32`: it writes

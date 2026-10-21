@@ -167,6 +167,15 @@ exposes this proof separately through
 `dma_act_consumer` coverage kind. It does not infer a source-node identity or
 a general DDR-buffer lifetime.
 
+Schema v23 adds `dpu_act_input_candidates` and
+`dpu_act_input_cover_observations` for the opposite side of a DPU region. The
+current exact form requires one full-contract ACT invocation per observed tile.
+It derives every tile translation from the ACT descriptors, applies that
+translation to a common DPU output base, and requires one same-cluster DPU
+output with equal element/byte extent and a direct post/wait dependency. The
+cover remains native topology evidence only; it is not exposed as a reviewed
+binding coverage kind and does not identify a source operation.
+
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
 

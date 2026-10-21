@@ -161,7 +161,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v22\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v23\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -725,6 +725,53 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"dpu_act_input_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->dpu_act_input_candidate_count; ++index) {
+    const npunlock_dpu_act_input_candidate_observation *candidate =
+        &routing->dpu_act_input_candidates[index];
+    if (fprintf(stream,
+                "%s    {\"consumer_group_index\": %u, \"consumer_invocation_index\": %u, "
+                "\"consumer_tensor_record_index\": %u, \"tile_candidate_raw\": %u, "
+                "\"dpu_section_index\": %u, \"dpu_invariant_index\": %u, "
+                "\"dpu_cluster_raw\": %u, \"dpu_field_mask_raw\": %u, "
+                "\"dpu_candidate_count\": %u, \"match_observation\": {"
+                "\"data_symbol_raw\": %u, \"dpu_base_addend_raw\": %" PRId64
+                ", \"tile_translation_candidate\": %" PRId64
+                ", \"translated_destination_addend_raw\": %" PRId64
+                ", \"act_input_addend_raw\": %" PRId64 ", \"span_bytes\": %" PRIu64
+                ", \"barrier_intersection_raw\": %" PRIu64 "}}",
+                index == 0 ? "" : ",\n", candidate->consumer_group_index,
+                candidate->consumer_invocation_index, candidate->consumer_tensor_record_index,
+                candidate->tile_candidate_raw, candidate->dpu_section_index,
+                candidate->dpu_invariant_index, candidate->dpu_cluster_raw,
+                candidate->dpu_field_mask_raw, candidate->dpu_candidate_count,
+                candidate->data_symbol_raw, candidate->dpu_base_addend_raw,
+                candidate->tile_translation_candidate, candidate->translated_destination_addend_raw,
+                candidate->act_input_addend_raw, candidate->span_bytes,
+                candidate->barrier_intersection_raw) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"dpu_act_input_cover_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->dpu_act_input_cover_count; ++index) {
+    const npunlock_dpu_act_input_cover_observation *cover = &routing->dpu_act_input_covers[index];
+    if (fprintf(stream,
+                "%s    {\"consumer_group_index\": %u, \"consumer_tensor_record_index\": %u, "
+                "\"tile_count_expected\": %u, \"invocation_count\": %u, "
+                "\"translated_tile_count\": %u, \"matched_dpu_output_count\": %u, "
+                "\"exact_cover\": %s, \"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", cover->consumer_group_index,
+                cover->consumer_tensor_record_index, cover->tile_count_expected,
+                cover->invocation_count, cover->translated_tile_count,
+                cover->matched_dpu_output_count, cover->exact_cover ? "true" : "false",
+                cover->unresolved_flags) < 0) {
+      return 0;
+    }
+  }
   return fprintf(stream,
                  "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
                  "network-output DMA, and raw DMA-task contract; DMA endpoints "
@@ -753,6 +800,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "classification for every participating invocation; "
                  "ACT/DPU output-cover observations require every group invocation to have one "
                  "unique DPU consumer and exact non-overlapping coverage of each DPU input; "
+                 "DPU/ACT input covers require one full-contract ACT invocation per tile and one "
+                 "unique same-cluster DPU output after applying the observed ACT translation; "
                  "code fingerprints cover validated range slices but are not semantic operation "
                  "identifiers; DMA observations do not establish semantic graph edges; "
                  "DPU CMX "
