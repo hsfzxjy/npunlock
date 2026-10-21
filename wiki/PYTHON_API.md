@@ -406,6 +406,28 @@ invocations, with `scalar_input_indices == (2, 3, 4)`, and uses ordinary
 one-to-one automatic mapping. Other shapes, positions, and dtypes remain
 explicit-required until separately validated.
 
+For a compiler-reordered graph, `probe_binding()` can construct a reviewed
+binding from two or more controlled carrier substitutions plus native routing
+coverage:
+
+```python
+reviewed = prepared.probe_binding(
+    custom_output,
+    ("Minimum", "Subtract"),
+)
+program = prepared.build(bindings={custom_output: reviewed})
+```
+
+Without `coverage_kind`, this succeeds only when at least two accepted probes
+identify the same ACT group and that group has exactly one complete coverage
+kind. If several route meanings are complete, inspect `probe_mapping()` and
+`inspect_group_coverage()` separately and repeat with an explicit
+`coverage_kind`, such as `"act_consumer"` or `"dma_dpu_consumer"`. A failed
+probe or incomplete route is never downgraded to positional guessing. The
+returned `ReviewedBinding` preserves the exact native-blob hash, all probe
+comparisons, and the selected coverage record for plan and prepared-bundle
+revalidation.
+
 ### Review a multi-kernel build plan
 
 For a graph with several custom kernels, separate validation from compiler

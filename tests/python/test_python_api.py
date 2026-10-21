@@ -1196,6 +1196,41 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertIn("accepted_carriers=Sqrt,Tanh", reviewed.explain())
         self.assertEqual(plan.group_indices, ((0,),))
 
+    def test_probe_binding_selects_the_only_complete_coverage_kind(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.comparison = npu.GraphComparison(0, (0,), True, True)
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        reviewed = prepared.probe_binding(y, ("Sqrt", "Tanh"))
+
+        self.assertEqual(reviewed.group_index, 0)
+        self.assertEqual(reviewed.coverage_kind, "act_consumer")
+        self.assertEqual([probe.candidate_carrier for probe in reviewed.evidence.probes], ["Sqrt", "Tanh"])
+
+    def test_probe_binding_requires_explicit_kind_for_ambiguous_coverage(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.comparison = npu.GraphComparison(0, (0,), True, True)
+        fake.coverage = (replace(fake.coverage[0], direct_output_state="complete"),)
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        with self.assertRaisesRegex(ValueError, "exactly one complete kind"):
+            prepared.probe_binding(y, ("Sqrt", "Tanh"))
+
+        reviewed = prepared.probe_binding(y, ("Sqrt", "Tanh"), coverage_kind="act_consumer")
+        self.assertEqual(reviewed.coverage_kind, "act_consumer")
+
     def test_reviewed_binding_requires_complete_selected_coverage(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         y = npu.custom(x, source=b"kernel", carrier="Abs")

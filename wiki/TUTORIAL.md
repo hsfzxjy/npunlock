@@ -459,35 +459,32 @@ the translated multicast destinations uniquely match DPU inputs. A complete
 ACT- or DPU-consumer relationship proves bounded native invocation coverage,
 not source identity, and is not an automatic patch binding.
 
-After reviewing both kinds of evidence, you can deliberately combine them in
-an immutable binding:
+The compact helper runs the probes and combines them with coverage only when
+the identified group has exactly one complete route meaning:
 
 ```python
-reviewed = prepared.review_binding(
+reviewed = prepared.probe_binding(
     custom_output,
-    evidence,
-    coverage_kind="act_consumer",
+    ("Sqrt", "Tanh"),
 )
 program = prepared.build(bindings={custom_output: reviewed})
 ```
 
-`review_binding()` requires consistent evidence from at least two accepted
-carrier probes, requires the chosen `direct_output`, `act_consumer`,
-`dpu_consumer`, or `dma_dpu_consumer` coverage state to be `complete`, and
-records the exact prepared native-blob hash. Planning rechecks those
-conditions. You must choose the coverage kind; npunlock does not merge the
-four meanings or silently use this object for another custom output. This
-opt-in path does not change ordinary positional mapping, and raw explicit
-`ActGroup` bindings remain available.
+`probe_binding()` rejects zero or several complete kinds. When several route
+meanings are complete, use `probe_mapping()` and `inspect_group_coverage()` to
+inspect them, then name the intended `direct_output`, `act_consumer`,
+`dpu_consumer`, or `dma_dpu_consumer` kind explicitly. The helper records the
+exact prepared native-blob hash, carrier comparisons, and coverage record;
+planning rechecks them. This opt-in path does not change ordinary positional
+mapping, and raw explicit `ActGroup` bindings remain available.
 
 For example, a custom elementwise operation immediately before a DPU
 `MatMul` may use the DMA-mediated form:
 
 ```python
-evidence = prepared.probe_mapping(custom_output, ("Minimum", "Subtract"))
-reviewed = prepared.review_binding(
+reviewed = prepared.probe_binding(
     custom_output,
-    evidence,
+    ("Minimum", "Subtract"),
     coverage_kind="dma_dpu_consumer",
 )
 ```

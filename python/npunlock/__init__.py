@@ -1922,9 +1922,42 @@ class PreparedGraph:
         return self._libraries.inspect_group_completeness(self.ir_provenance.graph_blob)
 
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]:
-        """Return independent direct-output, ACT-consumer, and DPU-consumer evidence."""
+        """Return independent direct-output, ACT-, direct-DPU-, and DMA/DPU-consumer evidence."""
 
         return self._libraries.inspect_group_coverage(self.ir_provenance.graph_blob)
+
+    def probe_binding(
+        self,
+        output: Tensor,
+        carriers: Sequence[str],
+        *,
+        coverage_kind: str | None = None,
+        ir_worker: str | None = None,
+    ) -> ReviewedBinding:
+        """Probe a source mapping and return its conservatively reviewed binding."""
+
+        evidence = self.probe_mapping(output, carriers, ir_worker=ir_worker)
+        if coverage_kind is not None:
+            return self.review_binding(output, evidence, coverage_kind=coverage_kind)
+        if evidence.status != "consistent" or evidence.group_index is None:
+            raise ValueError(
+                "implicit coverage-kind selection requires consistent carrier mapping evidence; "
+                f"got {evidence.status}"
+            )
+        group_index = evidence.group_index
+        coverage_records = self.inspect_group_coverage()
+        if len(coverage_records) != len(self.groups) or not 0 <= group_index < len(coverage_records):
+            raise RuntimeError("group coverage does not match the prepared ACT groups")
+        coverage = coverage_records[group_index]
+        if coverage.group_index != group_index or coverage.invocation_count != len(self.groups[group_index].targets):
+            raise RuntimeError("group coverage does not match the prepared ACT group")
+        if len(coverage.complete_kinds) != 1:
+            kinds = ", ".join(coverage.complete_kinds) or "none"
+            raise ValueError(
+                "implicit coverage-kind selection requires exactly one complete kind; "
+                f"ACT group {group_index} has {kinds}; pass coverage_kind explicitly after review"
+            )
+        return self.review_binding(output, evidence, coverage_kind=coverage.complete_kinds[0])
 
     def review_binding(
         self,

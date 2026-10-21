@@ -387,6 +387,14 @@ class PreparedGraph:
     ) -> CarrierMappingEvidence: ...
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]: ...
+    def probe_binding(
+        self,
+        output: Tensor,
+        carriers: Sequence[str],
+        *,
+        coverage_kind: str | None = ...,
+        ir_worker: str | None = ...,
+    ) -> ReviewedBinding: ...
     def review_binding(
         self,
         output: Tensor,
