@@ -451,6 +451,8 @@ Candidate lists are graph-context evidence, not a global operator preference.
 The [branched DPU/ACT example](../examples/example_branched_network.py) uses
 separate lists for scalar-input FP16, equal-span FP16, and unary FP32 custom
 nodes and obtains three reviewed bindings without naming any ACT group index.
+It then exports the plan and reloads those bindings from the prepared bundle;
+the saved candidate blobs are re-compared rather than recompiled.
 
 ### Review a multi-kernel build plan
 

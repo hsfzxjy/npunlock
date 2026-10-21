@@ -498,7 +498,9 @@ The [branched DPU/ACT example](../examples/example_branched_network.py) applies
 this workflow to three custom nodes in one graph. It deliberately uses
 different candidate lists for the scalar-input, full binary, and FP32 unary
 nodes because carrier lowering depends on arity, dtype, shape, and graph
-context; there is no universal fallback list.
+context; there is no universal fallback list. The example also saves the
+reviewed plan as a prepared bundle and rebuilds from the restored evidence, so
+the controlled graph compilations are a one-time review cost.
 
 For several kernels, filter groups with independent fields and bind them all:
 

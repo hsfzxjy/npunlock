@@ -2124,7 +2124,10 @@ the exact DMA-mediated DPU-input cover, group 4 uses a complete ACT-consumer
 cover, and group 0 uses complete direct-output coverage. The resulting
 `ReviewedBinding` objects retain the baseline blob identity, accepted and
 rejected comparisons, selected coverage record, and group contract for
-revalidation when the build plan is consumed.
+revalidation when the build plan is consumed. The example exports those
+records and every candidate native blob into a prepared bundle, reloads it,
+repeats strict comparison and coverage validation without graph compilation,
+then builds and executes all three kernels from the restored plan.
 
 This demonstrates a practical explicit-binding workflow for one nontrivial
 graph. It does not establish that these substitute carriers preserve every

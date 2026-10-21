@@ -676,7 +676,9 @@ ACT groups than symbolic computational nodes because `MatMul` is lowered to
 DPU work, so automatic positional mapping refuses the graph. The example uses
 `prepare()` and controlled carrier substitutions to identify each custom
 output, then combines that source evidence with one complete native routing
-coverage kind. No raw ACT-group number is part of the build plan.
+coverage kind. No raw ACT-group number is part of the build plan. It exports
+the reviewed plan, reloads the carrier, and builds from the restored evidence,
+so later sessions can skip every graph and carrier-probe compilation.
 
 On NPU3720 with graph compiler 8.3, this graph produced six ACT groups for
 seven computational nodes alongside nonempty DPU invariant and variant

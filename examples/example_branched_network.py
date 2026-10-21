@@ -1,5 +1,7 @@
 """A branched graph combining DPU work and three custom ACT-SHAVE kernels."""
 
+from pathlib import Path
+
 import numpy as np
 import npunlock as npu
 
@@ -172,8 +174,24 @@ def main() -> None:
             ),
         },
     )
-    print(plan.explain())
-    program = plan.build()
+
+    artifact_root = Path("build/example-branched-network")
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    prepared_path = artifact_root / "carrier.npuprepared"
+    prepared.export(prepared_path, plan=plan)
+    print(f"saved reviewed carrier to {prepared_path}")
+    restored = npu.load_prepared(prepared_path, graph=graph)
+    restored_plan = restored.plan(
+        kernels={
+            control_output: npu.KernelSpec(
+                affine_f32_c,
+                definitions=("SCALE_QUARTERS=5",),
+            ),
+        }
+    )
+    print(restored.explain())
+    print(restored_plan.explain())
+    program = restored_plan.build()
 
     shape = (1, 32)
     data = np.linspace(-2.0, 3.0, 32, dtype=np.float16).reshape(shape)
