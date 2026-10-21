@@ -1129,6 +1129,7 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(coverage[0].act_consumer_unresolved_names, ())
         self.assertEqual(coverage[0].dpu_consumer_unresolved_names, ())
         self.assertEqual(coverage[0].dma_dpu_consumer_unresolved_names, ())
+        self.assertEqual(coverage[0].dma_act_consumer_unresolved_names, ())
 
     def test_reviewed_binding_accepts_complete_dma_dpu_coverage(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
@@ -1173,6 +1174,52 @@ class CompilationFlowTests(unittest.TestCase):
 
         self.assertEqual(reviewed.group_index, 0)
         self.assertEqual(reviewed.coverage.complete_kinds, ("dma_dpu_consumer",))
+
+    def test_reviewed_binding_accepts_complete_dma_act_coverage(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.compile_ir_blobs = [b"baseline", b"sqrt", b"tanh"]
+        fake.comparisons = [
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(0, (0,), True, True),
+        ]
+        fake.coverage = (
+            npu.ActGroupCoverage(
+                0,
+                1,
+                "not_observed",
+                "not_observed",
+                "not_observed",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                dma_act_consumer_state="complete",
+                dma_act_routed_invocation_count=1,
+                dma_act_replica_invocation_count=0,
+                dma_act_consumer_group_count=1,
+                dma_act_consumer_input_count=2,
+                dma_act_ddr_span_bytes=64,
+            ),
+        )
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        evidence = prepared.probe_mapping(y, ("Sqrt", "Tanh"))
+        reviewed = prepared.review_binding(y, evidence, coverage_kind="dma_act_consumer")
+
+        self.assertEqual(reviewed.group_index, 0)
+        self.assertEqual(reviewed.coverage.complete_kinds, ("dma_act_consumer",))
 
     def test_reviewed_binding_combines_consistent_mapping_and_complete_coverage(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
@@ -3198,7 +3245,12 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(comparison.mismatch_names, ())
 
     def test_graph_comparison_rejection_reasons(self) -> None:
-        comparison = npu.GraphComparison((1 << 2) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9), (0, 1), False, False)
+        comparison = npu.GraphComparison(
+            (1 << 2) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10),
+            (0, 1),
+            False,
+            False,
+        )
 
         self.assertFalse(comparison.accepted)
         self.assertEqual(
@@ -3209,6 +3261,7 @@ class CompilationFlowTests(unittest.TestCase):
                 "dma",
                 "act_dma_relations",
                 "act_dma_dpu_relations",
+                "act_dma_act_relations",
             ),
         )
 

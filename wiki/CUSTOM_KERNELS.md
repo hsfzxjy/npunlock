@@ -693,6 +693,11 @@ custom FP32-to-FP16 conversion feeds a two-input FP16 kernel, an ordinary DPU
 `MatMul`, and a custom FP16-to-FP32 conversion. It reviews and saves a build
 plan, reloads the unpatched carrier, rebuilds all kernels, exports the final
 program, reloads it, and checks every execution against an exact NumPy oracle.
+Native inspection separately proves that the first conversion's complete
+output is spilled to DDR and reloaded into the following binary ACT group;
+Python reports this bounded route as `dma_act_consumer`. The example still
+uses explicit tensor-contract bindings because route coverage does not identify
+a symbolic source node.
 
 For the complete byte-level entry and ELF contract, see
 [ACT kernel ELF ABI](../ABI/KERNEL_ELF.md).

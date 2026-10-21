@@ -47,6 +47,8 @@ _Static_assert(PATCHBLOB_COMPARE_ACT_DMA_RELATIONS_CHANGED == (1u << 8),
                "comparison flag ABI changed");
 _Static_assert(PATCHBLOB_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED == (1u << 9),
                "comparison flag ABI changed");
+_Static_assert(PATCHBLOB_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED == (1u << 10),
+               "comparison flag ABI changed");
 _Static_assert(sizeof(patchblob_comparison_result) == 72,
                "patchblob comparison result ABI changed");
 _Static_assert(PATCHBLOB_GROUP_INVOCATION_UNCLASSIFIED == (1u << 4),
@@ -60,6 +62,10 @@ _Static_assert(sizeof(patchblob_dma_dpu_group_coverage) == 32,
                "DMA/DPU group-coverage record ABI changed");
 _Static_assert(sizeof(patchblob_dma_dpu_group_coverage_result) == 64,
                "DMA/DPU group-coverage result ABI changed");
+_Static_assert(sizeof(patchblob_dma_act_group_coverage) == 48,
+               "DMA/ACT group-coverage record ABI changed");
+_Static_assert(sizeof(patchblob_dma_act_group_coverage_result) == 64,
+               "DMA/ACT group-coverage result ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&
@@ -87,6 +93,7 @@ int main(void) {
   patchblob_comparison_result comparison_result = {0};
   patchblob_group_completeness_result completeness_result = {0};
   patchblob_group_coverage_result coverage_result = {0};
+  patchblob_dma_act_group_coverage_result dma_act_coverage_result = {0};
   graphinfer_options infer_options = {0};
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
@@ -183,6 +190,13 @@ int main(void) {
   CHECK(check_diagnostic(&coverage_result.diagnostic, "invalid_argument"));
   patchblob_group_coverage_result_release(&coverage_result);
   patchblob_group_coverage_result_release(&coverage_result);
+
+  CHECK(patchblob_inspect_dma_act_group_coverage((npunlock_view){NULL, 1},
+                                                 &dma_act_coverage_result) ==
+        NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&dma_act_coverage_result.diagnostic, "invalid_argument"));
+  patchblob_dma_act_group_coverage_result_release(&dma_act_coverage_result);
+  patchblob_dma_act_group_coverage_result_release(&dma_act_coverage_result);
 
   infer_options.struct_size = sizeof(infer_options);
   infer_options.driver_index = GRAPHINFER_AUTO_INDEX;

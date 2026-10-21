@@ -174,6 +174,13 @@ class ActGroupCoverage:
     dma_dpu_tile_count_expected: int
     dma_dpu_translated_tile_count: int
     dma_dpu_matched_input_count: int
+    dma_act_consumer_state: str
+    dma_act_consumer_unresolved_flags: int
+    dma_act_routed_invocation_count: int
+    dma_act_replica_invocation_count: int
+    dma_act_consumer_group_count: int
+    dma_act_consumer_input_count: int
+    dma_act_ddr_span_bytes: int
     @property
     def observed_kinds(self) -> tuple[str, ...]: ...
     @property
@@ -186,6 +193,8 @@ class ActGroupCoverage:
     def dpu_consumer_unresolved_names(self) -> tuple[str, ...]: ...
     @property
     def dma_dpu_consumer_unresolved_names(self) -> tuple[str, ...]: ...
+    @property
+    def dma_act_consumer_unresolved_names(self) -> tuple[str, ...]: ...
 
 class CarrierProbe:
     output: Tensor

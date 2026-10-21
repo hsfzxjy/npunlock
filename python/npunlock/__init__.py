@@ -2017,7 +2017,7 @@ class PreparedGraph:
         return self._libraries.inspect_group_completeness(self.ir_provenance.graph_blob)
 
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]:
-        """Return independent direct-output, ACT-, direct-DPU-, and DMA/DPU-consumer evidence."""
+        """Return independent direct-output, ACT-, DPU-, DMA/DPU-, and DMA/ACT-consumer evidence."""
 
         return self._libraries.inspect_group_coverage(self.ir_provenance.graph_blob)
 
@@ -2084,9 +2084,16 @@ class PreparedGraph:
         group_index = evidence.group_index
         if not 0 <= group_index < len(self.groups):
             raise ValueError(f"carrier mapping evidence group {group_index} is out of range")
-        if coverage_kind not in {"direct_output", "act_consumer", "dpu_consumer", "dma_dpu_consumer"}:
+        if coverage_kind not in {
+            "direct_output",
+            "act_consumer",
+            "dpu_consumer",
+            "dma_dpu_consumer",
+            "dma_act_consumer",
+        }:
             raise ValueError(
-                "coverage_kind must be 'direct_output', 'act_consumer', 'dpu_consumer', or 'dma_dpu_consumer'"
+                "coverage_kind must be 'direct_output', 'act_consumer', 'dpu_consumer', "
+                "'dma_dpu_consumer', or 'dma_act_consumer'"
             )
         coverage_records = self.inspect_group_coverage()
         if len(coverage_records) != len(self.groups):
@@ -2099,6 +2106,7 @@ class PreparedGraph:
             "act_consumer": coverage.act_consumer_state,
             "dpu_consumer": coverage.dpu_consumer_state,
             "dma_dpu_consumer": coverage.dma_dpu_consumer_state,
+            "dma_act_consumer": coverage.dma_act_consumer_state,
         }[coverage_kind]
         if coverage_state != "complete":
             raise ValueError(
@@ -2512,7 +2520,14 @@ def _prepared_bindings(
         coverage_kind = review["coverage_kind"]
         probes = review["probes"]
         if (
-            coverage_kind not in {"direct_output", "act_consumer", "dpu_consumer", "dma_dpu_consumer"}
+            coverage_kind
+            not in {
+                "direct_output",
+                "act_consumer",
+                "dpu_consumer",
+                "dma_dpu_consumer",
+                "dma_act_consumer",
+            }
             or not isinstance(probes, list)
             or not 2 <= len(probes) <= 8
         ):

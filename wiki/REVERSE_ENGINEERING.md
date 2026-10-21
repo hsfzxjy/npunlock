@@ -2136,6 +2136,42 @@ branched graphs can be mapped automatically. Candidate operators remain
 caller-selected evidence because lowering depends on dtype, shape, neighbors,
 compiler, and driver.
 
+## 70. DMA-mediated ACT-to-ACT coverage
+
+On 2026-10-21, the connected mixed-precision carrier exposed a native route
+that neither shared-CMX ACT edges nor ACT-to-DPU inspection could explain. Its
+custom FP32-to-FP16 conversion has two tile-replica invocations. One invocation
+writes a 64-byte CMX interval that a contiguous DMA task spills to an
+intermediate DDR buffer. Two separately scheduled DMA tasks then reload the
+adjacent DDR intervals `[0,32)` and `[32,64)` into the two FP16 inputs consumed
+by the following custom ACT group. The other producer invocation is a unique
+full-tensor tile replica with the observed CMX translation `0x200000`.
+
+The new proof joins these records only when all relationships are exact. The
+spill must already be a unique ACT-output-to-DMA source candidate. Every reload
+must use the same DDR symbol, remain inside the spilled interval, match one ACT
+input's CMX address, precision, and byte span, and have direct spill/reload and
+reload/consumer barrier dependencies. Reload tasks cannot be reused, producer
+replicas must match uniquely, and the non-overlapping reload intervals must
+cover the complete spilled DDR interval. Missing, overlapping, ambiguous, or
+multiply matched records leave the group incomplete.
+
+Inspector schema v22 reports the individual
+`act_dma_act_input_candidates` and group-level
+`act_dma_act_input_cover_observations`. The public C API exposes the latter
+through `patchblob_inspect_dma_act_group_coverage()`, while Python keeps it as
+the independent `dma_act_consumer` coverage kind. Strict differential
+comparison reports changes as `act_dma_act_relations` rather than folding them
+into raw DMA or direct ACT-edge changes.
+
+This confirms the bounded native data path between these two ACT groups. It
+does not identify either group from a source node name, establish a general
+DDR lifetime model, or enable automatic mapping. The connected example still
+selects its three distinct groups explicitly from their validated tensor
+contracts. The previously executed exact NumPy oracle remains the semantic
+check for the complete custom-conversion, custom-binary, DPU-`MatMul`, and
+custom-conversion graph.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

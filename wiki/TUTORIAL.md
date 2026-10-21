@@ -455,11 +455,14 @@ for group in prepared.inspect_group_coverage():
 ```
 
 Each record keeps `direct_output_state`, `act_consumer_state`,
-`dpu_consumer_state`, and `dma_dpu_consumer_state` independent. The last kind
-is the narrow multi-tile route where ACT outputs form an exact DMA fan-in and
-the translated multicast destinations uniquely match DPU inputs. A complete
-ACT- or DPU-consumer relationship proves bounded native invocation coverage,
-not source identity, and is not an automatic patch binding.
+`dpu_consumer_state`, `dma_dpu_consumer_state`, and
+`dma_act_consumer_state` independent. The DMA/DPU kind is the narrow
+multi-tile route where ACT outputs form an exact DMA fan-in and translated
+multicast destinations uniquely match DPU inputs. The DMA/ACT kind instead
+requires an exact ACT-output spill to DDR followed by scheduled reloads that
+cover unique inputs of a later ACT group. A complete relationship proves
+bounded native invocation coverage, not source identity, and is not an
+automatic patch binding.
 
 The compact helper runs the probes and combines them with coverage only when
 the identified group has exactly one complete route meaning:
@@ -475,10 +478,11 @@ program = prepared.build(bindings={custom_output: reviewed})
 `probe_binding()` rejects zero or several complete kinds. When several route
 meanings are complete, use `probe_mapping()` and `inspect_group_coverage()` to
 inspect them, then name the intended `direct_output`, `act_consumer`,
-`dpu_consumer`, or `dma_dpu_consumer` kind explicitly. The helper records the
-exact prepared native-blob hash, carrier comparisons, and coverage record;
-planning rechecks them. This opt-in path does not change ordinary positional
-mapping, and raw explicit `ActGroup` bindings remain available.
+`dpu_consumer`, `dma_dpu_consumer`, or `dma_act_consumer` kind explicitly. The
+helper records the exact prepared native-blob hash, carrier comparisons, and
+coverage record; planning rechecks them. This opt-in path does not change
+ordinary positional mapping, and raw explicit `ActGroup` bindings remain
+available.
 Passing the report avoids recompiling its successful candidates.
 
 For example, a custom elementwise operation immediately before a DPU

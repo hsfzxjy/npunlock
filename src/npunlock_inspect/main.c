@@ -161,7 +161,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v21\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v22\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -517,6 +517,58 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"act_dma_act_input_candidates\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dma_act_input_candidate_count; ++index) {
+    const npunlock_act_dma_act_input_candidate_observation *candidate =
+        &routing->act_dma_act_input_candidates[index];
+    if (fprintf(stream,
+                "%s    {\"producer_group_index\": %u, \"producer_invocation_index\": %u, "
+                "\"spill_dma_section_index\": %u, \"spill_dma_task_index\": %u, "
+                "\"consumer_group_index\": %u, \"consumer_invocation_index\": %u, "
+                "\"consumer_tensor_record_index\": %u, \"reload_dma_section_index\": %u, "
+                "\"reload_dma_task_index\": %u, \"reload_dma_engine_index\": %u, "
+                "\"consumer_candidate_count\": %u, \"match_observation\": {"
+                "\"ddr_symbol_table_index\": %u, \"ddr_symbol_raw\": %u, "
+                "\"ddr_source_addend_raw\": %" PRId64 ", \"cmx_destination_symbol_raw\": %u, "
+                "\"cmx_destination_addend_raw\": %" PRId64 ", \"span_bytes\": %" PRIu64
+                ", \"spill_barrier_intersection_raw\": %" PRIu64
+                ", \"consumer_barrier_intersection_raw\": %" PRIu64 "}}",
+                index == 0 ? "" : ",\n", candidate->producer_group_index,
+                candidate->producer_invocation_index, candidate->spill_dma_section_index,
+                candidate->spill_dma_task_index, candidate->consumer_group_index,
+                candidate->consumer_invocation_index, candidate->consumer_tensor_record_index,
+                candidate->reload_dma_section_index, candidate->reload_dma_task_index,
+                candidate->reload_dma_engine_index, candidate->consumer_candidate_count,
+                candidate->ddr_symbol_table_index, candidate->ddr_symbol_raw,
+                candidate->ddr_source_addend_raw, candidate->cmx_destination_symbol_raw,
+                candidate->cmx_destination_addend_raw, candidate->span_bytes,
+                candidate->spill_barrier_intersection_raw,
+                candidate->consumer_barrier_intersection_raw) < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ], \"act_dma_act_input_cover_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->act_dma_act_input_cover_count; ++index) {
+    const npunlock_act_dma_act_input_cover_observation *cover =
+        &routing->act_dma_act_input_covers[index];
+    if (fprintf(stream,
+                "%s    {\"producer_group_index\": %u, \"producer_invocation_count\": %u, "
+                "\"routed_producer_invocation_count\": %u, "
+                "\"replica_producer_invocation_count\": %u, \"consumer_group_count\": %u, "
+                "\"consumer_input_count\": %u, \"ddr_span_bytes\": %" PRIu64
+                ", \"exact_cover\": %s, \"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", cover->producer_group_index,
+                cover->producer_invocation_count, cover->routed_producer_invocation_count,
+                cover->replica_producer_invocation_count, cover->consumer_group_count,
+                cover->consumer_input_count, cover->ddr_span_bytes,
+                cover->exact_cover ? "true" : "false", cover->unresolved_flags) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ], \"act_dma_dpu_input_candidates\": [\n") < 0) {
     return 0;
   }
@@ -680,7 +732,9 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "fields remain raw observations; ACT/DMA source candidates require an exact "
                  "CMX interval and direct schedule match; fan-in observations additionally "
                  "require unique source tasks, an exact non-overlapping DDR union, and one "
-                 "scheduled DDR-to-multicast-CMX task; ACT/DMA/DPU input covers additionally "
+                 "scheduled DDR-to-multicast-CMX task; ACT/DMA/ACT input covers require an "
+                 "exact scheduled spill/reload interval cover at unique ACT inputs; "
+                 "ACT/DMA/DPU input covers additionally "
                  "derive per-tile CMX translations from ACT source placements and require a "
                  "unique same-cluster DPU input with the translated address, equal span, and "
                  "direct schedule dependency; fan-in observations alone do not establish DPU "
@@ -722,6 +776,7 @@ static int write_mismatch_names(FILE *stream, uint32_t flags) {
       {NPUNLOCK_COMPARE_DMA_CHANGED, "dma"},
       {NPUNLOCK_COMPARE_ACT_DMA_RELATIONS_CHANGED, "act_dma_relations"},
       {NPUNLOCK_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED, "act_dma_dpu_relations"},
+      {NPUNLOCK_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED, "act_dma_act_relations"},
   };
   bool first = true;
   size_t index;

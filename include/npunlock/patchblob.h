@@ -139,7 +139,8 @@ typedef enum patchblob_comparison_flags {
   PATCHBLOB_COMPARE_PARTIAL_GROUP_CODE_CHANGE = 1u << 6,
   PATCHBLOB_COMPARE_DMA_CHANGED = 1u << 7,
   PATCHBLOB_COMPARE_ACT_DMA_RELATIONS_CHANGED = 1u << 8,
-  PATCHBLOB_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED = 1u << 9
+  PATCHBLOB_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED = 1u << 9,
+  PATCHBLOB_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED = 1u << 10
 } patchblob_comparison_flags;
 
 /*
@@ -265,6 +266,40 @@ typedef struct patchblob_dma_dpu_group_coverage_result {
   npunlock_diagnostic diagnostic;
 } patchblob_dma_dpu_group_coverage_result;
 
+typedef enum patchblob_dma_act_group_coverage_flags {
+  PATCHBLOB_DMA_ACT_SOURCE_UNCLASSIFIED = 1u << 0,
+  PATCHBLOB_DMA_ACT_SOURCE_AMBIGUOUS = 1u << 1,
+  PATCHBLOB_DMA_ACT_REPLICA_UNRESOLVED = 1u << 2,
+  PATCHBLOB_DMA_ACT_DDR_COVER_UNRESOLVED = 1u << 3,
+  PATCHBLOB_DMA_ACT_CONSUMER_AMBIGUOUS = 1u << 4,
+  PATCHBLOB_DMA_ACT_RELOAD_TASK_REUSED = 1u << 5
+} patchblob_dma_act_group_coverage_flags;
+
+/*
+ * DMA-mediated ACT-consumer evidence is separate from a direct shared-CMX
+ * ACT edge. It requires an exact ACT-output spill to one DDR interval and an
+ * exact set of scheduled reloads covering that interval at unique ACT inputs.
+ */
+typedef struct patchblob_dma_act_group_coverage {
+  uint32_t struct_size;
+  uint32_t group_index;
+  uint32_t invocation_count;
+  uint32_t state;
+  uint32_t unresolved_flags;
+  uint32_t routed_producer_invocation_count;
+  uint32_t replica_producer_invocation_count;
+  uint32_t consumer_group_count;
+  uint32_t consumer_input_count;
+  uint64_t ddr_span_bytes;
+} patchblob_dma_act_group_coverage;
+
+typedef struct patchblob_dma_act_group_coverage_result {
+  uint32_t struct_size;
+  patchblob_dma_act_group_coverage *groups;
+  size_t group_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_dma_act_group_coverage_result;
+
 NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
@@ -296,6 +331,10 @@ NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_dma_dpu_group_coverage(
     npunlock_view graph_blob, patchblob_dma_dpu_group_coverage_result *result);
 NPUNLOCK_PATCHBLOB_API void
 patchblob_dma_dpu_group_coverage_result_release(patchblob_dma_dpu_group_coverage_result *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_dma_act_group_coverage(
+    npunlock_view graph_blob, patchblob_dma_act_group_coverage_result *result);
+NPUNLOCK_PATCHBLOB_API void
+patchblob_dma_act_group_coverage_result_release(patchblob_dma_act_group_coverage_result *result);
 
 #ifdef __cplusplus
 }

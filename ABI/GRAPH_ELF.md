@@ -197,6 +197,19 @@ once. This proves a native per-tile ACT-to-DMA-to-DPU input relationship; it
 does not identify a source operation, establish a general multicast encoding,
 or make the group an automatic patch target.
 
+A second derived relationship covers an ACT output that is spilled to DDR and
+later reloaded for another ACT group. The spill must be a unique exact
+ACT-output-to-DMA source candidate. Each accepted reload is a simple contiguous
+DDR-to-CMX task whose source lies inside the same DDR interval and whose
+destination exactly matches one later ACT input's runtime symbol, address,
+precision, and byte span. Direct barrier dependencies are required across both
+the spill-to-reload and reload-to-consumer hops. Reload tasks must be unique,
+the reload intervals must form a non-overlapping exact cover of the spill, and
+any producer invocation without its own spill must be a unique full-contract
+tile replica. This proves a bounded ACT-to-DMA-to-DDR-to-DMA-to-ACT route; it
+does not establish source-node identity, a general DDR lifetime, or automatic
+patch eligibility.
+
 Observed ACT relocation tables use 24-byte ELF64 `SHT_RELA` entries, flags
 `0x40`, alignment 8, and names derived from their target section, such as
 `.rlt.text.KernelParams`. Relocation type 4 is `R_VPU_32`: it writes

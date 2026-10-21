@@ -155,6 +155,18 @@ relocation sequence and ambiguity mask, so a change cannot disappear merely
 because the field is excluded from routing proofs. Output-field duplicates and
 more than eight input relocations per invariant remain unsupported.
 
+Schema v22 adds `act_dma_act_input_candidates` and
+`act_dma_act_input_cover_observations`. It follows a unique ACT-output spill
+into an intermediate DDR interval and requires scheduled DDR-to-CMX reloads to
+match unique inputs of a later ACT group. The reload intervals must be
+non-overlapping and exactly cover the spill, while unmatched producer
+invocations must be unique full-contract tile replicas. Precision, byte span,
+runtime symbols, addresses, and both barrier hops are checked. The public C API
+exposes this proof separately through
+`patchblob_inspect_dma_act_group_coverage()`, and Python reports the distinct
+`dma_act_consumer` coverage kind. It does not infer a source-node identity or
+a general DDR-buffer lifetime.
+
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
 
@@ -230,7 +242,7 @@ validated direct graph-output slice—commonly because it is intermediate—and
 must not be read as either success or failure. This result remains diagnostic;
 it does not make intermediate-group coverage claims.
 
-Use `prepared.inspect_group_coverage()` to see all three proof kinds together
+Use `prepared.inspect_group_coverage()` to see all five proof kinds together
 without merging their verdicts:
 
 ```python
@@ -239,10 +251,12 @@ for group in prepared.inspect_group_coverage():
 ```
 
 Every group reports independent `direct_output_state`, `act_consumer_state`,
-and `dpu_consumer_state` values plus route-specific counts and unresolved
-flags. The native C equivalent is `patchblob_inspect_group_coverage()`. Neither
-API chooses which evidence kind is sufficient for a binding, and neither
-combines coverage with a symbolic source label.
+`dpu_consumer_state`, `dma_dpu_consumer_state`, and
+`dma_act_consumer_state` values plus route-specific counts and unresolved
+flags. The last two are obtained from their separate C inspection functions
+and merged only as a Python diagnostic view. Neither API chooses which
+evidence kind is sufficient for a binding, and neither combines coverage with
+a symbolic source label.
 
 Python callers can make that policy choice explicitly after inspecting both
 reports:

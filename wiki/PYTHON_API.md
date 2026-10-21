@@ -422,11 +422,11 @@ Without `coverage_kind`, this succeeds only when at least two accepted probes
 identify the same ACT group and that group has exactly one complete coverage
 kind. If several route meanings are complete, inspect `probe_mapping()` and
 `inspect_group_coverage()` separately and repeat with an explicit
-`coverage_kind`, such as `"act_consumer"` or `"dma_dpu_consumer"`. A failed
-probe or incomplete route is never downgraded to positional guessing. The
-returned `ReviewedBinding` preserves the exact native-blob hash, all probe
-comparisons, and the selected coverage record for plan and prepared-bundle
-revalidation.
+`coverage_kind`, such as `"act_consumer"`, `"dma_dpu_consumer"`, or
+`"dma_act_consumer"`. A failed probe or incomplete route is never downgraded
+to positional guessing. The returned `ReviewedBinding` preserves the exact
+native-blob hash, all probe comparisons, and the selected coverage record for
+plan and prepared-bundle revalidation.
 
 When some candidate operators may fail graph compilation or strict native
 comparison, probe them once and keep the full report:
@@ -622,6 +622,9 @@ binding because the compiler's ACT order differs from symbolic output order.
 For a connected v2 conversion → v1 binary → DPU `MatMul` → v2 conversion path,
 including prepared-carrier and final-program reload, see
 [`example_connected_mixed_precision.py`](../examples/example_connected_mixed_precision.py).
+Its first conversion reaches the following binary ACT group through an exact
+DDR spill/reload cover reported as `dma_act_consumer`; this route evidence is
+diagnostic and does not replace the example's explicit contract binding.
 
 ## Reuse a prepared carrier
 
@@ -655,10 +658,10 @@ rediscovers the ACT groups from the bundled carrier, compares every target
 contract with the manifest, and revalidates saved bindings for arity, dtype,
 exact cover, uniqueness, and range. Evidence-backed bindings additionally
 rerun every bundled baseline/candidate comparison and the selected direct,
-ACT-consumer, direct-DPU-consumer, or DMA-mediated-DPU-consumer coverage check.
-A stale driver, changed graph, corrupt candidate, altered contract,
-inconsistent evidence, or incompatible saved binding is rejected before
-MoviTools runs. V1 bundles remain readable.
+ACT-consumer, direct-DPU-consumer, DMA-mediated-DPU-consumer, or
+DMA-mediated-ACT-consumer coverage check. A stale driver, changed graph,
+corrupt candidate, altered contract, inconsistent evidence, or incompatible
+saved binding is rejected before MoviTools runs. V1 bundles remain readable.
 There is deliberately no stale-provenance override; executing the eventual
 program remains the separate semantic check.
 

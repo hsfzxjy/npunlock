@@ -685,6 +685,91 @@ static int test_act_dma_fanin_observations(void) {
   return 0;
 }
 
+static int test_act_dma_act_input_observations(void) {
+  npunlock_invocation_routing_observation invocations[4];
+  npunlock_dma_task_observation reloads[2];
+  npunlock_act_dma_source_candidate_observation source = {0};
+  npunlock_act_dma_act_input_candidate_observation *candidates = NULL;
+  npunlock_act_dma_act_input_cover_observation *covers = NULL;
+  size_t candidate_count = 0;
+  size_t cover_count = 0;
+  npunlock_diagnostic diagnostic = {0};
+
+  configure_edge_invocation(&invocations[0], 0, 0, 0, 128, 1, 8);
+  configure_edge_invocation(&invocations[1], 1, 0, 2097152, 2097280, 1, 8);
+  invocations[1].tile_candidate_raw = 1;
+  invocations[0].target.tensors[1].element_count = 32;
+  invocations[0].target.tensors[1].span_bytes = 64;
+  invocations[1].target.tensors[1].element_count = 32;
+  invocations[1].target.tensors[1].span_bytes = 64;
+
+  configure_edge_invocation(&invocations[2], 2, 1, 0, 64, 2, 16);
+  configure_edge_invocation(&invocations[3], 3, 1, 2097152, 2097216, 2, 16);
+  invocations[3].tile_candidate_raw = 1;
+  invocations[2].target.tensors[0].element_count = 16;
+  invocations[2].target.tensors[0].span_bytes = 32;
+  invocations[3].target.tensors[0].element_count = 16;
+  invocations[3].target.tensors[0].span_bytes = 32;
+
+  source.act_group_index = 0;
+  source.act_invocation_index = 0;
+  source.act_tensor_record_index = 1;
+  source.dma_section_index = 5;
+  source.dma_task_index = 2;
+  source.dma_candidate_count = 1;
+  source.ddr_symbol_table_index = 26;
+  source.ddr_symbol_raw = 1;
+  source.ddr_destination_addend_raw = 0;
+  source.span_bytes = 64;
+  source.dma_post_mask_raw = 4;
+
+  configure_contiguous_dma(&reloads[0], 5, 3, 0, 32, 4, 2);
+  reloads[0].source.memory_kind = NPUNLOCK_DMA_ENDPOINT_DDR_BUFFER;
+  reloads[0].source.symbol_table_index = 26;
+  reloads[0].source.symbol_raw = 1;
+  reloads[0].destination.memory_kind = NPUNLOCK_DMA_ENDPOINT_CMX;
+  reloads[0].destination.symbol_raw = 0;
+  configure_contiguous_dma(&reloads[1], 6, 1, 1, 32, 4, 2);
+  reloads[1].source.memory_kind = NPUNLOCK_DMA_ENDPOINT_DDR_BUFFER;
+  reloads[1].source.symbol_table_index = 26;
+  reloads[1].source.symbol_raw = 1;
+  reloads[1].source.addend_raw = 32;
+  reloads[1].destination.memory_kind = NPUNLOCK_DMA_ENDPOINT_CMX;
+  reloads[1].destination.symbol_raw = 0;
+  reloads[1].destination.addend_raw = 2097152;
+
+  CHECK(npunlock_derive_act_dma_act_input_observations(
+            invocations, 4, 2, reloads, 2, &source, 1, &candidates, &candidate_count, &covers,
+            &cover_count, &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(candidate_count == 2);
+  CHECK(cover_count == 1);
+  CHECK(covers[0].exact_cover);
+  CHECK(covers[0].routed_producer_invocation_count == 1);
+  CHECK(covers[0].replica_producer_invocation_count == 1);
+  CHECK(covers[0].consumer_group_count == 1);
+  CHECK(covers[0].consumer_input_count == 2);
+  CHECK(covers[0].ddr_span_bytes == 64);
+  CHECK(candidates[0].consumer_candidate_count == 1);
+  CHECK(candidates[1].ddr_source_addend_raw == 32);
+  free(candidates);
+  free(covers);
+  candidates = NULL;
+  covers = NULL;
+
+  reloads[1].wait_mask_raw = 0;
+  CHECK(npunlock_derive_act_dma_act_input_observations(
+            invocations, 4, 2, reloads, 2, &source, 1, &candidates, &candidate_count, &covers,
+            &cover_count, &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(candidate_count == 1);
+  CHECK(cover_count == 1);
+  CHECK(!covers[0].exact_cover);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_ACT_DMA_ACT_DDR_COVER_UNRESOLVED) != 0);
+  free(candidates);
+  free(covers);
+  npunlock_diagnostic_release(&diagnostic);
+  return 0;
+}
+
 static int test_routing_comparison(void) {
   npunlock_invocation_routing_observation baseline_invocations[2];
   npunlock_invocation_routing_observation candidate_invocations[2];
@@ -694,6 +779,10 @@ static int test_routing_comparison(void) {
   npunlock_act_dma_source_candidate_observation candidate_act_dma = {0};
   npunlock_act_dma_dpu_input_candidate_observation baseline_act_dma_dpu = {0};
   npunlock_act_dma_dpu_input_candidate_observation candidate_act_dma_dpu = {0};
+  npunlock_act_dma_act_input_candidate_observation baseline_act_dma_act = {0};
+  npunlock_act_dma_act_input_candidate_observation candidate_act_dma_act = {0};
+  npunlock_act_dma_act_input_cover_observation baseline_act_dma_act_cover = {0};
+  npunlock_act_dma_act_input_cover_observation candidate_act_dma_act_cover = {0};
   npunlock_graph_routing_observations baseline = {0};
   npunlock_graph_routing_observations candidate = {0};
   npunlock_graph_routing_comparison comparison = {0};
@@ -717,6 +806,10 @@ static int test_routing_comparison(void) {
   baseline.act_dma_source_candidate_count = 1;
   baseline.act_dma_dpu_input_candidates = &baseline_act_dma_dpu;
   baseline.act_dma_dpu_input_candidate_count = 1;
+  baseline.act_dma_act_input_candidates = &baseline_act_dma_act;
+  baseline.act_dma_act_input_candidate_count = 1;
+  baseline.act_dma_act_input_covers = &baseline_act_dma_act_cover;
+  baseline.act_dma_act_input_cover_count = 1;
   candidate.invocations = candidate_invocations;
   candidate.invocation_count = 2;
   candidate.group_count = 2;
@@ -727,6 +820,10 @@ static int test_routing_comparison(void) {
   candidate.act_dma_source_candidate_count = 1;
   candidate.act_dma_dpu_input_candidates = &candidate_act_dma_dpu;
   candidate.act_dma_dpu_input_candidate_count = 1;
+  candidate.act_dma_act_input_candidates = &candidate_act_dma_act;
+  candidate.act_dma_act_input_candidate_count = 1;
+  candidate.act_dma_act_input_covers = &candidate_act_dma_act_cover;
+  candidate.act_dma_act_input_cover_count = 1;
 
   CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
                                                     &diagnostic) == NPUNLOCK_STATUS_OK);
@@ -759,6 +856,22 @@ static int test_routing_comparison(void) {
   CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED) != 0);
   npunlock_graph_routing_comparison_release(&comparison);
   candidate_act_dma_dpu.tile_translation_candidate = 0;
+
+  candidate_act_dma_act.span_bytes = 32;
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED) != 0);
+  npunlock_graph_routing_comparison_release(&comparison);
+  candidate_act_dma_act.span_bytes = 0;
+
+  candidate_act_dma_act_cover.consumer_input_count = 1;
+  CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
+                                                    &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK((comparison.mismatch_flags & NPUNLOCK_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED) != 0);
+  npunlock_graph_routing_comparison_release(&comparison);
+  candidate_act_dma_act_cover.consumer_input_count = 0;
 
   candidate_invocations[1].wait_mask_raw = 8;
   CHECK(npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
@@ -805,6 +918,7 @@ int main(void) {
   CHECK(test_act_dpu_output_cover_observations() == 0);
   CHECK(test_act_consumer_cover_observations() == 0);
   CHECK(test_act_dma_fanin_observations() == 0);
+  CHECK(test_act_dma_act_input_observations() == 0);
   CHECK(test_routing_comparison() == 0);
 
   target.struct_size = sizeof(target);
