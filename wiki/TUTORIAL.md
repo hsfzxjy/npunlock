@@ -420,16 +420,18 @@ used as a patch binding automatically. If you already have both native blobs,
 comparison in memory. See [Porting to Linux and newer NPUs](PORTING.md) for the
 workflow and its limits.
 
-For a stronger manual review, run two independent substitutions and print the
-complete evidence:
+For a stronger manual review, try several substitutions once and retain both
+the comparisons and any compiler/inspector failures:
 
 ```python
-evidence = prepared.probe_mapping(custom_output, ("Sqrt", "Tanh"))
-print(evidence.explain())
+report = prepared.probe_candidates(custom_output, ("Sqrt", "Tanh", "Relu"))
+print(report.explain())
+evidence = report.evidence
 ```
 
 This reports `consistent` only when at least two accepted probes agree on one
-group. It still does not change the prepared graph's bindings.
+group. A failed candidate remains in `report.failures` and never counts as
+evidence. It still does not change the prepared graph's bindings.
 
 For a group that writes directly to a graph output, you can separately review
 the routing/replica coverage proof:
@@ -465,7 +467,7 @@ the identified group has exactly one complete route meaning:
 ```python
 reviewed = prepared.probe_binding(
     custom_output,
-    ("Sqrt", "Tanh"),
+    report,
 )
 program = prepared.build(bindings={custom_output: reviewed})
 ```
@@ -477,6 +479,7 @@ inspect them, then name the intended `direct_output`, `act_consumer`,
 exact prepared native-blob hash, carrier comparisons, and coverage record;
 planning rechecks them. This opt-in path does not change ordinary positional
 mapping, and raw explicit `ActGroup` bindings remain available.
+Passing the report avoids recompiling its successful candidates.
 
 For example, a custom elementwise operation immediately before a DPU
 `MatMul` may use the DMA-mediated form:

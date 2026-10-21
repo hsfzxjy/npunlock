@@ -428,6 +428,25 @@ returned `ReviewedBinding` preserves the exact native-blob hash, all probe
 comparisons, and the selected coverage record for plan and prepared-bundle
 revalidation.
 
+When some candidate operators may fail graph compilation or strict native
+comparison, probe them once and keep the full report:
+
+```python
+report = prepared.probe_candidates(
+    custom_output,
+    ("Minimum", "Add", "Multiply", "Subtract"),
+)
+print(report.explain())
+reviewed = prepared.probe_binding(custom_output, report)
+```
+
+`report.probes` contains every completed comparison, including rejected ones;
+`report.failures` retains the failed carrier name, error type/message, and—
+for native failures—the structured stage, status, diagnostic, stdout, and
+stderr bytes. A report can produce a binding only when its successful probes
+and native coverage already satisfy the same conservative rules. Passing the
+report avoids compiling accepted candidates again.
+
 ### Review a multi-kernel build plan
 
 For a graph with several custom kernels, separate validation from compiler

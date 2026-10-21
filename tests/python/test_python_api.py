@@ -727,7 +727,7 @@ class FakeNative:
         self.infer_dtype = "f16"
         self.sessions: list[FakeInferenceSession] = []
         self.comparison = npu.GraphComparison(0, (1,), True, True)
-        self.comparisons: list[npu.GraphComparison] = []
+        self.comparisons: list[npu.GraphComparison | Exception] = []
         self.completeness = (npu.ActGroupCompleteness(0, "complete", 1, 2, 2, 0, 0, 0),)
         self.coverage = (
             npu.ActGroupCoverage(
@@ -783,7 +783,10 @@ class FakeNative:
 
     def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> npu.GraphComparison:
         self.compare_args = (baseline_graph_blob, candidate_graph_blob)
-        return self.comparisons.pop(0) if self.comparisons else self.comparison
+        result = self.comparisons.pop(0) if self.comparisons else self.comparison
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     def inspect_group_completeness(self, graph_blob: bytes) -> tuple[npu.ActGroupCompleteness, ...]:
         self.completeness_blob = graph_blob
@@ -1230,6 +1233,36 @@ class CompilationFlowTests(unittest.TestCase):
 
         reviewed = prepared.probe_binding(y, ("Sqrt", "Tanh"), coverage_kind="act_consumer")
         self.assertEqual(reviewed.coverage_kind, "act_consumer")
+
+    def test_probe_candidates_retains_failures_without_repeating_successes(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        fake.comparisons = [
+            npu.NativeError("patchblob comparison", 5, "unsupported", b'{"message":"bad carrier"}', b"out", b"err"),
+            npu.GraphComparison(0, (0,), True, True),
+            npu.GraphComparison(0, (0,), True, True),
+        ]
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        report = prepared.probe_candidates(y, ("Relu", "Sqrt", "Tanh"))
+        reviewed = prepared.probe_binding(y, report)
+
+        self.assertEqual(report.status, "consistent")
+        self.assertEqual([probe.candidate_carrier for probe in report.probes], ["Sqrt", "Tanh"])
+        self.assertEqual(len(report.failures), 1)
+        self.assertEqual(report.failures[0].candidate_carrier, "Relu")
+        self.assertEqual(report.failures[0].stage, "patchblob comparison")
+        self.assertEqual(report.failures[0].diagnostic, b'{"message":"bad carrier"}')
+        self.assertEqual(report.failures[0].stdout_log, b"out")
+        self.assertEqual(report.failures[0].stderr_log, b"err")
+        self.assertIn("Relu: error", report.explain())
+        self.assertEqual(reviewed.coverage_kind, "act_consumer")
+        self.assertEqual(fake.compile_ir_count, 4)
 
     def test_reviewed_binding_requires_complete_selected_coverage(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

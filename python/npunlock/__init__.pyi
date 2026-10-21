@@ -214,6 +214,28 @@ class CarrierMappingEvidence:
     def group_index(self) -> int | None: ...
     def explain(self) -> str: ...
 
+class CarrierProbeFailure:
+    candidate_carrier: str
+    error_type: str
+    message: str
+    stage: str | None
+    status: int | None
+    diagnostic: bytes
+    stdout_log: bytes
+    stderr_log: bytes
+
+class CarrierProbeReport:
+    output: Tensor
+    probes: tuple[CarrierProbe, ...]
+    failures: tuple[CarrierProbeFailure, ...]
+    @property
+    def evidence(self) -> CarrierMappingEvidence: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def group_index(self) -> int | None: ...
+    def explain(self) -> str: ...
+
 class ReviewedBinding:
     output: Tensor
     group_index: int
@@ -385,12 +407,19 @@ class PreparedGraph:
         *,
         ir_worker: str | None = ...,
     ) -> CarrierMappingEvidence: ...
+    def probe_candidates(
+        self,
+        output: Tensor,
+        carriers: Sequence[str],
+        *,
+        ir_worker: str | None = ...,
+    ) -> CarrierProbeReport: ...
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]: ...
     def probe_binding(
         self,
         output: Tensor,
-        carriers: Sequence[str],
+        carriers: Sequence[str] | CarrierProbeReport,
         *,
         coverage_kind: str | None = ...,
         ir_worker: str | None = ...,

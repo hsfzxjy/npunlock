@@ -45,6 +45,8 @@ __all__ = [
     "BuildPlan",
     "CarrierMappingEvidence",
     "CarrierProbe",
+    "CarrierProbeFailure",
+    "CarrierProbeReport",
     "CompiledKernel",
     "CustomMapping",
     "DType",
@@ -447,6 +449,62 @@ class CarrierMappingEvidence:
                 f"{'accepted' if probe.accepted else 'rejected'}; "
                 f"changed_groups={changed}; mismatches={mismatches}"
             )
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class CarrierProbeFailure:
+    """One carrier candidate that could not produce comparison evidence."""
+
+    candidate_carrier: str
+    error_type: str
+    message: str
+    stage: str | None = None
+    status: int | None = None
+    diagnostic: bytes = b""
+    stdout_log: bytes = b""
+    stderr_log: bytes = b""
+
+
+@dataclass(frozen=True, slots=True)
+class CarrierProbeReport:
+    """Successful comparisons and retained failures from one probe batch."""
+
+    output: Tensor = field(repr=False, compare=False)
+    probes: tuple[CarrierProbe, ...]
+    failures: tuple[CarrierProbeFailure, ...]
+
+    @property
+    def evidence(self) -> CarrierMappingEvidence:
+        return CarrierMappingEvidence(self.output, self.probes)
+
+    @property
+    def status(self) -> str:
+        return self.evidence.status
+
+    @property
+    def group_index(self) -> int | None:
+        return self.evidence.group_index
+
+    def explain(self) -> str:
+        evidence = self.evidence
+        group = "none" if evidence.group_index is None else str(evidence.group_index)
+        attempt_count = len(self.probes) + len(self.failures)
+        lines = [
+            f"carrier probe report: {evidence.status}; group={group}; "
+            f"accepted={len(evidence.accepted_probes)}/{attempt_count}; "
+            f"compared={len(self.probes)}; failures={len(self.failures)}"
+        ]
+        for probe in self.probes:
+            changed = ",".join(str(index) for index in probe.comparison.changed_group_indices) or "none"
+            mismatches = ",".join(probe.comparison.mismatch_names) or "none"
+            lines.append(
+                f"  {probe.baseline_carrier}->{probe.candidate_carrier}: "
+                f"{'accepted' if probe.accepted else 'rejected'}; "
+                f"changed_groups={changed}; mismatches={mismatches}"
+            )
+        for failure in self.failures:
+            lines.append(f"  probe->{failure.candidate_carrier}: error; {failure.error_type}: {failure.message}")
         return "\n".join(lines)
 
 
@@ -1896,6 +1954,44 @@ class PreparedGraph:
     ) -> CarrierMappingEvidence:
         """Run two to eight independent carrier substitutions for one node."""
 
+        values = self._validate_probe_carriers(output, carriers)
+        probes = tuple(self.probe_carrier(output, carrier, ir_worker=ir_worker) for carrier in values)
+        return CarrierMappingEvidence(output, probes)
+
+    def probe_candidates(
+        self,
+        output: Tensor,
+        carriers: Sequence[str],
+        *,
+        ir_worker: str | None = None,
+    ) -> CarrierProbeReport:
+        """Probe every candidate while retaining individual failures."""
+
+        values = self._validate_probe_carriers(output, carriers)
+        probes: list[CarrierProbe] = []
+        failures: list[CarrierProbeFailure] = []
+        for carrier in values:
+            try:
+                probes.append(self.probe_carrier(output, carrier, ir_worker=ir_worker))
+            except Exception as error:
+                if isinstance(error, NativeError):
+                    failures.append(
+                        CarrierProbeFailure(
+                            carrier,
+                            type(error).__name__,
+                            str(error),
+                            error.stage,
+                            error.status,
+                            error.diagnostic,
+                            error.stdout_log,
+                            error.stderr_log,
+                        )
+                    )
+                else:
+                    failures.append(CarrierProbeFailure(carrier, type(error).__name__, str(error)))
+        return CarrierProbeReport(output, tuple(probes), tuple(failures))
+
+    def _validate_probe_carriers(self, output: Tensor, carriers: Sequence[str]) -> tuple[str, ...]:
         if isinstance(carriers, (str, bytes, bytearray)) or not isinstance(carriers, Sequence):
             raise TypeError("carriers must be a sequence of operator names")
         values = tuple(carriers)
@@ -1913,8 +2009,7 @@ class PreparedGraph:
         baseline_carrier = output.producer.metadata.get("_carrier")
         if baseline_carrier in values:
             raise ValueError("carrier substitutions must differ from the prepared baseline carrier")
-        probes = tuple(self.probe_carrier(output, carrier, ir_worker=ir_worker) for carrier in values)
-        return CarrierMappingEvidence(output, probes)
+        return values
 
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]:
         """Return direct-output routing/replica completeness for every ACT group."""
@@ -1929,14 +2024,21 @@ class PreparedGraph:
     def probe_binding(
         self,
         output: Tensor,
-        carriers: Sequence[str],
+        carriers: Sequence[str] | CarrierProbeReport,
         *,
         coverage_kind: str | None = None,
         ir_worker: str | None = None,
     ) -> ReviewedBinding:
         """Probe a source mapping and return its conservatively reviewed binding."""
 
-        evidence = self.probe_mapping(output, carriers, ir_worker=ir_worker)
+        if isinstance(carriers, CarrierProbeReport):
+            if carriers.output is not output:
+                raise ValueError("carrier probe report must belong to the reviewed custom output")
+            if ir_worker is not None:
+                raise ValueError("ir_worker cannot be supplied with an existing carrier probe report")
+            evidence = carriers.evidence
+        else:
+            evidence = self.probe_mapping(output, carriers, ir_worker=ir_worker)
         if coverage_kind is not None:
             return self.review_binding(output, evidence, coverage_kind=coverage_kind)
         if evidence.status != "consistent" or evidence.group_index is None:
