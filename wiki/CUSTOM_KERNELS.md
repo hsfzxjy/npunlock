@@ -674,14 +674,17 @@ The branched example deliberately uses three distinguishable contracts: FP32
 unary, FP16 scalar-second-input, and full FP16 binary. Its carrier has fewer
 ACT groups than symbolic computational nodes because `MatMul` is lowered to
 DPU work, so automatic positional mapping refuses the graph. The example uses
-`prepare()`, filters the validated group contracts, and explicitly binds each
-custom output before patching.
+`prepare()` and controlled carrier substitutions to identify each custom
+output, then combines that source evidence with one complete native routing
+coverage kind. No raw ACT-group number is part of the build plan.
 
 On NPU3720 with graph compiler 8.3, this graph produced six ACT groups for
 seven computational nodes alongside nonempty DPU invariant and variant
 sections. Its connected FP16 result and independent FP32 result both matched
-the NumPy oracle exactly. This is one composition proof, not a claim that
-arbitrary branched graphs or matrix operations are supported.
+the NumPy oracle exactly. The three reviewed bindings respectively use
+DMA-mediated DPU-consumer, ACT-consumer, and direct-output coverage. This is
+one composition proof, not a claim that arbitrary branched graphs or matrix
+operations are supported.
 
 The connected mixed-precision example goes further along one data path: a
 custom FP32-to-FP16 conversion feeds a two-input FP16 kernel, an ordinary DPU

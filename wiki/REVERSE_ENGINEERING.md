@@ -2102,6 +2102,37 @@ evidence because their graph structure, routing, DPU, and other native
 observations differ from the baseline. This expands inspectable graph structure
 without weakening the reviewed-binding acceptance rule.
 
+## 69. Reviewed bindings across a branched graph
+
+On 2026-10-21, the controlled branched graph was rebound without positional
+group guesses or caller-written ACT group numbers. The graph contains three
+custom nodes, an ordinary `MatMul`, another ordinary ACT operation, four graph
+inputs, and two graph outputs. Its seven source-level computational nodes lower
+to six ACT groups plus DPU work, so the simple one-to-one positional rule
+correctly refuses automatic mapping.
+
+Separate carrier probes identify each custom node under the exact graph
+context. For the FP16 scalar-input node, `Minimum` and `Subtract` both isolate
+group 2. For the equal-span FP16 node after `MatMul`, `Minimum`, `Power`, and
+`PRelu` all isolate group 4. For the independent FP32 unary node, `Sqrt`,
+`Tanh`, and `Relu` all isolate group 0. Other attempted binary carriers are
+retained as normal rejections when they change surrounding native structure or
+invocation contracts.
+
+Each label is then joined to a different complete routing proof: group 2 uses
+the exact DMA-mediated DPU-input cover, group 4 uses a complete ACT-consumer
+cover, and group 0 uses complete direct-output coverage. The resulting
+`ReviewedBinding` objects retain the baseline blob identity, accepted and
+rejected comparisons, selected coverage record, and group contract for
+revalidation when the build plan is consumed.
+
+This demonstrates a practical explicit-binding workflow for one nontrivial
+graph. It does not establish that these substitute carriers preserve every
+graph, that carrier semantics identify source semantics, or that arbitrary
+branched graphs can be mapped automatically. Candidate operators remain
+caller-selected evidence because lowering depends on dtype, shape, neighbors,
+compiler, and driver.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

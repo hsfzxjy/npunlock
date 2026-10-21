@@ -447,6 +447,11 @@ stderr bytes. A report can produce a binding only when its successful probes
 and native coverage already satisfy the same conservative rules. Passing the
 report avoids compiling accepted candidates again.
 
+Candidate lists are graph-context evidence, not a global operator preference.
+The [branched DPU/ACT example](../examples/example_branched_network.py) uses
+separate lists for scalar-input FP16, equal-span FP16, and unary FP32 custom
+nodes and obtains three reviewed bindings without naming any ACT group index.
+
 ### Review a multi-kernel build plan
 
 For a graph with several custom kernels, separate validation from compiler

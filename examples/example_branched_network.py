@@ -137,18 +137,22 @@ def reference(
 def main() -> None:
     graph, biased, blended, control_output = build_graph()
     prepared = npu.prepare(graph)
-    scalar_group = prepared.find_group(
-        input_count=2,
-        dtype="f16",
-        input_1_scalar=True,
+    scalar_binding = prepared.probe_binding(
+        biased,
+        ("Minimum", "Subtract"),
     )
-    binary_group = prepared.find_group(
-        input_count=2,
-        dtype="f16",
-        input_1_scalar=False,
+    binary_binding = prepared.probe_binding(
+        blended,
+        ("Minimum", "Power", "PRelu"),
     )
-    unary_f32_group = prepared.find_group(input_count=1, dtype="f32")
+    unary_f32_binding = prepared.probe_binding(
+        control_output,
+        ("Sqrt", "Tanh", "Relu"),
+    )
     print(prepared.explain())
+    print(scalar_binding.explain())
+    print(binary_binding.explain())
+    print(unary_f32_binding.explain())
     compiler_major, compiler_minor = prepared.ir_provenance.compiler_version
     print(
         f"device=0x{prepared.ir_provenance.device_id:04x} "
@@ -157,9 +161,9 @@ def main() -> None:
     )
     plan = prepared.plan(
         bindings={
-            biased: scalar_group,
-            blended: binary_group,
-            control_output: unary_f32_group,
+            biased: scalar_binding,
+            blended: binary_binding,
+            control_output: unary_f32_binding,
         },
         kernels={
             control_output: npu.KernelSpec(

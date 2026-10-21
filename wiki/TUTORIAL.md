@@ -494,6 +494,11 @@ reviewed = prepared.probe_binding(
 
 This succeeds only when both controlled carrier substitutions identify the
 same ACT group and every observed tile has one uniquely translated DPU input.
+The [branched DPU/ACT example](../examples/example_branched_network.py) applies
+this workflow to three custom nodes in one graph. It deliberately uses
+different candidate lists for the scalar-input, full binary, and FP32 unary
+nodes because carrier lowering depends on arity, dtype, shape, and graph
+context; there is no universal fallback list.
 
 For several kernels, filter groups with independent fields and bind them all:
 
@@ -511,9 +516,9 @@ program = prepared.build(
 
 See the [mixed-precision multi-custom
 example](../examples/example_mixed_precision_multi_custom.py) for that exact
-workflow and the [branched DPU/ACT
-example](../examples/example_branched_network.py) for a graph where automatic
-positional mapping intentionally refuses to guess.
+workflow. The [branched DPU/ACT
+example](../examples/example_branched_network.py) shows the reviewed-probe path
+for a graph where automatic positional mapping intentionally refuses to guess.
 
 ## 9. Write a conversion kernel
 

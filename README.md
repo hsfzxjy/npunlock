@@ -9,7 +9,7 @@ from custom C code to a runnable NPU kernel.
 The current implementation has been verified on Windows x64 with Meteor Lake /
 NPU3720.
 
-> **Latest breakthrough — 2026-10-21:** compiler-emitted repeated DPU input relocations can now be inspected without guessing which address wins; every entry is preserved and the ambiguous field is excluded from routing proofs. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#68-repeated-dpu-input-relocations).
+> **Latest breakthrough — 2026-10-21:** controlled carrier probes plus native routing coverage now produce reviewed bindings for all three custom kernels in a branched DPU/ACT graph—without raw ACT-group numbers. [Evidence and limits](wiki/REVERSE_ENGINEERING.md#69-reviewed-bindings-across-a-branched-graph).
 
 New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,
