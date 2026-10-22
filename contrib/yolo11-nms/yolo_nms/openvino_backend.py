@@ -103,6 +103,30 @@ def make_preselector_model(candidate_count: int, topk: int = NMS_CAPACITY) -> ov
     )
 
 
+def make_yolo_preselector_model(
+    core: ov.Core,
+    raw_model: str | Path,
+    topk: int = NMS_CAPACITY,
+) -> ov.Model:
+    """Attach the static preselector directly to a raw YOLO OpenVINO model."""
+
+    model = core.read_model(raw_model)
+    if len(model.outputs) != 1:
+        raise ValueError(f"expected one raw YOLO output, received {len(model.outputs)}")
+    predictions = model.get_results()[0].input_value(0)
+    shape = predictions.get_shape()
+    if len(shape) != 3 or shape[0] != 1 or shape[1] != 84:
+        raise ValueError(f"expected static YOLO11 detection output (1, 84, N), received {shape!r}")
+
+    preselector = make_preselector_model(shape[2], topk)
+    preselector.get_parameters()[0].output(0).replace(predictions)
+    return ov.Model(
+        preselector.get_results(),
+        model.get_parameters(),
+        "yolo11_with_npu_preselector",
+    )
+
+
 class CompiledModel:
     def __init__(self, core: ov.Core, model: str | Path | ov.Model, device: str):
         started = perf_counter()
@@ -110,36 +134,51 @@ class CompiledModel:
         self.compile_ms = (perf_counter() - started) * 1000.0
         self.execution_devices = self.compiled.get_property("EXECUTION_DEVICES")
         self.request = self.compiled.create_infer_request()
+        self.last_output_copy_ms = 0.0
 
     def infer(self, input_value: np.ndarray) -> tuple[list[np.ndarray], float]:
         started = perf_counter()
         self.request.infer({0: input_value})
         elapsed_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
         outputs = [np.array(self.request.get_output_tensor(index).data, copy=True) for index in range(len(self.compiled.outputs))]
+        self.last_output_copy_ms = (perf_counter() - started) * 1000.0
         return outputs, elapsed_ms
 
 
-class NpuPreselector:
-    def __init__(self, core: ov.Core, candidate_count: int, topk: int = NMS_CAPACITY):
-        self.model = CompiledModel(core, make_preselector_model(candidate_count, topk), "NPU")
-        if self.model.execution_devices != "NPU":
-            raise RuntimeError(f"preselector did not execute exclusively on NPU: {self.model.execution_devices!r}")
+class NpuYoloPreselector:
+    """One OpenVINO NPU workload containing YOLO11 and static preselection."""
 
-    def run(self, raw_predictions: np.ndarray) -> tuple[DetectionBatch, float]:
-        outputs, elapsed_ms = self.model.infer(np.asarray(raw_predictions, dtype=np.float32))
-        by_name = {
-            output.any_name: value
-            for output, value in zip(self.model.compiled.outputs, outputs)
-        }
-        return (
-            DetectionBatch(
-                boxes=by_name["boxes"].reshape(-1, 4).astype(np.float32),
-                scores=by_name["scores"].reshape(-1).astype(np.float32),
-                classes=by_name["classes"].reshape(-1).astype(np.int32),
-                indices=by_name["indices"].reshape(-1).astype(np.int32),
-            ),
-            elapsed_ms,
-        )
+    def __init__(
+        self,
+        core: ov.Core,
+        raw_model: str | Path,
+        topk: int = NMS_CAPACITY,
+    ):
+        fused = make_yolo_preselector_model(core, raw_model, topk)
+        self.model = CompiledModel(core, fused, "NPU")
+        if self.model.execution_devices != "NPU":
+            raise RuntimeError(
+                "fused YOLO/preselector did not execute exclusively on NPU: "
+                f"{self.model.execution_devices!r}"
+            )
+
+    def run(self, input_value: np.ndarray) -> tuple[DetectionBatch, float]:
+        outputs, elapsed_ms = self.model.infer(np.asarray(input_value, dtype=np.float32))
+        return _detection_batch(self.model, outputs), elapsed_ms
+
+
+def _detection_batch(model: CompiledModel, outputs: list[np.ndarray]) -> DetectionBatch:
+    by_name = {
+        output.any_name: value
+        for output, value in zip(model.compiled.outputs, outputs)
+    }
+    return DetectionBatch(
+        boxes=by_name["boxes"].reshape(-1, 4).astype(np.float32),
+        scores=by_name["scores"].reshape(-1).astype(np.float32),
+        classes=by_name["classes"].reshape(-1).astype(np.int32),
+        indices=by_name["indices"].reshape(-1).astype(np.int32),
+    )
 
 
 def load_image(path: str | Path) -> np.ndarray:

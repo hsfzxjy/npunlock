@@ -20,7 +20,7 @@ sys.path.insert(0, str(CONTRIB_ROOT))
 from yolo_nms.npunlock_backend import NpuNms
 from yolo_nms.openvino_backend import (
     CompiledModel,
-    NpuPreselector,
+    NpuYoloPreselector,
     letterbox,
     load_image,
     scale_boxes_to_image,
@@ -117,11 +117,13 @@ def main() -> int:
     for _ in range(args.warmup):
         raw_npu.infer(input_data)
     raw_times: list[float] = []
+    raw_output_copy_times: list[float] = []
     raw_outputs: list[np.ndarray] = []
     for _ in range(args.runs):
         outputs, elapsed = raw_npu.infer(input_data)
         raw_outputs = outputs
         raw_times.append(elapsed)
+        raw_output_copy_times.append(raw_npu.last_output_copy_ms)
     raw_predictions = raw_outputs[0]
     cpu_raw_predictions = raw_cpu.infer(input_data)[0][0]
 
@@ -214,14 +216,16 @@ def main() -> int:
             ),
         }
 
-    preselector = NpuPreselector(core, raw_predictions.shape[2])
+    yolo_preselector = NpuYoloPreselector(core, raw_path)
     for _ in range(args.warmup):
-        preselector.run(raw_predictions)
-    preselector_times: list[float] = []
+        yolo_preselector.run(input_data)
+    yolo_preselector_times: list[float] = []
+    candidate_download_times: list[float] = []
     npu_candidates = None
     for _ in range(args.runs):
-        npu_candidates, elapsed = preselector.run(raw_predictions)
-        preselector_times.append(elapsed)
+        npu_candidates, elapsed = yolo_preselector.run(input_data)
+        yolo_preselector_times.append(elapsed)
+        candidate_download_times.append(yolo_preselector.model.last_output_copy_ms)
     assert npu_candidates is not None
 
     npu_nms = NpuNms(
@@ -253,8 +257,7 @@ def main() -> int:
     for _ in range(args.runs):
         started = perf_counter()
         input_value, _ = letterbox(image)
-        raw_value = raw_npu.infer(input_value)[0][0]
-        selected = preselector.run(raw_value)[0]
+        selected = yolo_preselector.run(input_value)[0]
         npu_nms.run(
             selected,
             confidence_threshold=args.confidence,
@@ -281,7 +284,7 @@ def main() -> int:
 
     raw_delta = np.abs(cpu_raw_predictions.astype(np.float32) - raw_predictions.astype(np.float32))
     report = {
-        "schema": "npunlock.yolo11.demo.v1",
+        "schema": "npunlock.yolo11.demo.v2",
         "versions": {
             "openvino": ov.__version__,
             "npu_driver": core.get_property("NPU", "NPU_DRIVER_VERSION"),
@@ -306,6 +309,7 @@ def main() -> int:
             "execution_devices": raw_npu.execution_devices,
             "network_compile_ms": raw_npu.compile_ms,
             "network_inference_ms": summary(raw_times),
+            "raw_output_copy_ms": summary(raw_output_copy_times),
             "cpu_candidate_preselection_ms": summary(cpu_preselect_times),
             "cpu_nms_ms": summary(cpu_nms_times),
             "complete_end_to_end_ms": summary(config_a_end_to_end_times),
@@ -313,13 +317,14 @@ def main() -> int:
         },
         "configuration_b": embedded_report,
         "configuration_c": {
-            "network_device": "NPU",
-            "preselector_device": "NPU",
+            "network_and_preselector_device": "NPU",
             "nms_device": "NPU ACT-SHAVE through npunlock",
-            "network_execution_devices": raw_npu.execution_devices,
-            "preselector_execution_devices": preselector.model.execution_devices,
-            "preselector_compile_ms": preselector.model.compile_ms,
-            "preselector_ms": summary(preselector_times),
+            "network_and_preselector_execution_devices": yolo_preselector.model.execution_devices,
+            "network_and_preselector_compile_ms": yolo_preselector.model.compile_ms,
+            "network_and_preselector_ms": summary(yolo_preselector_times),
+            "candidate_download_copy_ms": summary(candidate_download_times),
+            "workload_count": 2,
+            "intermediate_transfer": "255 fixed-layout candidates; raw 8400-candidate YOLO output remains inside the first NPU graph",
             "npunlock_build_ms": npu_nms.build_ms,
             "npunlock_components_ms": {key: summary(values) for key, values in component_times.items()},
             "kernel_only_ms": None,
