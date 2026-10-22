@@ -1,0 +1,10 @@
+artifacts/
+outputs/
+*.onnx
+*.pt
+*.blob
+*.elf
+*.jpg
+*.png
+__pycache__/
+.pytest_cache/

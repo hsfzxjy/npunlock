@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from time import perf_counter
+
+import cv2
+import numpy as np
+import openvino as ov
+
+from .packing import NMS_CAPACITY
+from .reference import DetectionBatch
+
+
+@dataclass(frozen=True, slots=True)
+class LetterboxInfo:
+    original_shape: tuple[int, int]
+    input_shape: tuple[int, int]
+    scale: float
+    pad_left: int
+    pad_top: int
+
+
+def letterbox(image: np.ndarray, size: int = 640) -> tuple[np.ndarray, LetterboxInfo]:
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("input image must be HWC BGR with three channels")
+    height, width = image.shape[:2]
+    scale = min(size / height, size / width)
+    resized_width = round(width * scale)
+    resized_height = round(height * scale)
+    resized = cv2.resize(image, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+    horizontal = size - resized_width
+    vertical = size - resized_height
+    left = round(horizontal / 2 - 0.1)
+    right = round(horizontal / 2 + 0.1)
+    top = round(vertical / 2 - 0.1)
+    bottom = round(vertical / 2 + 0.1)
+    padded = cv2.copyMakeBorder(resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+    tensor = np.ascontiguousarray(padded[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32)[None] / 255.0
+    return tensor, LetterboxInfo((height, width), (size, size), scale, left, top)
+
+
+def scale_boxes_to_image(boxes: np.ndarray, info: LetterboxInfo) -> np.ndarray:
+    scaled = np.asarray(boxes, dtype=np.float32).copy()
+    scaled[:, (0, 2)] = (scaled[:, (0, 2)] - info.pad_left) / info.scale
+    scaled[:, (1, 3)] = (scaled[:, (1, 3)] - info.pad_top) / info.scale
+    height, width = info.original_shape
+    scaled[:, (0, 2)] = np.clip(scaled[:, (0, 2)], 0, width)
+    scaled[:, (1, 3)] = np.clip(scaled[:, (1, 3)], 0, height)
+    return scaled
+
+
+def make_preselector_model(candidate_count: int, topk: int = NMS_CAPACITY) -> ov.Model:
+    if candidate_count <= 0 or not 0 < topk <= candidate_count:
+        raise ValueError("preselector dimensions are invalid")
+    op = ov.opset13
+    predictions = op.parameter([1, 84, candidate_count], np.float32, name="predictions")
+    boxes = op.strided_slice(
+        predictions,
+        [0, 0, 0],
+        [1, 4, candidate_count],
+        [1, 1, 1],
+        [0, 0, 0],
+        [0, 0, 0],
+    )
+    scores = op.strided_slice(
+        predictions,
+        [0, 4, 0],
+        [1, 84, candidate_count],
+        [1, 1, 1],
+        [0, 0, 0],
+        [0, 0, 0],
+    )
+    class_top = op.topk(scores, 1, axis=1, mode="max", sort="value", stable=True)
+    max_scores = op.squeeze(class_top.output(0), [1])
+    class_ids = op.squeeze(class_top.output(1), [1])
+    candidate_top = op.topk(max_scores, topk, axis=1, mode="max", sort="value", stable=True)
+    top_scores = candidate_top.output(0)
+    top_indices = candidate_top.output(1)
+    top_classes = op.gather(class_ids, top_indices, 1, batch_dims=1)
+    transposed_boxes = op.transpose(boxes, [0, 2, 1])
+    top_xywh = op.gather(transposed_boxes, top_indices, 1, batch_dims=1)
+    center_x, center_y, width, height = op.split(top_xywh, 2, 4).outputs()
+    half_width = op.multiply(width, np.float32(0.5))
+    half_height = op.multiply(height, np.float32(0.5))
+    top_xyxy = op.concat(
+        [
+            op.subtract(center_x, half_width),
+            op.subtract(center_y, half_height),
+            op.add(center_x, half_width),
+            op.add(center_y, half_height),
+        ],
+        2,
+    )
+    top_xyxy.output(0).get_tensor().set_names({"boxes"})
+    top_scores.get_tensor().set_names({"scores"})
+    top_classes.output(0).get_tensor().set_names({"classes"})
+    top_indices.get_tensor().set_names({"indices"})
+    return ov.Model(
+        [top_xyxy.output(0), top_scores, top_classes.output(0), top_indices],
+        [predictions],
+        "yolo11_npu_preselector",
+    )
+
+
+class CompiledModel:
+    def __init__(self, core: ov.Core, model: str | Path | ov.Model, device: str):
+        started = perf_counter()
+        self.compiled = core.compile_model(model, device, {"PERFORMANCE_HINT": "LATENCY"})
+        self.compile_ms = (perf_counter() - started) * 1000.0
+        self.execution_devices = self.compiled.get_property("EXECUTION_DEVICES")
+        self.request = self.compiled.create_infer_request()
+
+    def infer(self, input_value: np.ndarray) -> tuple[list[np.ndarray], float]:
+        started = perf_counter()
+        self.request.infer({0: input_value})
+        elapsed_ms = (perf_counter() - started) * 1000.0
+        outputs = [np.array(self.request.get_output_tensor(index).data, copy=True) for index in range(len(self.compiled.outputs))]
+        return outputs, elapsed_ms
+
+
+class NpuPreselector:
+    def __init__(self, core: ov.Core, candidate_count: int, topk: int = NMS_CAPACITY):
+        self.model = CompiledModel(core, make_preselector_model(candidate_count, topk), "NPU")
+        if self.model.execution_devices != "NPU":
+            raise RuntimeError(f"preselector did not execute exclusively on NPU: {self.model.execution_devices!r}")
+
+    def run(self, raw_predictions: np.ndarray) -> tuple[DetectionBatch, float]:
+        outputs, elapsed_ms = self.model.infer(np.asarray(raw_predictions, dtype=np.float32))
+        by_name = {
+            output.any_name: value
+            for output, value in zip(self.model.compiled.outputs, outputs)
+        }
+        return (
+            DetectionBatch(
+                boxes=by_name["boxes"].reshape(-1, 4).astype(np.float32),
+                scores=by_name["scores"].reshape(-1).astype(np.float32),
+                classes=by_name["classes"].reshape(-1).astype(np.int32),
+                indices=by_name["indices"].reshape(-1).astype(np.int32),
+            ),
+            elapsed_ms,
+        )
+
+
+def load_image(path: str | Path) -> np.ndarray:
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"failed to load image: {path}")
+    return image

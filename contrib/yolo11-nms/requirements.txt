@@ -1,0 +1,8 @@
+numpy==1.26.4
+ml-dtypes==0.5.4
+onnx==1.23.2
+openvino==2026.3.1
+opencv-python==4.9.0.80
+torch==2.3.0
+torchvision==0.18.0
+ultralytics==8.4.183
