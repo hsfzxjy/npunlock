@@ -19,16 +19,24 @@ threshold, IoU threshold, pre-NMS capacity, and maximum detection count:
 | --- | --- | --- |
 | A. OpenVINO baseline | OpenVINO `NPU` | CPU deterministic reference |
 | B. Ultralytics embedded NMS | OpenVINO `NPU` attempt | Exported ONNX NMS subgraph |
-| C. OpenVINO + npunlock | OpenVINO `NPU` | static OpenVINO NPU preselector plus npunlock ACT-SHAVE NMS |
+| C. OpenVINO + npunlock | OpenVINO `NPU`, with static preselection in the same graph | npunlock ACT-SHAVE NMS |
 
-Configuration C uses **three separate workloads**. It is not a fused graph:
+Configuration C uses **two separate NPU workloads**. The YOLO network and
+static preselector are one OpenVINO graph, but the npunlock NMS carrier remains
+a second graph:
 
 ```text
-image --CPU letterbox/normalize--> YOLO11n OpenVINO NPU
-      --host-visible (1,84,8400) tensor--> static TopK/class selection NPU graph
-      --host pack/duplicate--> npunlock ACT-SHAVE NMS graph
+image --CPU letterbox/normalize--> YOLO11n + static preselector OpenVINO NPU graph
+      --host-visible 255-candidate fixed tensor / pack / duplicate-->
+      npunlock ACT-SHAVE NMS graph
       --host unpack/visualize--> detections
 ```
+
+The raw `(1,84,8400)` YOLO tensor stays inside the first NPU graph. npunlock's
+current validated frontend patches a purpose-built ACT carrier native graph; it
+does not provide a validated way to inject that carrier into the arbitrary
+OpenVINO-compiled YOLO graph. No single fused YOLO-plus-custom-NMS graph is
+claimed.
 
 The host performs orchestration, fixed-layout packing, memory transfers, output
 unpacking, and visualization. It does not make confidence, ranking, IoU, or
@@ -37,8 +45,9 @@ suppression decisions in configuration C.
 ## Why this is interesting
 
 Ultralytics can export YOLO11n with `nms=True`, and that exported model is valid:
-it executes on the CPU and returns `(1,300,6)`. On the hardware and software
-versions recorded below, explicit NPU compilation fails inside the NPU compiler:
+it executes on the CPU and returns `(1,100,6)` for the recorded `max_det=100`
+export. On the hardware and software versions recorded below, explicit NPU
+compilation fails inside the NPU compiler:
 
 ```text
 IE.Reshape doesn't support dynamic shapes
@@ -48,15 +57,16 @@ No `AUTO`, `HETERO`, or CPU fallback device is used. The failure is specific to
 the tested OpenVINO/NPU compiler/driver combination. It does not show that NMS,
 embedded-NMS exports, or other Intel NPUs are generally unsupported.
 
-The raw YOLO11n graph does compile and execute directly on `NPU`. npunlock then
-provides a programmable bounded NMS implementation even though the complete
-exported NMS graph is rejected by this compiler version.
+The raw YOLO11n graph and the raw graph extended with static preselection both
+compile and execute directly on `NPU`. npunlock then provides a programmable
+bounded NMS implementation even though the complete exported NMS graph is
+rejected by this compiler version.
 
 ## Fixed-capacity design
 
 The raw YOLO11n output is `(1,84,8400)`: four `xywh` coordinates and 80 COCO
-class scores per candidate. A static OpenVINO graph running explicitly on the
-NPU performs:
+class scores per candidate. A static OpenVINO subgraph attached directly to the
+YOLO output and compiled in the same explicit NPU workload performs:
 
 1. per-candidate class score maximum and class ID selection;
 2. stable global TopK over all 8,400 candidates;
@@ -187,7 +197,7 @@ Recorded on 2026-10-23:
 | OpenVINO | `2026.3.1-22476-759c5a6ab8c-releases/2026/3` |
 | Ultralytics | `8.4.183` |
 | NPU graph compiler | `8.3` |
-| npunlock commit | `88bd584` plus this contribution |
+| npunlock commit | `7da7365` plus this follow-up |
 
 Model and sample hashes:
 
@@ -203,19 +213,21 @@ With `conf=0.25`, `iou=0.7`, `max_det=100`, ten warm-ups, and 50 runs:
 
 | Measurement | Median |
 | --- | ---: |
-| A: OpenVINO NPU network | 8.93 ms |
-| A: CPU candidate preselection | 1.12 ms |
-| A: CPU NMS | 0.217 ms |
-| A: complete end-to-end wall time | 18.86 ms |
-| C: OpenVINO NPU preselector | 25.81 ms |
-| C: npunlock shared execution/fence wall time | 1.85 ms |
-| C: host pack | 0.109 ms |
-| C: shared-buffer upload copy | 0.0047 ms |
-| C: shared-buffer download copy | 0.0111 ms |
-| C: complete end-to-end wall time | 46.35 ms |
+| A: OpenVINO NPU network | 8.95 ms |
+| A: raw-output host copy | 0.555 ms |
+| A: CPU candidate preselection | 1.07 ms |
+| A: CPU NMS | 0.208 ms |
+| A: complete end-to-end wall time | 17.16 ms |
+| C: fused OpenVINO NPU network + preselector | 10.18 ms |
+| C: selected-candidate host copy | 0.058 ms |
+| C: npunlock shared execution/fence wall time | 1.77 ms |
+| C: host pack | 0.140 ms |
+| C: shared-buffer upload copy | 0.0040 ms |
+| C: shared-buffer download copy | 0.0102 ms |
+| C: complete end-to-end wall time | 20.12 ms |
 
 The npunlock execution API does not expose device-only ACT profiling. The
-reported 1.85 ms is submission-to-fence wall time using shared Level Zero
+reported 1.77 ms is submission-to-fence wall time using shared Level Zero
 buffers, excluding the separately measured host upload/download copies. It
 must not be described as pure kernel time.
 
@@ -239,10 +251,9 @@ is the execution evidence; graph creation alone is not treated as correctness.
 - Pre-NMS capacity is 255 candidates and `max_det` cannot exceed 255.
 - Candidate transport into the ACT kernel is FP16. Boxes and scores are
   compared against an explicitly FP16-quantized operator reference.
-- YOLO inference, static NPU preselection, and custom NMS are separate NPU
-  workloads with host-visible intermediate buffers.
-- The current preselector is correctness-oriented and substantially slower
-  than CPU postprocessing on this system.
+- The fused YOLO/preselector graph and custom NMS are two separate NPU
+  workloads. The 255 selected candidates cross a host-visible boundary; the
+  raw 8,400-candidate tensor does not.
 - Kernel-only hardware timing is unavailable through the current graphinfer
   API.
 - Results apply only to the recorded Meteor Lake driver/compiler combination.

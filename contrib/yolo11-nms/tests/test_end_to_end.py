@@ -8,7 +8,7 @@ import numpy as np
 import openvino as ov
 
 from yolo_nms.npunlock_backend import NpuNms
-from yolo_nms.openvino_backend import CompiledModel, NpuPreselector, letterbox, load_image
+from yolo_nms.openvino_backend import CompiledModel, NpuYoloPreselector, letterbox, load_image
 from yolo_nms.reference import preselect_raw_predictions, reference_nms
 
 
@@ -37,7 +37,7 @@ class YoloEndToEndTests(unittest.TestCase):
         core = ov.Core()
         raw_model = CompiledModel(core, model_dir / "yolo11n_raw.onnx", "NPU")
         self.assertEqual(raw_model.execution_devices, "NPU")
-        preselector = NpuPreselector(core, 8400)
+        yolo_preselector = NpuYoloPreselector(core, model_dir / "yolo11n_raw.onnx")
         nms = NpuNms(
             kernel_path=ROOT / "kernels" / "nms.c",
             movi_dll_dir=movitools,
@@ -53,7 +53,7 @@ class YoloEndToEndTests(unittest.TestCase):
                     iou_threshold=0.7,
                     max_detections=100,
                 )
-                selected, _ = preselector.run(raw)
+                selected, _ = yolo_preselector.run(input_value)
                 actual, _ = nms.run(
                     selected,
                     confidence_threshold=0.25,
