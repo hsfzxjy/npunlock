@@ -10,13 +10,20 @@ from .packing import (
     pack_features,
     unpack_predictions,
 )
-from .runtime import RuntimeNpuXGBoost, pack_runtime_features, pack_runtime_model
+from .runtime import (
+    PartitionedRuntimeNpuXGBoost,
+    RuntimeNpuXGBoost,
+    pack_runtime_features,
+    pack_runtime_model,
+    partition_runtime_ensemble,
+)
 
 __all__ = [
     "Ensemble",
     "FP16_TRANSPORT",
     "FP32_TRANSPORT",
     "Predictions",
+    "PartitionedRuntimeNpuXGBoost",
     "RuntimeNpuXGBoost",
     "Tree",
     "TransportSpec",
@@ -25,5 +32,6 @@ __all__ = [
     "pack_features",
     "pack_runtime_features",
     "pack_runtime_model",
+    "partition_runtime_ensemble",
     "unpack_predictions",
 ]
