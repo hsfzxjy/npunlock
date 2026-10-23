@@ -207,6 +207,16 @@ def load_ensemble(source: str | Path | bytes | bytearray | Mapping[str, object])
     raw_trees = model.get("trees")
     if not isinstance(raw_trees, list) or not raw_trees:
         raise ValueError("model must contain at least one tree")
+    model_parameters = model.get("gbtree_model_param")
+    if not isinstance(model_parameters, Mapping):
+        raise ValueError("gbtree_model_param is missing")
+    if int(model_parameters.get("num_trees", 0)) != len(raw_trees):
+        raise ValueError("gbtree num_trees does not match the tree array")
+    if int(model_parameters.get("num_parallel_tree", 0)) != 1:
+        raise ValueError("parallel-tree and random-forest layouts are unsupported")
+    iteration_indptr = model.get("iteration_indptr")
+    if iteration_indptr != list(range(len(raw_trees) + 1)):
+        raise ValueError("model must contain exactly one tree per boosting round")
     tree_info = model.get("tree_info")
     if not isinstance(tree_info, list) or len(tree_info) != len(raw_trees) or any(int(value) != 0 for value in tree_info):
         raise ValueError("only one output group is supported")
