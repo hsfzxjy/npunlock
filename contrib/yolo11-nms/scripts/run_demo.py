@@ -26,6 +26,7 @@ from yolo_nms.openvino_backend import (
     scale_boxes_to_image,
 )
 from yolo_nms.reference import DetectionBatch, preselect_raw_predictions, reference_nms
+from yolo_nms.single_graph_backend import SingleGraphYoloNms
 
 
 def summary(values: list[float]) -> dict[str, float]:
@@ -83,6 +84,14 @@ def options() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
     parser.add_argument("--movi-dll-dir", type=Path, required=True, help="caller-supplied MVC_DEPEND root")
     parser.add_argument("--native-dir", type=Path, help="development directory containing npunlock.dll and worker")
+    parser.add_argument(
+        "--single-graph-binding",
+        type=Path,
+        default=CONTRIB_ROOT / "bindings" / "npu3720-openvino-2026.3.1.json",
+    )
+    single_mode = parser.add_mutually_exclusive_group()
+    single_mode.add_argument("--skip-single-graph", action="store_true")
+    single_mode.add_argument("--require-single-graph", action="store_true")
     parser.add_argument("--confidence", type=float, default=0.25)
     parser.add_argument("--iou", type=float, default=0.7)
     parser.add_argument("--max-det", type=int, default=100)
@@ -266,6 +275,85 @@ def main() -> int:
         )
         end_to_end_times.append((perf_counter() - started) * 1000.0)
 
+    # The recorded driver cannot keep both patched graph sessions initialized
+    # concurrently. Configuration C is complete before D takes ownership.
+    npu_nms.close()
+
+    single_graph_detections: DetectionBatch | None = None
+    single_graph_error = False
+    if args.skip_single_graph:
+        single_graph_report: dict[str, object] = {"status": "skipped"}
+    else:
+        single_graph = None
+        try:
+            single_graph = SingleGraphYoloNms(
+                raw_model=raw_path,
+                kernel_path=CONTRIB_ROOT / "kernels" / "nms.c",
+                binding_path=args.single_graph_binding,
+                artifact_dir=output_dir / "single-graph-build",
+                movi_dll_dir=args.movi_dll_dir,
+                native_dir=args.native_dir,
+            )
+            for _ in range(args.warmup):
+                single_graph.run(
+                    input_data,
+                    confidence_threshold=args.confidence,
+                    iou_threshold=args.iou,
+                    max_detections=args.max_det,
+                )
+            single_components = {
+                key: [] for key in ("upload_ms", "execution_wall_ms", "download_ms", "unpack_ms")
+            }
+            for _ in range(args.runs):
+                single_graph_detections, timings = single_graph.run(
+                    input_data,
+                    confidence_threshold=args.confidence,
+                    iou_threshold=args.iou,
+                    max_detections=args.max_det,
+                )
+                for key, value in timings.items():
+                    single_components[key].append(value)
+            single_end_to_end_times: list[float] = []
+            for _ in range(args.runs):
+                started = perf_counter()
+                input_value, _ = letterbox(image)
+                single_graph.run(
+                    input_value,
+                    confidence_threshold=args.confidence,
+                    iou_threshold=args.iou,
+                    max_detections=args.max_det,
+                )
+                single_end_to_end_times.append((perf_counter() - started) * 1000.0)
+            single_graph_report = {
+                "status": "ok",
+                "workload_count": 1,
+                "network_preselection_packing_nms_device": "NPU in one patched native graph",
+                "host_processing": "letterbox/normalize, two input copies, output copy/unpack, visualization",
+                "intermediate_detection_transfer": "none",
+                "serialize_ms": single_graph.serialize_ms,
+                "ir_compile_ms": single_graph.ir_compile_ms,
+                "shave_compile_ms": single_graph.shave_compile_ms,
+                "patch_ms": single_graph.patch_ms,
+                "session_create_ms": single_graph.session_create_ms,
+                "components_ms": {key: summary(values) for key, values in single_components.items()},
+                "complete_end_to_end_ms": summary(single_end_to_end_times),
+                "native_graph_sha256": single_graph.native_graph_sha256,
+                "binding_sha256": single_graph.binding_sha256,
+                "serialized_ir_hashes": single_graph.serialized_ir_hashes,
+                "provenance": single_graph.provenance,
+                "patch_evidence": single_graph.patch_evidence,
+            }
+        except Exception as error:
+            single_graph_error = True
+            single_graph_report = {
+                "status": "unavailable",
+                "error_type": type(error).__name__,
+                "error": str(error),
+            }
+        finally:
+            if single_graph is not None:
+                single_graph.close()
+
     same_shape = cpu_detections.boxes.shape == npu_detections.boxes.shape
     comparison = {
         "same_detection_count": same_shape,
@@ -281,10 +369,35 @@ def main() -> int:
     config_a = detection_json(cpu_detections, names, letterbox_info)
     config_c = detection_json(npu_detections, names, letterbox_info)
     draw(image, config_c, output_dir / "detections_npunlock.jpg")
+    single_comparison = None
+    if single_graph_detections is not None:
+        single_shape = cpu_detections.boxes.shape == single_graph_detections.boxes.shape
+        single_comparison = {
+            "same_detection_count": single_shape,
+            "same_source_indices": bool(
+                single_shape and np.array_equal(cpu_detections.indices, single_graph_detections.indices)
+            ),
+            "same_class_order": bool(
+                single_shape and np.array_equal(cpu_detections.classes, single_graph_detections.classes)
+            ),
+            "max_box_delta_network_pixels": (
+                float(np.max(np.abs(cpu_detections.boxes - single_graph_detections.boxes)))
+                if single_shape and len(cpu_detections)
+                else None
+            ),
+            "max_confidence_delta": (
+                float(np.max(np.abs(cpu_detections.scores - single_graph_detections.scores)))
+                if single_shape and len(cpu_detections)
+                else None
+            ),
+        }
+        config_d = detection_json(single_graph_detections, names, letterbox_info)
+        single_graph_report["detections"] = config_d
+        draw(image, config_d, output_dir / "detections_single_graph.jpg")
 
     raw_delta = np.abs(cpu_raw_predictions.astype(np.float32) - raw_predictions.astype(np.float32))
     report = {
-        "schema": "npunlock.yolo11.demo.v2",
+        "schema": "npunlock.yolo11.demo.v3",
         "versions": {
             "openvino": ov.__version__,
             "npu_driver": core.get_property("NPU", "NPU_DRIVER_VERSION"),
@@ -337,19 +450,27 @@ def main() -> int:
             "patch_evidence": npu_nms.patch_evidence,
             "detections": config_c,
         },
+        "configuration_d_experimental_single_graph": single_graph_report,
         "correctness": {
             "cpu_vs_npu_raw": {
                 "max_abs": float(raw_delta.max()),
                 "mean_abs": float(raw_delta.mean()),
             },
             "configuration_a_vs_c": comparison,
+            "configuration_a_vs_d": single_comparison,
         },
         "preprocessing_ms_single": preprocessing_ms,
     }
     report_path = output_dir / "report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
-    return 0 if comparison["same_source_indices"] and comparison["same_class_order"] else 2
+    configuration_c_ok = comparison["same_source_indices"] and comparison["same_class_order"]
+    configuration_d_ok = single_comparison is None or (
+        single_comparison["same_source_indices"] and single_comparison["same_class_order"]
+    )
+    if args.require_single_graph and single_graph_error:
+        return 3
+    return 0 if configuration_c_ok and configuration_d_ok else 2
 
 
 if __name__ == "__main__":

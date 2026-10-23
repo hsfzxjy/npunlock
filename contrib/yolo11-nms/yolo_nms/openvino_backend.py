@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import openvino as ov
 
-from .packing import NMS_CAPACITY
+from .packing import NMS_CAPACITY, NMS_CHUNK_WORDS
 from .reference import DetectionBatch
 
 
@@ -125,6 +125,68 @@ def make_yolo_preselector_model(
         model.get_parameters(),
         "yolo11_with_npu_preselector",
     )
+
+
+def make_yolo_nms_carrier_model(
+    core: ov.Core,
+    raw_model: str | Path,
+    topk: int = NMS_CAPACITY,
+) -> ov.Model:
+    """Build the static single-graph YOLO/preselection/NMS carrier IR."""
+
+    base = make_yolo_preselector_model(core, raw_model, topk)
+    boxes, scores, classes, indices = [result.input_value(0) for result in base.get_results()]
+    op = ov.opset13
+    header = op.parameter([1, 4], ov.Type.f16, name="nms_header")
+    header.output(0).get_tensor().set_names({"nms_header"})
+    axis_2 = op.constant(np.asarray([2], dtype=np.int64))
+    score_column = op.unsqueeze(op.convert(scores, ov.Type.f16), axis_2)
+    class_column = op.unsqueeze(op.convert(classes, ov.Type.f16), axis_2)
+    low = op.floor_mod(indices, op.constant(np.asarray(256, dtype=np.int32)))
+    high = op.floor(
+        op.divide(
+            op.convert(indices, ov.Type.f32),
+            op.constant(np.asarray(256.0, dtype=np.float32)),
+        )
+    )
+    records = op.concat(
+        [
+            op.convert(boxes, ov.Type.f16),
+            score_column,
+            class_column,
+            op.unsqueeze(op.convert(low, ov.Type.f16), axis_2),
+            op.unsqueeze(op.convert(high, ov.Type.f16), axis_2),
+        ],
+        2,
+    )
+    record_words = NMS_CAPACITY * 8
+    flat_records = op.reshape(records, op.constant(np.asarray([1, record_words], dtype=np.int64)), False)
+    zero_header = op.constant(np.zeros((1, 4), dtype=np.float16))
+    chunk = op.concat([header, zero_header, flat_records], 1)
+    if chunk.get_output_shape(0) != [1, NMS_CHUNK_WORDS]:
+        raise RuntimeError(f"single-graph NMS chunk shape changed: {chunk.get_output_shape(0)!r}")
+
+    # Four chunks produce four 2,048-element ACT invocations on the reviewed
+    # NPU3720 compiler. Each invocation therefore sees a complete candidate
+    # buffer without an unsupported cross-invocation read.
+    logical = op.concat([chunk, chunk, chunk, chunk], 1)
+    carrier = op.absolute(logical)
+    carrier.set_friendly_name("nms_carrier")
+    carrier.output(0).get_tensor().set_names({"nms_output"})
+    model = ov.Model(
+        [carrier],
+        [*base.get_parameters(), header],
+        "yolo11_single_graph_nms_carrier",
+    )
+    for index, node in enumerate(model.get_ordered_ops()):
+        node.set_friendly_name(f"single_graph_{index:04d}_{node.get_type_name()}")
+    carrier.set_friendly_name("nms_carrier")
+    header.set_friendly_name("nms_header")
+    for parameter in model.get_parameters():
+        if "images" in parameter.output(0).get_tensor().get_names():
+            parameter.set_friendly_name("images")
+    model.get_results()[0].set_friendly_name("nms_carrier_result")
+    return model
 
 
 class CompiledModel:
