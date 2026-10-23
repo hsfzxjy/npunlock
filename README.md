@@ -15,6 +15,28 @@ New to the project? Follow the [custom-kernel tutorial](wiki/TUTORIAL.md) from
 a first FP16 loop through carrier selection, multi-input kernels, conversions,
 and reusable deployment artifacts.
 
+## Real-world demonstration: YOLO11n NMS on the NPU
+
+The [YOLO11n contribution](contrib/yolo11-nms/README.md) runs an official
+pretrained Ultralytics detection model and class-aware non-maximum suppression
+on a Meteor Lake NPU. Its most experimental configuration compiles YOLO,
+static candidate selection, fixed-layout packing, and a custom ACT-SHAVE NMS
+kernel into **one native NPU graph**, with no intermediate detection tensor
+returning to the CPU.
+
+The contribution includes CPU and stock OpenVINO controls, real-image
+correctness tests, visualized output, machine-readable reports, and separate
+timings for inference, transfers, orchestration, and end-to-end latency. On the
+recorded OpenVINO 2026.3.1 / NPU compiler 8.3 stack, the official embedded-NMS
+export runs on CPU but fails explicit NPU compilation, while the npunlock path
+matches the CPU reference on the tested images. The single-graph binding is
+deliberately tied to the reviewed model, driver/compiler provenance, and native
+graph hash; other stacks fail closed rather than guessing patch locations.
+
+The YOLO example has additional Python dependencies, including OpenVINO and
+Ultralytics. They are isolated under `contrib/yolo11-nms/` and are not
+requirements of the core npunlock package.
+
 ## Quick example
 
 This complete FP32 GELU example embeds the C kernel in Python, places it in an
