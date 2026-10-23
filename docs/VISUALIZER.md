@@ -44,7 +44,7 @@ The serialization envelope is `npunlock.artifact-graph`, version 1.
 
 - An `Artifact` has a stable ID, display name, byte size, SHA-256 digest, and
   immutable bytes or a file source. A file is range-read and rejected if its
-  size changes after graph construction.
+  size or modification timestamp changes after graph construction.
 - A `Span` is a nonempty file-relative half-open interval `[start, end)` and
   always identifies its artifact. It never represents a virtual address.
 - A `Node` has a stable ID, label, kind, semantic category, optional JSON

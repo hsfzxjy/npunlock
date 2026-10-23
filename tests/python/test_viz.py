@@ -139,6 +139,29 @@ def test_npunlock_fixture_annotations() -> None:
     assert graph.nodes[exact[0].target].spans[0].artifact.id == "native"
 
 
+def test_dense_model() -> None:
+    graph = ArtifactGraph("Dense annotations")
+    artifact = graph.artifact("dense", data=bytes(range(256)) * 32)
+    root = graph.node("root", label="Root with a long name " + "x" * 160)
+    parent = root
+    for index in range(1_200):
+        start = index % (artifact.size - 64)
+        spans = [Span(artifact, start, start + 64)] if index < 900 else []
+        node = graph.node(
+            f"node-{index}",
+            label=f"Entity {index} " + "long-name-" * 12,
+            spans=spans,
+            parent=parent if index < 40 else root,
+        )
+        if index < 40:
+            parent = node
+    graph.link(graph.nodes["node-1199"], graph.nodes["node-1"], "dense_reference")
+    graph.validate()
+    serialized = graph.to_dict()
+    assert len(serialized["nodes"]) == 1_201
+    assert len(serialized["links"]) == 1
+
+
 def test_bundled_frontend() -> None:
     static = files("npunlock.viz").joinpath("static")
     for name in ("index.html", "app.css", "app.js"):
@@ -153,6 +176,7 @@ def main() -> None:
     test_model_and_serialization()
     test_server_ranges_and_lifecycle()
     test_npunlock_fixture_annotations()
+    test_dense_model()
     test_bundled_frontend()
     print("visualizer tests passed")
 

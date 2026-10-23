@@ -142,8 +142,7 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
         label=f"{artifact.name} · ELF{elf.elf_class * 32}",
         kind="ELF image",
         category="unknown",
-        spans=[Span(artifact, 0, len(data))],
-        properties={"byte_order": "little-endian"},
+        properties={"byte_order": "little-endian", "file_size": len(data)},
     )
     entry_offset, entry_size = (24, 4) if elf.elf_class == 1 else (24, 8)
     graph.node(
@@ -327,7 +326,7 @@ def _annotate_native_records(
                 "code_size": _field(artifact, data, offset + 0x0C, 4, display=hex(code_size)),
             },
             addresses={"SHAVE code": Address("SHAVE virtual", virtual_address)},
-            properties={"code_size_confidence": "execution-tested inference"},
+            properties={"extent evidence": "execution-tested inference"},
             parent=section_nodes[ranges.index],
         )
         range_nodes.append(node)

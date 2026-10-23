@@ -67,7 +67,7 @@ class Address:
 class Artifact:
     """One immutable binary source, backed by bytes or a file path."""
 
-    __slots__ = ("id", "name", "media_type", "size", "sha256", "_bytes", "_path")
+    __slots__ = ("id", "name", "media_type", "size", "sha256", "_bytes", "_path", "_mtime_ns")
 
     def __init__(
         self,
@@ -92,13 +92,16 @@ class Artifact:
             raise ValueError("artifact requires bytes or a file path")
         self._bytes: bytes | None = None
         self._path: Path | None = None
+        self._mtime_ns: int | None = None
         digest = hashlib.sha256()
         if path is not None:
             resolved = Path(path).expanduser().resolve(strict=True)
             if not resolved.is_file():
                 raise ValueError(f"artifact path is not a file: {resolved}")
             self._path = resolved
-            self.size = resolved.stat().st_size
+            source_stat = resolved.stat()
+            self.size = source_stat.st_size
+            self._mtime_ns = source_stat.st_mtime_ns
             with resolved.open("rb") as stream:
                 while chunk := stream.read(1024 * 1024):
                     digest.update(chunk)
@@ -123,8 +126,9 @@ class Artifact:
         if self._bytes is not None:
             return self._bytes[start:end]
         assert self._path is not None
-        if self._path.stat().st_size != self.size:
-            raise OSError(f"artifact changed size after graph construction: {self._path}")
+        source_stat = self._path.stat()
+        if source_stat.st_size != self.size or source_stat.st_mtime_ns != self._mtime_ns:
+            raise OSError(f"artifact changed after graph construction: {self._path}")
         with self._path.open("rb") as stream:
             stream.seek(start)
             value = stream.read(end - start)
