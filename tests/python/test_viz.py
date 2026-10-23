@@ -186,6 +186,10 @@ def test_bundled_frontend() -> None:
     javascript = static.joinpath("app.js").read_text(encoding="utf-8")
     assert "class Viewer" in javascript
     assert "api/artifacts/" in javascript
+    assert "field-highlight" in javascript
+    stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
+    assert "color-scheme: light" in stylesheet
+    assert "color-scheme: dark" not in stylesheet
 
 
 def main() -> None:

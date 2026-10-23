@@ -119,16 +119,19 @@ class Viewer {
             for (const span of node.spans) {
                 this.spans.get(span.artifact)?.push({ ...span, node, length: span.end - span.start });
             }
-            for (const field of Object.values(node.fields)) {
+            for (const [fieldName, field] of Object.entries(node.fields)) {
                 for (const span of field.spans ?? []) {
-                    this.spans.get(span.artifact)?.push({ ...span, node, length: span.end - span.start });
+                    this.spans.get(span.artifact)?.push({ ...span, node, length: span.end - span.start, fieldName });
                 }
             }
         }
         for (const values of this.spans.values())
             values.sort((a, b) => a.start - b.start || a.end - b.end);
+        for (const node of graph.nodes) {
+            if ((this.children.get(node.id)?.length ?? 0) > 0)
+                this.expanded.add(node.id);
+        }
         for (const root of this.roots) {
-            this.expanded.add(root.id);
             this.assignDepth(root, 0);
         }
         const first = graph.artifacts[0];
@@ -498,8 +501,11 @@ class Viewer {
             for (let offset = Math.max(start, span.start); offset < Math.min(end, span.end); offset += 1)
                 cover[offset - start]?.push(span);
         }
-        for (const values of cover)
-            values.sort((a, b) => a.length - b.length || (this.depths.get(b.node.id) ?? 0) - (this.depths.get(a.node.id) ?? 0));
+        for (const values of cover) {
+            values.sort((a, b) => a.length - b.length
+                || Number(Boolean(b.fieldName)) - Number(Boolean(a.fieldName))
+                || (this.depths.get(b.node.id) ?? 0) - (this.depths.get(a.node.id) ?? 0));
+        }
         const fragment = document.createDocumentFragment();
         for (let rowIndex = first; rowIndex < last; rowIndex += 1) {
             const row = document.createElement("div");
@@ -537,12 +543,23 @@ class Viewer {
         }
         cell.textContent = ascii ? printable(value) : value.toString(16).padStart(2, "0");
         const primary = annotations[0];
+        const selectedField = this.current.nodeId
+            ? annotations.find(span => span.node.id === this.current.nodeId && span.fieldName)
+            : undefined;
         if (primary) {
             cell.classList.add("annotated");
-            cell.style.setProperty("--semantic-color", this.categoryColor(primary.node.category));
+            const semanticColor = selectedField?.fieldName
+                ? this.fieldColor(selectedField.node, selectedField.fieldName)
+                : this.categoryColor(primary.node.category);
+            cell.style.setProperty("--semantic-color", semanticColor);
+            if (selectedField)
+                cell.classList.add("field-highlight");
             if (this.hoveredNode && annotations.some(span => span.node.id === this.hoveredNode))
                 cell.classList.add("hovered");
-            cell.title = annotations.map(span => span.node.label).filter((value, index, all) => all.indexOf(value) === index).join("\n");
+            cell.title = annotations
+                .map(span => span.fieldName ? `${span.node.label} · ${span.fieldName}` : span.node.label)
+                .filter((value, index, all) => all.indexOf(value) === index)
+                .join("\n");
         }
         if (offset === this.current.offset)
             cell.classList.add("selected");
@@ -563,6 +580,11 @@ class Viewer {
     }
     categoryColor(category) {
         return this.categories.get(category)?.color ?? "#5e6670";
+    }
+    fieldColor(node, fieldName) {
+        const index = Math.max(0, Object.keys(node.fields).indexOf(fieldName));
+        const hue = Math.round((index * 137.508 + 8) % 360);
+        return `hsl(${hue} 48% 42%)`;
     }
     covering(artifactId, offset) {
         const values = (this.spans.get(artifactId) ?? []).filter(span => span.start <= offset && offset < span.end);
@@ -596,17 +618,29 @@ class Viewer {
             if (Object.keys(node.fields).length) {
                 const section = this.section("fields");
                 for (const [name, field] of Object.entries(node.fields)) {
-                    if (field.spans?.length) {
-                        const button = document.createElement("button");
-                        button.type = "button";
-                        button.className = "jump";
-                        button.textContent = `${name}  ${field.display ?? displayValue(field.value)}`;
-                        button.title = "Navigate to field bytes";
-                        button.addEventListener("click", () => this.navigateSpan(field.spans[0], node.id));
-                        section.append(button);
+                    const spans = field.spans ?? [];
+                    const element = document.createElement(spans.length ? "button" : "div");
+                    if (element instanceof HTMLButtonElement) {
+                        element.type = "button";
+                        element.title = "Navigate to field bytes";
+                        element.addEventListener("click", () => this.navigateSpan(spans[0], node.id));
                     }
-                    else
-                        section.append(this.kv(name, field.display ?? displayValue(field.value)));
+                    element.className = `field-row${spans.length ? " jump" : ""}`;
+                    const mark = document.createElement("span");
+                    mark.className = "field-mark";
+                    mark.style.background = this.fieldColor(node, name);
+                    const label = document.createElement("span");
+                    label.className = "field-name";
+                    label.textContent = name;
+                    const value = document.createElement("span");
+                    value.className = "field-value";
+                    value.textContent = field.display ?? displayValue(field.value);
+                    const size = document.createElement("span");
+                    size.className = "field-size";
+                    const byteSize = spans.reduce((total, span) => total + span.end - span.start, 0);
+                    size.textContent = spans.length ? `${byteSize} byte${byteSize === 1 ? "" : "s"}` : "size unknown";
+                    element.append(mark, label, value, size);
+                    section.append(element);
                 }
                 this.inspector.append(section);
             }

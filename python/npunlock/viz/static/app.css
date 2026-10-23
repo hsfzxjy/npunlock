@@ -1,19 +1,19 @@
 :root {
-  color-scheme: dark;
-  --bg: #111418;
-  --surface-1: #15191e;
-  --surface-2: #191e24;
-  --surface-3: #20262d;
-  --text: #d3d8df;
-  --text-dim: #8d96a2;
-  --text-faint: #69727e;
-  --border: #2a3139;
-  --border-strong: #39434e;
-  --select: #345a7d;
-  --select-line: #6da4d1;
-  --focus: #8ab8df;
-  --hover: rgba(214, 224, 235, 0.09);
-  --error: #d88484;
+  color-scheme: light;
+  --bg: #ffffff;
+  --surface-1: #f7f8fa;
+  --surface-2: #eff2f5;
+  --surface-3: #e7ebf0;
+  --text: #20262d;
+  --text-dim: #596470;
+  --text-faint: #7a8591;
+  --border: #d9dee5;
+  --border-strong: #bcc5cf;
+  --select: #2f709f;
+  --select-line: #397fae;
+  --focus: #176da8;
+  --hover: rgba(28, 45, 61, 0.06);
+  --error: #a13f3f;
   --metadata: #6f83a6;
   --code: #8a7652;
   --data: #587d70;
@@ -92,7 +92,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .artifact-tab[aria-selected="true"] {
   background: var(--surface-1);
   border-top-color: var(--select-line);
-  color: #eef3f8;
+  color: var(--text);
 }
 
 .offset-form { display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
@@ -141,7 +141,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   user-select: none;
 }
 .tree-row:hover { background: var(--hover); }
-.tree-row.selected { background: rgba(52, 90, 125, 0.48); border-left-color: var(--select-line); }
+.tree-row.selected { background: rgba(47, 112, 159, 0.14); border-left-color: var(--select-line); }
 .tree-expander {
   width: 18px;
   min-width: 18px;
@@ -190,7 +190,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .hex-space { width: 78ch; min-width: 100%; }
 .hex-rows { position: absolute; inset: 0 auto auto 0; min-width: 78ch; width: 100%; pointer-events: none; }
 .hex-row { position: absolute; left: 0; right: 0; height: var(--row-height); pointer-events: auto; }
-.hex-row:hover { background: rgba(255,255,255,.018); }
+.hex-row:hover { background: rgba(28, 45, 61, .025); }
 .row-offset { color: var(--text-faint); text-align: right; }
 .hex-cells, .ascii-cells { display: flex; height: 18px; align-items: stretch; }
 .hex-cells { gap: .42ch; }
@@ -215,7 +215,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 }
 .byte.hovered { background: color-mix(in srgb, var(--semantic-color) 38%, transparent); }
 .byte.selected { color: #fff; background: var(--select); outline: 1px solid var(--select-line); z-index: 1; }
-.byte.range-selected:not(.selected) { background: rgba(52, 90, 125, .55); }
+.byte.range-selected:not(.selected) { background: rgba(47, 112, 159, .16); box-shadow: inset 0 1px var(--select-line), inset 0 -1px var(--select-line); }
+.byte.field-highlight { background: color-mix(in srgb, var(--semantic-color) 25%, transparent); border-bottom-color: var(--semantic-color); }
+.byte.field-highlight.range-selected:not(.selected) { background: color-mix(in srgb, var(--semantic-color) 25%, transparent); }
 .byte.empty { color: transparent; pointer-events: none; }
 
 .status {
@@ -246,6 +248,20 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .kv { display: grid; grid-template-columns: minmax(72px, 38%) minmax(0, 1fr); gap: 3px 8px; padding: 2px 0; }
 .kv-key { color: var(--text-dim); overflow-wrap: anywhere; }
 .kv-value { font-family: var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.field-row {
+  display: grid;
+  grid-template-columns: 8px minmax(66px, 32%) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  min-height: 23px;
+  padding: 2px 4px;
+  text-align: left;
+}
+.field-mark { width: 8px; height: 8px; align-self: center; }
+.field-name { color: var(--text-dim); overflow-wrap: anywhere; }
+.field-value { font-family: var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.field-size { color: var(--text-faint); font-family: var(--mono); white-space: nowrap; }
 .jump {
   display: block;
   width: 100%;
@@ -257,6 +273,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   white-space: nowrap;
   color: var(--text);
 }
+.field-row.jump { display: grid; overflow: visible; text-overflow: clip; white-space: normal; }
 .jump .ref-kind { color: var(--text-dim); margin-right: 5px; }
 .muted { color: var(--text-faint); }
 .error { color: var(--error); padding: 10px; white-space: pre-wrap; }

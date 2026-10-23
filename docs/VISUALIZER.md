@@ -51,13 +51,18 @@ The serialization envelope is `npunlock.artifact-graph`, version 1.
   properties, zero or more spans, fields, and explicitly named non-file
   `Address` values. Logical nodes need no byte span; one node may cover several
   noncontiguous spans.
-- `Field` optionally identifies its exact byte spans.
+- `Field` optionally identifies its exact byte spans. The inspector reports the
+  total annotated byte size for each field and uses a stable, distinct field
+  color in both the field row and selected entity's hex bytes. Fields without
+  exact spans explicitly show that their size is unknown.
 - `contain(parent, child)` defines the single-parent hierarchy. `link(source,
   target, kind)` adds arbitrary typed relationships independently of that
   hierarchy. Links may cross artifacts.
 - Nested and overlapping spans are valid. The hex view chooses the shortest
   covering span as the primary color, then the deeper hierarchy node. The
   inspector keeps every covering entity reachable.
+- The hierarchy is fully expanded on first load so every entry is immediately
+  present; branches can then be collapsed with the mouse or keyboard.
 
 `graph.dumps(include_data=True)` creates a portable JSON document with base64
 artifact data. The default omits bytes, matching the browser metadata endpoint;
