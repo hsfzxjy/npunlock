@@ -683,9 +683,11 @@ different graph structure, not that the C expression itself is invalid.
   supported custom-kernel family.
 - [XGBoost contribution](../contrib/xgboost/README.md) shows a deliberately
   narrow tree-ensemble workload, including a two-part runtime forest whose two
-  NPU traversals are chained by copying validated raw margins into the second
-  input payload. Its `XGBoostRuntime` facade automatically selects the validated
-  one- or two-stage backend and chunks larger host batches. The partitioned
-  path is two explicit graph executions per chunk, not a fused graph.
+  NPU traversals are connected inside one graph: the first ACT node forwards
+  the original features and partial margins directly to the second. Its
+  `XGBoostRuntime` facade automatically selects the validated single- or
+  connected two-stage backend and chunks larger host batches. Both paths use
+  one graph execution per chunk; the two-node path is a narrow positional
+  contract, not a claim of arbitrary graph fusion.
 
 [Back to documentation index](README.md)

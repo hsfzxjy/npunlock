@@ -7,8 +7,8 @@ import numpy as np
 from .model import Ensemble, load_ensemble
 from .packing import Predictions
 from .runtime import (
+    ConnectedRuntimeNpuXGBoost,
     RUNTIME_MAX_TOTAL_NODES,
-    PartitionedRuntimeNpuXGBoost,
     RuntimeNpuXGBoost,
     partitioned_runtime_batch_capacity,
     partition_runtime_ensemble,
@@ -21,7 +21,7 @@ def runtime_backend_kind(model: Ensemble) -> str:
     if model.node_count <= RUNTIME_MAX_TOTAL_NODES:
         return "single"
     partition_runtime_ensemble(model)
-    return "partitioned"
+    return "connected"
 
 
 class XGBoostRuntime:
@@ -47,8 +47,8 @@ class XGBoostRuntime:
         self,
         ensemble: Ensemble,
         kind: str,
-    ) -> RuntimeNpuXGBoost | PartitionedRuntimeNpuXGBoost:
-        backend_type = RuntimeNpuXGBoost if kind == "single" else PartitionedRuntimeNpuXGBoost
+    ) -> RuntimeNpuXGBoost | ConnectedRuntimeNpuXGBoost:
+        backend_type = RuntimeNpuXGBoost if kind == "single" else ConnectedRuntimeNpuXGBoost
         return backend_type(
             ensemble,
             movi_dll_dir=self._movi_dll_dir,

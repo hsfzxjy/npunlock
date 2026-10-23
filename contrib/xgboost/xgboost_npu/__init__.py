@@ -11,8 +11,10 @@ from .packing import (
     unpack_predictions,
 )
 from .runtime import (
+    ConnectedRuntimeNpuXGBoost,
     PartitionedRuntimeNpuXGBoost,
     RuntimeNpuXGBoost,
+    pack_connected_runtime_features,
     pack_runtime_features,
     pack_runtime_model,
     partitioned_runtime_batch_capacity,
@@ -25,6 +27,7 @@ __all__ = [
     "FP16_TRANSPORT",
     "FP32_TRANSPORT",
     "Predictions",
+    "ConnectedRuntimeNpuXGBoost",
     "PartitionedRuntimeNpuXGBoost",
     "RuntimeNpuXGBoost",
     "Tree",
@@ -32,6 +35,7 @@ __all__ = [
     "XGBoostRuntime",
     "generate_kernel_source",
     "load_ensemble",
+    "pack_connected_runtime_features",
     "pack_features",
     "pack_runtime_features",
     "pack_runtime_model",

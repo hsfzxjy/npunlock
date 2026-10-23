@@ -211,6 +211,177 @@ void controlled_act(unsigned layerParams) {{
 )
 
 
+RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE: bytes = (
+    f"""
+#include <npunlock/npu3720_kernel.h>
+
+#define XGB_CHUNK_ELEMENTS {RUNTIME_CHUNK_ELEMENTS}u
+#define XGB_FEATURE_HEADER {HEADER_WORDS}u
+#define XGB_MODEL_HEADER {RUNTIME_MODEL_HEADER_ELEMENTS}u
+#define XGB_MODEL_MAGIC {RUNTIME_MODEL_MAGIC}u
+#define XGB_MAX_FEATURES {RUNTIME_MAX_FEATURES}u
+#define XGB_MAX_TREE_NODES {RUNTIME_MAX_NODES_PER_TREE}u
+#define XGB_MAX_TOTAL_NODES {RUNTIME_MAX_TOTAL_NODES}u
+#define XGB_FEATURE_MASK {_FEATURE_MASK}u
+#define XGB_CHILD_MASK {_CHILD_MASK}u
+#define XGB_LEAF_FEATURE {_LEAF_FEATURE}u
+#define XGB_LEFT_SHIFT {_LEFT_SHIFT}u
+#define XGB_RIGHT_SHIFT {_RIGHT_SHIFT}u
+#define XGB_DEFAULT_SHIFT {_DEFAULT_SHIFT}u
+#define XGB_TREE_SIZE_SHIFT {_TREE_SIZE_SHIFT}u
+
+static int xgb_exact_uint(float value, unsigned maximum, unsigned *result) {{
+    unsigned converted;
+    if (!(value >= 0.0f) || value > (float)maximum) {{
+        return 0;
+    }}
+    converted = (unsigned)value;
+    if ((float)converted != value) {{
+        return 0;
+    }}
+    *result = converted;
+    return 1;
+}}
+
+static int xgb_margin(
+    const float *features,
+    const float *model,
+    unsigned sample,
+    unsigned feature_count,
+    unsigned tree_count,
+    unsigned node_count,
+    float *result) {{
+    unsigned root = 0u;
+    float margin = model[4];
+    for (unsigned tree = 0u; tree < tree_count; ++tree) {{
+        unsigned root_metadata;
+        unsigned tree_nodes;
+        unsigned node = 0u;
+        int found_leaf = 0;
+        if (root >= node_count || !xgb_exact_uint(
+                model[XGB_MODEL_HEADER + root * 2u], 0x7ffffu, &root_metadata)) {{
+            return 0;
+        }}
+        tree_nodes = ((root_metadata >> XGB_TREE_SIZE_SHIFT) & XGB_CHILD_MASK) + 1u;
+        if (root + tree_nodes > node_count) {{
+            return 0;
+        }}
+        for (unsigned step = 0u; step < XGB_MAX_TREE_NODES; ++step) {{
+            unsigned metadata;
+            unsigned feature;
+            unsigned word;
+            float split_or_leaf;
+            if (node >= tree_nodes) {{
+                return 0;
+            }}
+            word = XGB_MODEL_HEADER + (root + node) * 2u;
+            if (!xgb_exact_uint(model[word], 0x7ffffu, &metadata)) {{
+                return 0;
+            }}
+            feature = metadata & XGB_FEATURE_MASK;
+            split_or_leaf = model[word + 1u];
+            if (feature == XGB_LEAF_FEATURE) {{
+                margin += split_or_leaf;
+                found_leaf = 1;
+                break;
+            }}
+            if (feature >= feature_count) {{
+                return 0;
+            }}
+            unsigned left = (metadata >> XGB_LEFT_SHIFT) & XGB_CHILD_MASK;
+            unsigned right = (metadata >> XGB_RIGHT_SHIFT) & XGB_CHILD_MASK;
+            float value = features[
+                XGB_FEATURE_HEADER + sample * feature_count + feature
+            ];
+            if (left >= tree_nodes || right >= tree_nodes) {{
+                return 0;
+            }}
+            if (value != value) {{
+                node = ((metadata >> XGB_DEFAULT_SHIFT) & 1u) != 0u ? left : right;
+            }} else {{
+                node = value < split_or_leaf ? left : right;
+            }}
+        }}
+        if (!found_leaf) {{
+            return 0;
+        }}
+        root += tree_nodes;
+    }}
+    if (root != node_count) {{
+        return 0;
+    }}
+    *result = margin;
+    return 1;
+}}
+
+void controlled_act(unsigned layerParams) {{
+    act_abi_invocation invocation;
+    const float *features;
+    const float *model;
+    float *output;
+    unsigned sample_count;
+    unsigned feature_count;
+    unsigned total_tree_count;
+    unsigned magic;
+    unsigned tree_count;
+    unsigned node_count;
+    unsigned model_feature_count;
+    ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
+    if (invocation.element_count != XGB_CHUNK_ELEMENTS) {{
+        return;
+    }}
+    features = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
+    model = ACT_ABI_INPUT_PTR32(const float, invocation, 1u);
+    output = ACT_ABI_OUTPUT_PTR32(float, invocation, 2u);
+    if (!xgb_exact_uint(features[0],
+            (XGB_CHUNK_ELEMENTS - XGB_FEATURE_HEADER) / 2u, &sample_count) ||
+        !xgb_exact_uint(features[1], XGB_MAX_FEATURES, &feature_count) ||
+        feature_count == 0u ||
+        sample_count >
+            (XGB_CHUNK_ELEMENTS - XGB_FEATURE_HEADER) / (feature_count + 1u) ||
+        !xgb_exact_uint(features[2], 64u, &total_tree_count) ||
+        !xgb_exact_uint(model[0], XGB_MODEL_MAGIC, &magic) || magic != XGB_MODEL_MAGIC ||
+        !xgb_exact_uint(model[1], 64u, &tree_count) || tree_count == 0u ||
+        tree_count >= total_tree_count ||
+        !xgb_exact_uint(model[2], XGB_MAX_TOTAL_NODES, &node_count) || node_count == 0u ||
+        !xgb_exact_uint(model[3], XGB_MAX_FEATURES, &model_feature_count) ||
+        model_feature_count != feature_count) {{
+        return;
+    }}
+    for (unsigned index = 0u; index < XGB_CHUNK_ELEMENTS; ++index) {{
+        output[index] = 0.0f;
+    }}
+    output[0] = (float)sample_count;
+    output[1] = (float)feature_count;
+    output[2] = (float)tree_count;
+    output[3] = (float)total_tree_count;
+    unsigned feature_elements = sample_count * feature_count;
+    for (unsigned index = 0u; index < feature_elements; ++index) {{
+        output[XGB_FEATURE_HEADER + index] = features[XGB_FEATURE_HEADER + index];
+    }}
+    unsigned partial_base = XGB_FEATURE_HEADER + feature_elements;
+    for (unsigned sample = 0u; sample < sample_count; ++sample) {{
+        float margin;
+        if (!xgb_margin(
+                features,
+                model,
+                sample,
+                feature_count,
+                tree_count,
+                node_count,
+                &margin)) {{
+            output[3] = -1.0f;
+            return;
+        }}
+        output[partial_base + sample] = margin;
+    }}
+}}
+""".encode(
+        "utf-8"
+    )
+)
+
+
 RUNTIME_CHAIN_KERNEL_SOURCE: bytes = (
     f"""
 #define MLIBM_DEFINE_LINK_COMPAT 1
@@ -435,6 +606,33 @@ def pack_runtime_features(features: object, *, feature_count: int) -> np.ndarray
     return _replicate(chunk)
 
 
+def pack_connected_runtime_features(
+    features: object,
+    *,
+    feature_count: int,
+    total_tree_count: int,
+) -> np.ndarray:
+    values = np.asarray(features, dtype=np.float32)
+    if values.ndim != 2 or values.shape[1] != feature_count:
+        raise ValueError(f"features must have shape (N, {feature_count})")
+    if np.isinf(values).any():
+        raise ValueError("features may contain finite values or NaN, but not infinity")
+    capacity = partitioned_runtime_batch_capacity(feature_count)
+    if values.shape[0] > capacity:
+        raise ValueError(f"batch size {values.shape[0]} exceeds connected runtime capacity {capacity}")
+    if not 1 < total_tree_count <= 64:
+        raise ValueError("connected runtime total_tree_count must be between 2 and 64")
+    chunk = np.zeros(RUNTIME_CHUNK_ELEMENTS, dtype=np.float32)
+    chunk[:HEADER_WORDS] = (
+        values.shape[0],
+        feature_count,
+        total_tree_count,
+        0,
+    )
+    chunk[HEADER_WORDS : HEADER_WORDS + values.size] = values.reshape(-1)
+    return _replicate(chunk)
+
+
 def pack_runtime_model(ensemble: Ensemble) -> np.ndarray:
     if not 0 < ensemble.feature_count <= RUNTIME_MAX_FEATURES:
         raise ValueError(f"runtime model supports at most {RUNTIME_MAX_FEATURES} features")
@@ -622,6 +820,51 @@ def _pack_chained_runtime_features(
     return _replicate(chunk)
 
 
+def _validate_runtime_groups(prepared: npu.PreparedGraph, expected_count: int) -> None:
+    if len(prepared.groups) != expected_count:
+        raise RuntimeError(
+            f"runtime XGBoost carrier exposed {len(prepared.groups)} ACT groups, " f"expected {expected_count}"
+        )
+    for index, group in enumerate(prepared.groups):
+        if group.input_dtypes != ("f32", "f32") or group.output_dtype != "f32":
+            raise RuntimeError(
+                f"runtime XGBoost carrier group {index} dtype changed: "
+                f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
+            )
+        if (
+            group.per_invocation_input_element_counts
+            != (
+                RUNTIME_CHUNK_ELEMENTS,
+                RUNTIME_CHUNK_ELEMENTS,
+            )
+            or group.per_invocation_output_element_count != RUNTIME_CHUNK_ELEMENTS
+        ):
+            raise RuntimeError(
+                f"runtime XGBoost carrier group {index} contract changed: "
+                f"inputs={group.per_invocation_input_element_counts!r}, "
+                f"output={group.per_invocation_output_element_count!r}"
+            )
+        if len(group.targets) != RUNTIME_REPLICAS:
+            raise RuntimeError(
+                f"runtime XGBoost carrier group {index} exposed {len(group.targets)} targets, "
+                f"expected {RUNTIME_REPLICAS}"
+            )
+
+
+def _summarize_patch_report(payload: bytes) -> dict[str, object]:
+    report = json.loads(payload.decode("utf-8"))
+    return {
+        "schema": report["schema"],
+        "input_graph_sha256": report["input_graph_sha256"],
+        "shave_elf_sha256": report["shave_elf_sha256"],
+        "output_graph_sha256": report["output_graph_sha256"],
+        "graph_contract": report["graph_contract"],
+        "append": report["append"],
+        "validation": report["validation"],
+        "patched_target_count": len(report["targets"]),
+    }
+
+
 class RuntimeNpuXGBoost:
     """Binary XGBoost inference with a complete runtime-supplied FP32 forest."""
 
@@ -687,31 +930,7 @@ class RuntimeNpuXGBoost:
             build_flags="",
             timeout_ms=timeout_ms,
         )
-        if len(prepared.groups) != 1:
-            raise RuntimeError(f"runtime XGBoost carrier exposed {len(prepared.groups)} ACT groups, expected one")
-        group = prepared.groups[0]
-        if group.input_dtypes != ("f32", "f32") or group.output_dtype != "f32":
-            raise RuntimeError(
-                "runtime XGBoost carrier dtype changed: "
-                f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
-            )
-        if (
-            group.per_invocation_input_element_counts
-            != (
-                RUNTIME_CHUNK_ELEMENTS,
-                RUNTIME_CHUNK_ELEMENTS,
-            )
-            or group.per_invocation_output_element_count != RUNTIME_CHUNK_ELEMENTS
-        ):
-            raise RuntimeError(
-                "runtime XGBoost carrier contract changed: "
-                f"inputs={group.per_invocation_input_element_counts!r}, "
-                f"output={group.per_invocation_output_element_count!r}"
-            )
-        if len(group.targets) != RUNTIME_REPLICAS:
-            raise RuntimeError(
-                f"runtime XGBoost carrier exposed {len(group.targets)} targets, " f"expected {RUNTIME_REPLICAS}"
-            )
+        _validate_runtime_groups(prepared, 1)
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
@@ -764,17 +983,7 @@ class RuntimeNpuXGBoost:
 
     @property
     def patch_evidence(self) -> dict[str, object]:
-        report = json.loads(self.program.patch_reports[0].decode("utf-8"))
-        return {
-            "schema": report["schema"],
-            "input_graph_sha256": report["input_graph_sha256"],
-            "shave_elf_sha256": report["shave_elf_sha256"],
-            "output_graph_sha256": report["output_graph_sha256"],
-            "graph_contract": report["graph_contract"],
-            "append": report["append"],
-            "validation": report["validation"],
-            "patched_target_count": len(report["targets"]),
-        }
+        return _summarize_patch_report(self.program.patch_reports[0])
 
     @property
     def build_manifest(self) -> dict[str, object] | None:
@@ -898,6 +1107,186 @@ class RuntimeNpuXGBoost:
         self.program.close()
 
     def __enter__(self) -> "RuntimeNpuXGBoost":
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.close()
+
+
+class ConnectedRuntimeNpuXGBoost:
+    """Two forest traversals connected inside one NPU graph execution."""
+
+    def __init__(
+        self,
+        model: str | Path | Ensemble,
+        *,
+        movi_dll_dir: str | Path,
+        native_dir: str | Path | None = None,
+        timeout_ms: int = 20_000,
+    ):
+        self.ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
+        self.partitions = partition_runtime_ensemble(self.ensemble)
+        self.program: npu.Program | None = None
+        self.shared_inputs: dict[str, np.ndarray] = {}
+        self.shared_output: np.ndarray | None = None
+        try:
+            started = perf_counter()
+            self.packed_models = tuple(pack_runtime_model(partition) for partition in self.partitions)
+            self.model_pack_ms = (perf_counter() - started) * 1000.0
+            npu.configure(movi_dll_dir=movi_dll_dir)
+            features = npu.input(
+                "xgboost_features",
+                shape=(1, RUNTIME_LOGICAL_ELEMENTS),
+                dtype="f32",
+            )
+            forest_a = npu.input(
+                "xgboost_forest_a",
+                shape=(1, RUNTIME_LOGICAL_ELEMENTS),
+                dtype="f32",
+            )
+            forest_b = npu.input(
+                "xgboost_forest_b",
+                shape=(1, RUNTIME_LOGICAL_ELEMENTS),
+                dtype="f32",
+            )
+            partial = npu.custom(
+                features,
+                forest_a,
+                source=RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE,
+                carrier="Subtract",
+                _name="xgboost_partial",
+            )
+            output = npu.custom(
+                partial,
+                forest_b,
+                source=RUNTIME_CHAIN_KERNEL_SOURCE,
+                carrier="Subtract",
+                _name="xgboost_output",
+            )
+            prepared = npu.prepare(
+                npu.Graph(
+                    [features, forest_a, forest_b],
+                    [output],
+                    name="xgboost_runtime_connected",
+                ),
+                native_dir=native_dir,
+                build_flags="",
+                timeout_ms=timeout_ms,
+            )
+            _validate_runtime_groups(prepared, 2)
+            mapping_indices = tuple(
+                mapping.group_indices if mapping.status == "automatic" else () for mapping in prepared.mappings
+            )
+            if mapping_indices != ((0,), (1,)):
+                raise RuntimeError(
+                    "connected runtime carrier lost its one-to-one positional mapping: " f"{mapping_indices!r}"
+                )
+            plan = prepared.plan()
+            started = perf_counter()
+            self.program = plan.build(movi_dll_dir=movi_dll_dir)
+            self.build_ms = (perf_counter() - started) * 1000.0
+            if len(self.program.patch_reports) != 2:
+                raise RuntimeError(
+                    f"connected runtime produced {len(self.program.patch_reports)} patch reports, expected 2"
+                )
+            self.carrier_explanation = prepared.explain()
+            self.build_explanation = plan.explain()
+            self.shared_inputs = self.program.shared_inputs()
+            self.shared_output = self.program.shared_output()
+            started = perf_counter()
+            np.copyto(self.shared_inputs["xgboost_forest_a"], self.packed_models[0])
+            np.copyto(self.shared_inputs["xgboost_forest_b"], self.packed_models[1])
+            self.model_upload_ms = (perf_counter() - started) * 1000.0
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def partition_tree_counts(self) -> tuple[int, int]:
+        return (len(self.partitions[0].trees), len(self.partitions[1].trees))
+
+    @property
+    def partition_node_counts(self) -> tuple[int, int]:
+        return (self.partitions[0].node_count, self.partitions[1].node_count)
+
+    @property
+    def patch_evidence(self) -> dict[str, dict[str, object]]:
+        if self.program is None:
+            raise RuntimeError("connected runtime is closed")
+        return {
+            "traversal_a": _summarize_patch_report(self.program.patch_reports[0]),
+            "traversal_b": _summarize_patch_report(self.program.patch_reports[1]),
+        }
+
+    @property
+    def build_manifest(self) -> dict[str, object] | None:
+        if self.program is None:
+            raise RuntimeError("connected runtime is closed")
+        payload = self.program.artifact_manifest
+        return None if payload is None else json.loads(payload.decode("utf-8"))
+
+    def load_model(self, model: str | Path | Ensemble) -> None:
+        if self.program is None:
+            raise RuntimeError("connected runtime is closed")
+        ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
+        partitions = partition_runtime_ensemble(ensemble)
+        started = perf_counter()
+        packed_models = tuple(pack_runtime_model(partition) for partition in partitions)
+        model_pack_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
+        np.copyto(self.shared_inputs["xgboost_forest_a"], packed_models[0])
+        np.copyto(self.shared_inputs["xgboost_forest_b"], packed_models[1])
+        model_upload_ms = (perf_counter() - started) * 1000.0
+        self.ensemble = ensemble
+        self.partitions = partitions
+        self.packed_models = packed_models
+        self.model_pack_ms = model_pack_ms
+        self.model_upload_ms = model_upload_ms
+
+    def run(self, features: object) -> tuple[Predictions, dict[str, float]]:
+        if self.program is None or self.shared_output is None:
+            raise RuntimeError("connected runtime is closed")
+        values = np.asarray(features, dtype=np.float32)
+        started = perf_counter()
+        packed = pack_connected_runtime_features(
+            values,
+            feature_count=self.ensemble.feature_count,
+            total_tree_count=len(self.ensemble.trees),
+        )
+        pack_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
+        np.copyto(self.shared_inputs["xgboost_features"], packed)
+        upload_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
+        outputs = self.program.run(
+            self.shared_inputs,
+            outputs={"xgboost_output": self.shared_output},
+        )
+        graphinfer_wall_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
+        copied = np.array(outputs["xgboost_output"], copy=True)
+        download_ms = (perf_counter() - started) * 1000.0
+        predictions = unpack_runtime_predictions(
+            copied,
+            expected_samples=values.shape[0],
+            feature_count=self.ensemble.feature_count,
+            tree_count=len(self.ensemble.trees),
+        )
+        return predictions, {
+            "pack_ms": pack_ms,
+            "upload_ms": upload_ms,
+            "graphinfer_wall_ms": graphinfer_wall_ms,
+            "download_ms": download_ms,
+        }
+
+    def close(self) -> None:
+        self.shared_inputs.clear()
+        self.shared_output = None
+        if self.program is not None:
+            self.program.close()
+            self.program = None
+
+    def __enter__(self) -> "ConnectedRuntimeNpuXGBoost":
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:

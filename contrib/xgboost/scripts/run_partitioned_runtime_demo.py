@@ -20,10 +20,10 @@ from xgboost_npu.model import load_ensemble
 from xgboost_npu.runtime import (
     RUNTIME_CHAIN_KERNEL_SOURCE,
     RUNTIME_CHUNK_ELEMENTS,
-    RUNTIME_KERNEL_SOURCE,
+    RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE,
     RUNTIME_LOGICAL_ELEMENTS,
     RUNTIME_MAX_TOTAL_NODES,
-    PartitionedRuntimeNpuXGBoost,
+    ConnectedRuntimeNpuXGBoost,
     partitioned_runtime_batch_capacity,
 )
 
@@ -43,7 +43,7 @@ def sha256(path: Path) -> str:
 
 def options() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a two-part runtime-loaded XGBoost forest on ACT-SHAVE"
+        description="Run a connected two-part runtime-loaded XGBoost forest on ACT-SHAVE"
     )
     parser.add_argument(
         "--model-dir",
@@ -53,7 +53,7 @@ def options() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("contrib/xgboost/outputs/partitioned-runtime-report.json"),
+        default=Path("contrib/xgboost/outputs/connected-runtime-report.json"),
     )
     parser.add_argument(
         "--movi-dll-dir",
@@ -93,7 +93,7 @@ def main() -> int:
     parser_margins = ensemble.predict_margin(features)
     capacity = partitioned_runtime_batch_capacity(ensemble.feature_count)
 
-    with PartitionedRuntimeNpuXGBoost(
+    with ConnectedRuntimeNpuXGBoost(
         ensemble,
         movi_dll_dir=args.movi_dll_dir,
         native_dir=args.native_dir,
@@ -132,10 +132,7 @@ def main() -> int:
             cpu_times: list[float] = []
             npu_times: list[float] = []
             graphinfer_times: list[float] = []
-            first_times: list[float] = []
-            second_times: list[float] = []
             pack_times: list[float] = []
-            transfer_pack_times: list[float] = []
             upload_times: list[float] = []
             download_times: list[float] = []
             for _ in range(args.runs):
@@ -146,27 +143,22 @@ def main() -> int:
                 _, timing = backend.run(batch)
                 npu_times.append((perf_counter() - started) * 1000.0)
                 graphinfer_times.append(timing["graphinfer_wall_ms"])
-                first_times.append(timing["traversal_a_graphinfer_wall_ms"])
-                second_times.append(timing["traversal_b_graphinfer_wall_ms"])
                 pack_times.append(timing["pack_ms"])
-                transfer_pack_times.append(timing["partial_margin_transfer_pack_ms"])
                 upload_times.append(timing["upload_ms"])
                 download_times.append(timing["download_ms"])
             benchmark[str(size)] = {
                 "official_xgboost_cpu_ms": summary(cpu_times),
                 "npunlock_end_to_end_ms": summary(npu_times),
-                "two_graphinfer_calls_wall_ms": summary(graphinfer_times),
-                "traversal_a_graphinfer_wall_ms": summary(first_times),
-                "traversal_b_graphinfer_wall_ms": summary(second_times),
-                "host_pack_and_validation_ms": summary(pack_times),
-                "host_partial_margin_transfer_pack_ms": summary(transfer_pack_times),
+                "one_graphinfer_call_wall_ms": summary(graphinfer_times),
+                "host_pack_ms": summary(pack_times),
                 "host_to_shared_buffers_ms": summary(upload_times),
                 "shared_outputs_to_host_ms": summary(download_times),
             }
 
-        provenance = backend.stages[0].program.ir_provenance
+        assert backend.program is not None
+        provenance = backend.program.ir_provenance
         report: dict[str, object] = {
-            "schema": "npunlock-xgboost-partitioned-runtime-demo-v2",
+            "schema": "npunlock-xgboost-connected-runtime-demo-v3",
             "model": {
                 "path": str(model_path),
                 "sha256": sha256(model_path),
@@ -180,7 +172,10 @@ def main() -> int:
                 name: importlib.metadata.version(name) for name in ("numpy", "xgboost")
             },
             "partitioned_runtime": {
-                "contract": "exactly two chained contiguous whole-tree NPU traversal stages",
+                "contract": (
+                    "exactly two connected contiguous whole-tree NPU traversal stages "
+                    "in one graph execution"
+                ),
                 "partition_tree_counts": list(backend.partition_tree_counts),
                 "partition_node_counts": list(backend.partition_node_counts),
                 "single_stage_maximum_nodes": RUNTIME_MAX_TOTAL_NODES,
@@ -189,9 +184,9 @@ def main() -> int:
                 "elements_per_invocation_input": RUNTIME_CHUNK_ELEMENTS,
                 "maximum_batch_size": capacity,
                 "host_role": (
-                    "packs/copies graph buffers and validates replicas; it copies stage A raw "
-                    "margins without arithmetic; traversal, margin addition, sigmoid, and class "
-                    "selection execute on the NPU"
+                    "packs/copies graph inputs and validates final replicas; stage A forwards "
+                    "features and raw margins directly to stage B inside the graph; traversal, "
+                    "margin addition, sigmoid, and class selection execute on the NPU"
                 ),
                 "rounding_note": (
                     "the partition boundary changes FP32 addition association relative to a "
@@ -214,24 +209,16 @@ def main() -> int:
             },
             "performance": benchmark,
             "build": {
-                "traversal_source_sha256": hashlib.sha256(RUNTIME_KERNEL_SOURCE).hexdigest(),
-                "traversal_source_bytes": len(RUNTIME_KERNEL_SOURCE),
-                "chained_traversal_source_sha256": hashlib.sha256(
-                    RUNTIME_CHAIN_KERNEL_SOURCE
-                ).hexdigest(),
+                "connected_first_source_sha256": hashlib.sha256(RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE).hexdigest(),
+                "connected_first_source_bytes": len(RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE),
+                "chained_traversal_source_sha256": hashlib.sha256(RUNTIME_CHAIN_KERNEL_SOURCE).hexdigest(),
                 "chained_traversal_source_bytes": len(RUNTIME_CHAIN_KERNEL_SOURCE),
                 "packed_partition_sha256": [
-                    hashlib.sha256(stage.packed_model.tobytes()).hexdigest()
-                    for stage in backend.stages
+                    hashlib.sha256(packed.tobytes()).hexdigest() for packed in backend.packed_models
                 ],
-                "build_ms": [
-                    backend.stages[0].build_ms,
-                    backend.stages[1].build_ms,
-                ],
-                "carriers": [
-                    backend.stages[0].carrier_explanation,
-                    backend.stages[1].carrier_explanation,
-                ],
+                "build_ms": backend.build_ms,
+                "carrier": backend.carrier_explanation,
+                "build_plan": backend.build_explanation,
                 "patch_evidence": backend.patch_evidence,
                 "ir_provenance": {
                     "driver_version": provenance.driver_version,
