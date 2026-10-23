@@ -290,12 +290,14 @@ typedef uint32_t(__cdecl *npunlock_ze_command_list_create_fn)(npunlock_ze_contex
                                                               const npunlock_ze_command_list_desc *,
                                                               npunlock_ze_command_list_handle *);
 typedef uint32_t(__cdecl *npunlock_ze_command_list_close_fn)(npunlock_ze_command_list_handle);
+typedef uint32_t(__cdecl *npunlock_ze_command_list_reset_fn)(npunlock_ze_command_list_handle);
 typedef uint32_t(__cdecl *npunlock_ze_command_list_destroy_fn)(npunlock_ze_command_list_handle);
 typedef uint32_t(__cdecl *npunlock_ze_fence_create_fn)(npunlock_ze_command_queue_handle,
                                                        const npunlock_ze_fence_desc *,
                                                        npunlock_ze_fence_handle *);
 typedef uint32_t(__cdecl *npunlock_ze_fence_destroy_fn)(npunlock_ze_fence_handle);
 typedef uint32_t(__cdecl *npunlock_ze_fence_synchronize_fn)(npunlock_ze_fence_handle, uint64_t);
+typedef uint32_t(__cdecl *npunlock_ze_fence_reset_fn)(npunlock_ze_fence_handle);
 typedef uint32_t(__cdecl *npunlock_ze_npu_get_extension_fn)(npunlock_ze_driver_handle,
                                                             npunlock_ze_driver_extension_npu *);
 typedef uint32_t(__cdecl *npunlock_ze_graph_device_properties_fn)(

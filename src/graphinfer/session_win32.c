@@ -47,10 +47,12 @@ typedef struct session_ze_functions {
   npunlock_ze_command_queue_execute_fn command_queue_execute;
   npunlock_ze_command_list_create_fn command_list_create;
   npunlock_ze_command_list_close_fn command_list_close;
+  npunlock_ze_command_list_reset_fn command_list_reset;
   npunlock_ze_command_list_destroy_fn command_list_destroy;
   npunlock_ze_fence_create_fn fence_create;
   npunlock_ze_fence_destroy_fn fence_destroy;
   npunlock_ze_fence_synchronize_fn fence_synchronize;
+  npunlock_ze_fence_reset_fn fence_reset;
 } session_ze_functions;
 
 typedef struct session_graph_functions {
@@ -89,6 +91,12 @@ struct graphinfer_session {
   uint32_t queue_ordinal;
   uint32_t init_stages;
   uint64_t fence_timeout_ns;
+  npunlock_ze_command_queue_handle submission_queue;
+  npunlock_ze_command_list_handle submission_list;
+  npunlock_ze_fence_handle submission_fence;
+  bool submission_list_closed;
+  bool submission_fence_submitted;
+  bool submission_failed;
 };
 
 typedef struct shared_buffer_impl {
@@ -134,9 +142,10 @@ static bool load_ze_functions(HMODULE library, session_ze_functions *ze) {
          LOAD("zeCommandQueueExecuteCommandLists", command_queue_execute) &&
          LOAD("zeCommandListCreate", command_list_create) &&
          LOAD("zeCommandListClose", command_list_close) &&
+         LOAD("zeCommandListReset", command_list_reset) &&
          LOAD("zeCommandListDestroy", command_list_destroy) &&
          LOAD("zeFenceCreate", fence_create) && LOAD("zeFenceDestroy", fence_destroy) &&
-         LOAD("zeFenceHostSynchronize", fence_synchronize);
+         LOAD("zeFenceHostSynchronize", fence_synchronize) && LOAD("zeFenceReset", fence_reset);
 #undef LOAD
 }
 
@@ -446,6 +455,15 @@ static void session_destroy(graphinfer_session *session) {
   }
   free(session->copied_allocations);
   free(session->arguments);
+  if (session->submission_fence != NULL && session->ze.fence_destroy != NULL) {
+    session->ze.fence_destroy(session->submission_fence);
+  }
+  if (session->submission_list != NULL && session->ze.command_list_destroy != NULL) {
+    session->ze.command_list_destroy(session->submission_list);
+  }
+  if (session->submission_queue != NULL && session->ze.command_queue_destroy != NULL) {
+    session->ze.command_queue_destroy(session->submission_queue);
+  }
   if (session->handle != NULL && session->graph.destroy != NULL) {
     session->graph.destroy(session->handle);
   }
@@ -470,64 +488,81 @@ static npunlock_status submit(graphinfer_session *session, bool initialize,
   npunlock_ze_command_queue_desc queue_desc = {0};
   npunlock_ze_command_list_desc list_desc = {0};
   npunlock_ze_fence_desc fence_desc = {0};
-  npunlock_ze_command_queue_handle queue = NULL;
-  npunlock_ze_command_list_handle list = NULL;
-  npunlock_ze_fence_handle fence = NULL;
-  npunlock_status status = NPUNLOCK_STATUS_DRIVER_FAILED;
   uint32_t code;
+  if (session->submission_failed) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_DRIVER_FAILED, "graphinfer.session",
+                                   "submission resources are unusable after a prior driver error");
+  }
   queue_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC;
   queue_desc.ordinal = session->queue_ordinal;
   list_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_COMMAND_LIST_DESC;
   list_desc.commandQueueGroupOrdinal = session->queue_ordinal;
   fence_desc.stype = NPUNLOCK_ZE_STRUCTURE_TYPE_FENCE_DESC;
-  code = session->ze.command_queue_create(session->context, session->device, &queue_desc, &queue);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    status = session_driver_error(diagnostic, "zeCommandQueueCreate", code);
-    goto done;
+  if (session->submission_queue == NULL) {
+    code = session->ze.command_queue_create(session->context, session->device, &queue_desc,
+                                            &session->submission_queue);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      return session_driver_error(diagnostic, "zeCommandQueueCreate", code);
+    }
   }
-  code = session->ze.command_list_create(session->context, session->device, &list_desc, &list);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    status = session_driver_error(diagnostic, "zeCommandListCreate", code);
-    goto done;
+  if (session->submission_list == NULL) {
+    code = session->ze.command_list_create(session->context, session->device, &list_desc,
+                                           &session->submission_list);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      return session_driver_error(diagnostic, "zeCommandListCreate", code);
+    }
   }
-  code = session->ze.fence_create(queue, &fence_desc, &fence);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    status = session_driver_error(diagnostic, "zeFenceCreate", code);
-    goto done;
+  if (session->submission_fence == NULL) {
+    code = session->ze.fence_create(session->submission_queue, &fence_desc,
+                                    &session->submission_fence);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      return session_driver_error(diagnostic, "zeFenceCreate", code);
+    }
   }
-  code = initialize ? session->graph.append_initialize(list, session->handle, NULL, 0, NULL)
-                    : session->graph.append_execute(list, session->handle, NULL, NULL, 0, NULL);
+  if (session->submission_list_closed) {
+    code = session->ze.command_list_reset(session->submission_list);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      session->submission_failed = true;
+      return session_driver_error(diagnostic, "zeCommandListReset", code);
+    }
+    session->submission_list_closed = false;
+  }
+  if (session->submission_fence_submitted) {
+    code = session->ze.fence_reset(session->submission_fence);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      session->submission_failed = true;
+      return session_driver_error(diagnostic, "zeFenceReset", code);
+    }
+    session->submission_fence_submitted = false;
+  }
+  code = initialize ? session->graph.append_initialize(session->submission_list, session->handle,
+                                                       NULL, 0, NULL)
+                    : session->graph.append_execute(session->submission_list, session->handle, NULL,
+                                                    NULL, 0, NULL);
   if (code != NPUNLOCK_ZE_SUCCESS) {
-    status = session_driver_error(
+    session->submission_failed = true;
+    return session_driver_error(
         diagnostic, initialize ? "pfnAppendGraphInitialize" : "pfnAppendGraphExecute", code);
-    goto done;
   }
-  code = session->ze.command_list_close(list);
+  code = session->ze.command_list_close(session->submission_list);
   if (code != NPUNLOCK_ZE_SUCCESS) {
-    status = session_driver_error(diagnostic, "zeCommandListClose", code);
-    goto done;
+    session->submission_failed = true;
+    return session_driver_error(diagnostic, "zeCommandListClose", code);
   }
-  code = session->ze.command_queue_execute(queue, 1, &list, fence);
+  session->submission_list_closed = true;
+  code = session->ze.command_queue_execute(session->submission_queue, 1, &session->submission_list,
+                                           session->submission_fence);
   if (code != NPUNLOCK_ZE_SUCCESS) {
-    status = session_driver_error(diagnostic, "zeCommandQueueExecuteCommandLists", code);
-    goto done;
+    session->submission_failed = true;
+    return session_driver_error(diagnostic, "zeCommandQueueExecuteCommandLists", code);
   }
-  code = session->ze.fence_synchronize(fence, session->fence_timeout_ns);
-  status = code == NPUNLOCK_ZE_SUCCESS
-               ? NPUNLOCK_STATUS_OK
-               : session_driver_error(diagnostic, "zeFenceHostSynchronize", code);
-
-done:
-  if (fence != NULL) {
-    session->ze.fence_destroy(fence);
+  session->submission_fence_submitted = true;
+  code = session->ze.fence_synchronize(session->submission_fence, session->fence_timeout_ns);
+  if (code != NPUNLOCK_ZE_SUCCESS) {
+    session->submission_failed = true;
+    return session_driver_error(diagnostic, "zeFenceHostSynchronize", code);
   }
-  if (list != NULL) {
-    session->ze.command_list_destroy(list);
-  }
-  if (queue != NULL) {
-    session->ze.command_queue_destroy(queue);
-  }
-  return status;
+  return NPUNLOCK_STATUS_OK;
 }
 
 npunlock_status graphinfer_session_create(const graphinfer_options *options,
@@ -636,6 +671,18 @@ void graphinfer_session_result_release(graphinfer_session_result *result) {
   if (session != NULL) {
     EnterCriticalSection(&session->lock);
     session->active = false;
+    if (session->submission_fence != NULL) {
+      session->ze.fence_destroy(session->submission_fence);
+      session->submission_fence = NULL;
+    }
+    if (session->submission_list != NULL) {
+      session->ze.command_list_destroy(session->submission_list);
+      session->submission_list = NULL;
+    }
+    if (session->submission_queue != NULL) {
+      session->ze.command_queue_destroy(session->submission_queue);
+      session->submission_queue = NULL;
+    }
     if (session->handle != NULL) {
       session->graph.destroy(session->handle);
       session->handle = NULL;

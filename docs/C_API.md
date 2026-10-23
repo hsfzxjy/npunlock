@@ -133,7 +133,11 @@ argument's exact byte size.
 
 Copied and shared calls on one session are serialized. Both inference modes
 are in-process. They use finite fence waits but cannot forcibly terminate a
-driver call that never returns.
+driver call that never returns. A session retains its Level Zero queue,
+command list, and fence; each synchronous inference resets and re-records the
+completed submission objects. If command recording, submission, reset, or the
+fence wait fails, the session rejects later inference calls and the caller must
+release and recreate it.
 
 Result structures should be zero-initialized. Options, target, and input
 descriptors carry `struct_size` for ABI validation; calls populate the result's
@@ -430,7 +434,9 @@ through a Job Object when a deadline expires. `patchblob` operates on caller
 and result buffers without global mutable parser state. Graph inference is
 in-process: the copied call owns a temporary session, while explicit shared
 sessions serialize calls per session. Both use the supplied timeout for fence
-waits. Each caller chooses copied or shared tensors and sets a finite timeout.
+waits. Submission resources are reused only after successful synchronous
+completion and are poisoned after a driver/submission failure. Each caller
+chooses copied or shared tensors and sets a finite timeout.
 
 The initial public contract remains Windows x64, Meteor Lake/NPU3720, and
 target `3720xx`. Custom ACT tensors are static dense FP16, plus the validated
