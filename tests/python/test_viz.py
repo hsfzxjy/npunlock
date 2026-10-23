@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python"))
 
-from npunlock.viz import Address, ArtifactGraph, Field, Span, build_npunlock_graph, show  # noqa: E402
+from npunlock.viz import Address, ArtifactGraph, Category, Field, Span, build_npunlock_graph, show  # noqa: E402
 
 
 def expect_error(error_type: type[BaseException], function, *args, **kwargs) -> None:
@@ -69,6 +69,7 @@ def test_model_and_serialization() -> None:
     assert rebound.artifacts["first"].sha256 == first.sha256
 
     expect_error(ValueError, Span, first, 4, 4)
+    expect_error(ValueError, Category, "bad", "Bad", "#xyz")
     invalid = ArtifactGraph("Invalid")
     artifact = invalid.artifact("tiny", data=b"abc")
     invalid.node("past-end", spans=[Span(artifact, 2, 4)])

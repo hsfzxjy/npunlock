@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -38,7 +39,7 @@ class Category:
     def __post_init__(self) -> None:
         _identifier(self.id, "category id")
         _identifier(self.label, "category label")
-        if not isinstance(self.color, str) or not self.color.startswith("#") or len(self.color) not in {4, 7}:
+        if not isinstance(self.color, str) or re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", self.color) is None:
             raise ValueError("category color must be a #rgb or #rrggbb string")
 
 

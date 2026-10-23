@@ -95,6 +95,7 @@ class Viewer {
     history = [];
     historyIndex = -1;
     hoveredNode;
+    treeFocusId;
     renderToken = 0;
     constructor(graph) {
         this.graph = graph;
@@ -178,6 +179,20 @@ class Viewer {
         });
     }
     bindSplitter(splitter, variable, fromLeft, minimum, maximum) {
+        const setValue = (value) => {
+            const bounded = Math.max(minimum, Math.min(maximum, value));
+            document.documentElement.style.setProperty(variable, `${bounded}px`);
+            splitter.setAttribute("aria-valuenow", String(Math.round(bounded)));
+            this.renderHex();
+        };
+        const currentValue = () => {
+            const raw = getComputedStyle(document.documentElement).getPropertyValue(variable);
+            const value = Number.parseFloat(raw);
+            return Number.isFinite(value) ? value : minimum;
+        };
+        splitter.setAttribute("aria-valuemin", String(minimum));
+        splitter.setAttribute("aria-valuemax", String(maximum));
+        splitter.setAttribute("aria-valuenow", String(Math.round(currentValue())));
         splitter.addEventListener("pointerdown", event => {
             splitter.setPointerCapture(event.pointerId);
             splitter.classList.add("dragging");
@@ -187,7 +202,7 @@ class Viewer {
                 return;
             const bounds = this.workspace.getBoundingClientRect();
             const value = fromLeft ? event.clientX - bounds.left : bounds.right - event.clientX;
-            document.documentElement.style.setProperty(variable, `${Math.max(minimum, Math.min(maximum, value))}px`);
+            setValue(value);
         });
         const finish = (event) => {
             if (splitter.hasPointerCapture(event.pointerId))
@@ -196,6 +211,21 @@ class Viewer {
         };
         splitter.addEventListener("pointerup", finish);
         splitter.addEventListener("pointercancel", finish);
+        splitter.addEventListener("keydown", event => {
+            let value;
+            if (event.key === "Home")
+                value = minimum;
+            if (event.key === "End")
+                value = maximum;
+            if (event.key === "ArrowLeft")
+                value = currentValue() + (fromLeft ? -12 : 12);
+            if (event.key === "ArrowRight")
+                value = currentValue() + (fromLeft ? 12 : -12);
+            if (value === undefined)
+                return;
+            event.preventDefault();
+            setValue(value);
+        });
     }
     togglePanel(panel, event) {
         const button = event.currentTarget;
@@ -213,12 +243,36 @@ class Viewer {
             button.role = "tab";
             button.textContent = artifact.name;
             button.title = `${artifact.name}\n${artifact.size.toLocaleString()} bytes\nsha256 ${artifact.sha256}`;
-            button.setAttribute("aria-selected", String(artifact.id === this.current.artifactId));
-            button.addEventListener("click", () => {
-                const offset = artifact.id === this.current.artifactId ? this.current.offset : 0;
-                this.navigate({ artifactId: artifact.id, offset, end: Math.min(artifact.size, offset + 1) }, true, true);
+            const selected = artifact.id === this.current.artifactId;
+            button.setAttribute("aria-selected", String(selected));
+            button.tabIndex = selected ? 0 : -1;
+            button.dataset.artifactId = artifact.id;
+            button.addEventListener("click", () => this.selectArtifact(artifact, false));
+            button.addEventListener("keydown", event => {
+                const tabs = this.graph.artifacts;
+                const index = tabs.findIndex(value => value.id === artifact.id);
+                let next;
+                if (event.key === "ArrowLeft")
+                    next = tabs[(index - 1 + tabs.length) % tabs.length];
+                if (event.key === "ArrowRight")
+                    next = tabs[(index + 1) % tabs.length];
+                if (event.key === "Home")
+                    next = tabs[0];
+                if (event.key === "End")
+                    next = tabs[tabs.length - 1];
+                if (!next)
+                    return;
+                event.preventDefault();
+                this.selectArtifact(next, true);
             });
             this.artifactTabs.append(button);
+        }
+    }
+    selectArtifact(artifact, restoreFocus) {
+        const offset = artifact.id === this.current.artifactId ? this.current.offset : 0;
+        this.navigate({ artifactId: artifact.id, offset, end: Math.min(artifact.size, offset + 1) }, true, true);
+        if (restoreFocus) {
+            requestAnimationFrame(() => this.artifactTabs.querySelector(`[data-artifact-id="${CSS.escape(artifact.id)}"]`)?.focus());
         }
     }
     renderTree() {
@@ -229,10 +283,13 @@ class Viewer {
             row.className = `tree-row${this.current.nodeId === node.id ? " selected" : ""}`;
             row.role = "treeitem";
             row.dataset.nodeId = node.id;
+            row.tabIndex = (this.treeFocusId ?? this.current.nodeId ?? this.roots[0]?.id) === node.id ? 0 : -1;
             row.style.paddingLeft = `${depth * 14 + 3}px`;
             row.setAttribute("aria-level", String(depth + 1));
             row.setAttribute("aria-selected", String(this.current.nodeId === node.id));
             const children = this.children.get(node.id) ?? [];
+            if (children.length)
+                row.setAttribute("aria-expanded", String(this.expanded.has(node.id)));
             const expander = document.createElement("button");
             expander.type = "button";
             expander.className = `tree-expander${children.length ? "" : " empty"}`;
@@ -258,7 +315,12 @@ class Viewer {
             kind.className = "tree-kind";
             kind.textContent = node.kind;
             row.append(expander, mark, label, kind);
-            row.addEventListener("click", () => this.selectNode(node.id, true));
+            row.addEventListener("click", () => {
+                this.treeFocusId = node.id;
+                this.selectNode(node.id, true);
+            });
+            row.addEventListener("focus", () => { this.treeFocusId = node.id; });
+            row.addEventListener("keydown", event => this.treeKey(event, node));
             row.addEventListener("mouseenter", () => this.setHovered(node.id));
             row.addEventListener("mouseleave", () => this.setHovered(undefined));
             fragment.append(row);
@@ -269,6 +331,55 @@ class Viewer {
         for (const root of this.roots)
             appendNode(root, 0);
         this.tree.append(fragment);
+    }
+    treeKey(event, node) {
+        const rows = Array.from(this.tree.querySelectorAll(".tree-row"));
+        const index = rows.findIndex(row => row.dataset.nodeId === node.id);
+        let target;
+        if (event.key === "ArrowDown")
+            target = rows[index + 1];
+        if (event.key === "ArrowUp")
+            target = rows[index - 1];
+        if (event.key === "Home")
+            target = rows[0];
+        if (event.key === "End")
+            target = rows[rows.length - 1];
+        if (event.key === "ArrowRight") {
+            const children = this.children.get(node.id) ?? [];
+            if (children.length && !this.expanded.has(node.id)) {
+                this.expanded.add(node.id);
+                this.renderTree();
+                target = this.tree.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`) ?? undefined;
+            }
+            else if (children.length) {
+                target = this.tree.querySelector(`[data-node-id="${CSS.escape(children[0].id)}"]`) ?? undefined;
+            }
+        }
+        if (event.key === "ArrowLeft") {
+            if (this.expanded.has(node.id) && (this.children.get(node.id)?.length ?? 0) > 0) {
+                this.expanded.delete(node.id);
+                this.renderTree();
+                target = this.tree.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`) ?? undefined;
+            }
+            else if (node.parent) {
+                target = this.tree.querySelector(`[data-node-id="${CSS.escape(node.parent)}"]`) ?? undefined;
+            }
+        }
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            this.treeFocusId = node.id;
+            this.selectNode(node.id, true);
+            requestAnimationFrame(() => this.tree.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`)?.focus());
+            return;
+        }
+        if (!target)
+            return;
+        event.preventDefault();
+        for (const row of rows)
+            row.tabIndex = -1;
+        target.tabIndex = 0;
+        this.treeFocusId = target.dataset.nodeId;
+        target.focus();
     }
     selectNode(nodeId, push) {
         const node = this.nodes.get(nodeId);

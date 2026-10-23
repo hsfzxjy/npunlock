@@ -14,7 +14,7 @@
           <button id="back" type="button" title="Back (Alt+Left)" aria-label="Back">‹</button>
           <button id="forward" type="button" title="Forward (Alt+Right)" aria-label="Forward">›</button>
         </nav>
-        <nav id="artifact-tabs" class="artifact-tabs" aria-label="Artifacts"></nav>
+        <nav id="artifact-tabs" class="artifact-tabs" role="tablist" aria-label="Artifacts"></nav>
         <form id="offset-form" class="offset-form" autocomplete="off">
           <label for="offset-input">offset</label>
           <input id="offset-input" inputmode="text" spellcheck="false" aria-label="File offset">
@@ -27,7 +27,7 @@
         <aside id="tree-panel" class="panel tree-panel" aria-label="Structure">
           <div id="tree" class="tree" role="tree"></div>
         </aside>
-        <div id="left-splitter" class="splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+        <div id="left-splitter" class="splitter" role="separator" aria-label="Resize structure panel" aria-orientation="vertical" tabindex="0"></div>
         <section id="hex-panel" class="hex-panel" aria-label="Hex bytes">
           <div id="hex-head" class="hex-head" aria-hidden="true">
             <span class="offset-head">file offset</span>
@@ -40,7 +40,7 @@
           </div>
           <div id="status" class="status" role="status"></div>
         </section>
-        <div id="right-splitter" class="splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+        <div id="right-splitter" class="splitter" role="separator" aria-label="Resize inspector panel" aria-orientation="vertical" tabindex="0"></div>
         <aside id="inspector-panel" class="panel inspector-panel" aria-label="Inspector">
           <div id="inspector" class="inspector"></div>
         </aside>
