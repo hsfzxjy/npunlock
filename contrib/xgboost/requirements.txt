@@ -1,0 +1,7 @@
+numpy==1.26.4
+onnx==1.23.2
+onnxmltools==1.16.0
+onnxruntime==1.31.0
+openvino==2026.3.1
+scikit-learn==1.9.1
+xgboost==3.4.1
