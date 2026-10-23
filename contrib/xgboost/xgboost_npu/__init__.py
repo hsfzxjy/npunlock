@@ -15,6 +15,7 @@ from .runtime import (
     RuntimeNpuXGBoost,
     pack_runtime_features,
     pack_runtime_model,
+    partitioned_runtime_batch_capacity,
     partition_runtime_ensemble,
 )
 
@@ -32,6 +33,7 @@ __all__ = [
     "pack_features",
     "pack_runtime_features",
     "pack_runtime_model",
+    "partitioned_runtime_batch_capacity",
     "partition_runtime_ensemble",
     "unpack_predictions",
 ]

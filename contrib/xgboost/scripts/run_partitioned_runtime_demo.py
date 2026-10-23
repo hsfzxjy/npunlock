@@ -18,13 +18,13 @@ sys.path.insert(0, str(CONTRIB_ROOT))
 
 from xgboost_npu.model import load_ensemble
 from xgboost_npu.runtime import (
+    RUNTIME_CHAIN_KERNEL_SOURCE,
     RUNTIME_CHUNK_ELEMENTS,
-    RUNTIME_FINALIZE_SOURCE,
     RUNTIME_KERNEL_SOURCE,
     RUNTIME_LOGICAL_ELEMENTS,
     RUNTIME_MAX_TOTAL_NODES,
     PartitionedRuntimeNpuXGBoost,
-    runtime_batch_capacity,
+    partitioned_runtime_batch_capacity,
 )
 
 
@@ -91,7 +91,7 @@ def main() -> int:
     official_probabilities = booster.predict(matrix).astype(np.float32)
     official_classes = (official_probabilities >= 0.5).astype(np.int32)
     parser_margins = ensemble.predict_margin(features)
-    capacity = runtime_batch_capacity(ensemble.feature_count)
+    capacity = partitioned_runtime_batch_capacity(ensemble.feature_count)
 
     with PartitionedRuntimeNpuXGBoost(
         ensemble,
@@ -116,7 +116,7 @@ def main() -> int:
         class_agreement = float(np.mean(actual_classes == official_classes))
         if class_agreement != 1.0:
             raise RuntimeError("partitioned NPU classes disagree with official XGBoost")
-        if float(np.max(margin_error)) > 2.0e-6:
+        if float(np.max(margin_error)) > 1.0e-6:
             raise RuntimeError("partitioned NPU margin error exceeds FP32 tolerance")
         if float(np.max(probability_error)) > 1.0e-6:
             raise RuntimeError("partitioned NPU probability error exceeds FP32 tolerance")
@@ -134,7 +134,10 @@ def main() -> int:
             graphinfer_times: list[float] = []
             first_times: list[float] = []
             second_times: list[float] = []
-            finalizer_times: list[float] = []
+            pack_times: list[float] = []
+            transfer_pack_times: list[float] = []
+            upload_times: list[float] = []
+            download_times: list[float] = []
             for _ in range(args.runs):
                 started = perf_counter()
                 booster.predict(batch_matrix)
@@ -145,21 +148,25 @@ def main() -> int:
                 graphinfer_times.append(timing["graphinfer_wall_ms"])
                 first_times.append(timing["traversal_a_graphinfer_wall_ms"])
                 second_times.append(timing["traversal_b_graphinfer_wall_ms"])
-                finalizer_times.append(timing["finalizer_graphinfer_wall_ms"])
+                pack_times.append(timing["pack_ms"])
+                transfer_pack_times.append(timing["partial_margin_transfer_pack_ms"])
+                upload_times.append(timing["upload_ms"])
+                download_times.append(timing["download_ms"])
             benchmark[str(size)] = {
                 "official_xgboost_cpu_ms": summary(cpu_times),
                 "npunlock_end_to_end_ms": summary(npu_times),
-                "three_graphinfer_calls_wall_ms": summary(graphinfer_times),
+                "two_graphinfer_calls_wall_ms": summary(graphinfer_times),
                 "traversal_a_graphinfer_wall_ms": summary(first_times),
                 "traversal_b_graphinfer_wall_ms": summary(second_times),
-                "finalizer_graphinfer_wall_ms": summary(finalizer_times),
+                "host_pack_and_validation_ms": summary(pack_times),
+                "host_partial_margin_transfer_pack_ms": summary(transfer_pack_times),
+                "host_to_shared_buffers_ms": summary(upload_times),
+                "shared_outputs_to_host_ms": summary(download_times),
             }
 
-        if backend.finalizer is None:
-            raise RuntimeError("partitioned backend closed unexpectedly")
         provenance = backend.stages[0].program.ir_provenance
         report: dict[str, object] = {
-            "schema": "npunlock-xgboost-partitioned-runtime-demo-v1",
+            "schema": "npunlock-xgboost-partitioned-runtime-demo-v2",
             "model": {
                 "path": str(model_path),
                 "sha256": sha256(model_path),
@@ -173,7 +180,7 @@ def main() -> int:
                 name: importlib.metadata.version(name) for name in ("numpy", "xgboost")
             },
             "partitioned_runtime": {
-                "contract": "exactly two contiguous whole-tree traversal stages and one NPU finalizer",
+                "contract": "exactly two chained contiguous whole-tree NPU traversal stages",
                 "partition_tree_counts": list(backend.partition_tree_counts),
                 "partition_node_counts": list(backend.partition_node_counts),
                 "single_stage_maximum_nodes": RUNTIME_MAX_TOTAL_NODES,
@@ -182,8 +189,9 @@ def main() -> int:
                 "elements_per_invocation_input": RUNTIME_CHUNK_ELEMENTS,
                 "maximum_batch_size": capacity,
                 "host_role": (
-                    "packs/copies graph buffers and validates replicas; traversal, partial-margin "
-                    "addition, sigmoid, and class selection execute on the NPU"
+                    "packs/copies graph buffers and validates replicas; it copies stage A raw "
+                    "margins without arithmetic; traversal, margin addition, sigmoid, and class "
+                    "selection execute on the NPU"
                 ),
                 "rounding_note": (
                     "the partition boundary changes FP32 addition association relative to a "
@@ -208,8 +216,10 @@ def main() -> int:
             "build": {
                 "traversal_source_sha256": hashlib.sha256(RUNTIME_KERNEL_SOURCE).hexdigest(),
                 "traversal_source_bytes": len(RUNTIME_KERNEL_SOURCE),
-                "finalizer_source_sha256": hashlib.sha256(RUNTIME_FINALIZE_SOURCE).hexdigest(),
-                "finalizer_source_bytes": len(RUNTIME_FINALIZE_SOURCE),
+                "chained_traversal_source_sha256": hashlib.sha256(
+                    RUNTIME_CHAIN_KERNEL_SOURCE
+                ).hexdigest(),
+                "chained_traversal_source_bytes": len(RUNTIME_CHAIN_KERNEL_SOURCE),
                 "packed_partition_sha256": [
                     hashlib.sha256(stage.packed_model.tobytes()).hexdigest()
                     for stage in backend.stages
@@ -217,12 +227,10 @@ def main() -> int:
                 "build_ms": [
                     backend.stages[0].build_ms,
                     backend.stages[1].build_ms,
-                    backend.finalizer.build_ms,
                 ],
                 "carriers": [
                     backend.stages[0].carrier_explanation,
                     backend.stages[1].carrier_explanation,
-                    backend.finalizer.carrier_explanation,
                 ],
                 "patch_evidence": backend.patch_evidence,
                 "ir_provenance": {

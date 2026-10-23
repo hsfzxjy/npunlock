@@ -683,7 +683,7 @@ different graph structure, not that the C expression itself is invalid.
   supported custom-kernel family.
 - [XGBoost contribution](../contrib/xgboost/README.md) shows a deliberately
   narrow tree-ensemble workload, including a two-part runtime forest whose two
-  NPU traversal results are combined by a third NPU finalizer. It is three
-  explicit graph executions with host buffer transfers, not a fused graph.
+  NPU traversals are chained by copying validated raw margins into the second
+  input payload. It is two explicit graph executions, not a fused graph.
 
 [Back to documentation index](README.md)
