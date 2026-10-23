@@ -18,6 +18,7 @@ from .runtime import (
     partitioned_runtime_batch_capacity,
     partition_runtime_ensemble,
 )
+from .runtime_api import XGBoostRuntime, runtime_backend_kind
 
 __all__ = [
     "Ensemble",
@@ -28,6 +29,7 @@ __all__ = [
     "RuntimeNpuXGBoost",
     "Tree",
     "TransportSpec",
+    "XGBoostRuntime",
     "generate_kernel_source",
     "load_ensemble",
     "pack_features",
@@ -35,5 +37,6 @@ __all__ = [
     "pack_runtime_model",
     "partitioned_runtime_batch_capacity",
     "partition_runtime_ensemble",
+    "runtime_backend_kind",
     "unpack_predictions",
 ]

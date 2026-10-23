@@ -684,6 +684,8 @@ different graph structure, not that the C expression itself is invalid.
 - [XGBoost contribution](../contrib/xgboost/README.md) shows a deliberately
   narrow tree-ensemble workload, including a two-part runtime forest whose two
   NPU traversals are chained by copying validated raw margins into the second
-  input payload. It is two explicit graph executions, not a fused graph.
+  input payload. Its `XGBoostRuntime` facade automatically selects the validated
+  one- or two-stage backend and chunks larger host batches. The partitioned
+  path is two explicit graph executions per chunk, not a fused graph.
 
 [Back to documentation index](README.md)

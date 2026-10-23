@@ -48,7 +48,7 @@ def options() -> argparse.Namespace:
     parser.add_argument(
         "--model-dir",
         type=Path,
-        default=Path("contrib/xgboost/artifacts/model-48"),
+        default=Path("contrib/xgboost/artifacts/model-64"),
     )
     parser.add_argument(
         "--output",

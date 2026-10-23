@@ -12,8 +12,8 @@ from .model import Ensemble, load_ensemble
 from .packing import HEADER_WORDS, OUTPUT_WORDS_PER_SAMPLE, Predictions
 
 
-RUNTIME_CHUNK_ELEMENTS = 768
-RUNTIME_LOGICAL_ELEMENTS = 3072
+RUNTIME_CHUNK_ELEMENTS = 1024
+RUNTIME_LOGICAL_ELEMENTS = 4096
 RUNTIME_REPLICAS = 4
 RUNTIME_MODEL_HEADER_ELEMENTS = 5
 RUNTIME_MODEL_MAGIC = 372020
@@ -32,7 +32,8 @@ _DEFAULT_SHIFT = _RIGHT_SHIFT + _CHILD_BITS
 _TREE_SIZE_SHIFT = _DEFAULT_SHIFT + 1
 
 
-RUNTIME_KERNEL_SOURCE: bytes = f"""
+RUNTIME_KERNEL_SOURCE: bytes = (
+    f"""
 #define MLIBM_DEFINE_LINK_COMPAT 1
 #include <npunlock/npu3720_kernel.h>
 
@@ -204,10 +205,14 @@ void controlled_act(unsigned layerParams) {{
         record[2] = probability >= 0.5f ? 1.0f : 0.0f;
     }}
 }}
-""".encode("utf-8")
+""".encode(
+        "utf-8"
+    )
+)
 
 
-RUNTIME_CHAIN_KERNEL_SOURCE: bytes = f"""
+RUNTIME_CHAIN_KERNEL_SOURCE: bytes = (
+    f"""
 #define MLIBM_DEFINE_LINK_COMPAT 1
 #include <npunlock/npu3720_kernel.h>
 
@@ -392,23 +397,22 @@ void controlled_act(unsigned layerParams) {{
         record[2] = probability >= 0.5f ? 1.0f : 0.0f;
     }}
 }}
-""".encode("utf-8")
+""".encode(
+        "utf-8"
+    )
+)
 
 
 def runtime_batch_capacity(feature_count: int) -> int:
     if not isinstance(feature_count, int) or not 0 < feature_count <= RUNTIME_MAX_FEATURES:
         raise ValueError(f"feature_count must be between 1 and {RUNTIME_MAX_FEATURES}")
-    return (RUNTIME_CHUNK_ELEMENTS - HEADER_WORDS) // max(
-        feature_count, OUTPUT_WORDS_PER_SAMPLE
-    )
+    return (RUNTIME_CHUNK_ELEMENTS - HEADER_WORDS) // max(feature_count, OUTPUT_WORDS_PER_SAMPLE)
 
 
 def partitioned_runtime_batch_capacity(feature_count: int) -> int:
     if not isinstance(feature_count, int) or not 0 < feature_count <= RUNTIME_MAX_FEATURES:
         raise ValueError(f"feature_count must be between 1 and {RUNTIME_MAX_FEATURES}")
-    return (RUNTIME_CHUNK_ELEMENTS - HEADER_WORDS) // max(
-        feature_count + 1, OUTPUT_WORDS_PER_SAMPLE
-    )
+    return (RUNTIME_CHUNK_ELEMENTS - HEADER_WORDS) // max(feature_count + 1, OUTPUT_WORDS_PER_SAMPLE)
 
 
 def _replicate(chunk: np.ndarray) -> np.ndarray:
@@ -437,9 +441,7 @@ def pack_runtime_model(ensemble: Ensemble) -> np.ndarray:
     if not 0 < len(ensemble.trees) <= 64:
         raise ValueError("runtime model supports between 1 and 64 trees")
     if ensemble.node_count > RUNTIME_MAX_TOTAL_NODES:
-        raise ValueError(
-            f"runtime model has {ensemble.node_count} nodes; capacity is {RUNTIME_MAX_TOTAL_NODES}"
-        )
+        raise ValueError(f"runtime model has {ensemble.node_count} nodes; capacity is {RUNTIME_MAX_TOTAL_NODES}")
     if not np.isfinite(np.float32(ensemble.base_margin)):
         raise ValueError("runtime model base margin must be finite")
     chunk = np.zeros(RUNTIME_CHUNK_ELEMENTS, dtype=np.float32)
@@ -454,8 +456,7 @@ def pack_runtime_model(ensemble: Ensemble) -> np.ndarray:
     for tree in ensemble.trees:
         if tree.node_count > RUNTIME_MAX_NODES_PER_TREE:
             raise ValueError(
-                f"runtime model tree has {tree.node_count} nodes; "
-                f"capacity is {RUNTIME_MAX_NODES_PER_TREE}"
+                f"runtime model tree has {tree.node_count} nodes; " f"capacity is {RUNTIME_MAX_NODES_PER_TREE}"
             )
         for node in range(tree.node_count):
             if not np.isfinite(np.float32(tree.split_or_leaf[node])):
@@ -505,10 +506,7 @@ def partition_runtime_ensemble(ensemble: Ensemble) -> tuple[Ensemble, Ensemble]:
     for index, tree in enumerate(ensemble.trees[:-1], start=1):
         prefix_nodes += tree.node_count
         remaining_nodes = ensemble.node_count - prefix_nodes
-        if (
-            prefix_nodes <= RUNTIME_MAX_TOTAL_NODES
-            and remaining_nodes <= RUNTIME_MAX_TOTAL_NODES
-        ):
+        if prefix_nodes <= RUNTIME_MAX_TOTAL_NODES and remaining_nodes <= RUNTIME_MAX_TOTAL_NODES:
             split_index = index
     if split_index is None:
         raise ValueError(
@@ -530,9 +528,7 @@ def unpack_runtime_predictions(
 ) -> Predictions:
     flat = np.asarray(output, dtype=np.float32).reshape(-1)
     if flat.size != RUNTIME_LOGICAL_ELEMENTS:
-        raise ValueError(
-            f"runtime kernel output has {flat.size} elements, expected {RUNTIME_LOGICAL_ELEMENTS}"
-        )
+        raise ValueError(f"runtime kernel output has {flat.size} elements, expected {RUNTIME_LOGICAL_ELEMENTS}")
     first = flat[:RUNTIME_CHUNK_ELEMENTS]
     for replica in range(1, RUNTIME_REPLICAS):
         start = replica * RUNTIME_CHUNK_ELEMENTS
@@ -542,12 +538,10 @@ def unpack_runtime_predictions(
     header = tuple(int(float(value)) for value in first[:HEADER_WORDS])
     expected_header = (expected_samples, feature_count, OUTPUT_WORDS_PER_SAMPLE, tree_count)
     if header != expected_header:
-        raise ValueError(
-            f"runtime kernel output header {header!r} does not match {expected_header!r}"
-        )
-    records = first[
-        HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE
-    ].reshape(expected_samples, OUTPUT_WORDS_PER_SAMPLE)
+        raise ValueError(f"runtime kernel output header {header!r} does not match {expected_header!r}")
+    records = first[HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE].reshape(
+        expected_samples, OUTPUT_WORDS_PER_SAMPLE
+    )
     if not np.isfinite(records[:, :2]).all():
         raise ValueError("runtime kernel produced a non-finite margin or probability")
     if ((records[:, 1] < 0.0) | (records[:, 1] > 1.0)).any():
@@ -571,10 +565,7 @@ def validate_runtime_partial(
 ) -> np.ndarray:
     flat = np.asarray(output, dtype=np.float32).reshape(-1)
     if flat.size != RUNTIME_LOGICAL_ELEMENTS:
-        raise ValueError(
-            f"runtime partial output has {flat.size} elements, expected "
-            f"{RUNTIME_LOGICAL_ELEMENTS}"
-        )
+        raise ValueError(f"runtime partial output has {flat.size} elements, expected " f"{RUNTIME_LOGICAL_ELEMENTS}")
     first = flat[:RUNTIME_CHUNK_ELEMENTS]
     for replica in range(1, RUNTIME_REPLICAS):
         start = replica * RUNTIME_CHUNK_ELEMENTS
@@ -584,12 +575,8 @@ def validate_runtime_partial(
     header = tuple(int(float(value)) for value in first[:HEADER_WORDS])
     expected_header = (expected_samples, feature_count, OUTPUT_WORDS_PER_SAMPLE, tree_count)
     if header != expected_header:
-        raise ValueError(
-            f"runtime partial output header {header!r} does not match {expected_header!r}"
-        )
-    margins = first[
-        HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE
-    ][::OUTPUT_WORDS_PER_SAMPLE]
+        raise ValueError(f"runtime partial output header {header!r} does not match {expected_header!r}")
+    margins = first[HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE][::OUTPUT_WORDS_PER_SAMPLE]
     if not np.isfinite(margins).all():
         raise ValueError("runtime partial output contains a non-finite margin")
     return flat.reshape(1, RUNTIME_LOGICAL_ELEMENTS)
@@ -610,9 +597,7 @@ def _pack_chained_runtime_features(
         raise ValueError("features may contain finite values or NaN, but not infinity")
     capacity = partitioned_runtime_batch_capacity(feature_count)
     if values.shape[0] > capacity:
-        raise ValueError(
-            f"batch size {values.shape[0]} exceeds partitioned runtime capacity {capacity}"
-        )
+        raise ValueError(f"batch size {values.shape[0]} exceeds partitioned runtime capacity {capacity}")
     if not 0 < first_tree_count < total_tree_count <= 64:
         raise ValueError("partitioned runtime tree counts must satisfy 0 < first < total <= 64")
     validated = validate_runtime_partial(
@@ -621,9 +606,9 @@ def _pack_chained_runtime_features(
         feature_count=feature_count,
         tree_count=first_tree_count,
     ).reshape(-1)
-    records = validated[
-        HEADER_WORDS : HEADER_WORDS + values.shape[0] * OUTPUT_WORDS_PER_SAMPLE
-    ].reshape(values.shape[0], OUTPUT_WORDS_PER_SAMPLE)
+    records = validated[HEADER_WORDS : HEADER_WORDS + values.shape[0] * OUTPUT_WORDS_PER_SAMPLE].reshape(
+        values.shape[0], OUTPUT_WORDS_PER_SAMPLE
+    )
     chunk = np.zeros(RUNTIME_CHUNK_ELEMENTS, dtype=np.float32)
     chunk[:HEADER_WORDS] = (
         values.shape[0],
@@ -703,19 +688,21 @@ class RuntimeNpuXGBoost:
             timeout_ms=timeout_ms,
         )
         if len(prepared.groups) != 1:
-            raise RuntimeError(
-                f"runtime XGBoost carrier exposed {len(prepared.groups)} ACT groups, expected one"
-            )
+            raise RuntimeError(f"runtime XGBoost carrier exposed {len(prepared.groups)} ACT groups, expected one")
         group = prepared.groups[0]
         if group.input_dtypes != ("f32", "f32") or group.output_dtype != "f32":
             raise RuntimeError(
                 "runtime XGBoost carrier dtype changed: "
                 f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
             )
-        if group.per_invocation_input_element_counts != (
-            RUNTIME_CHUNK_ELEMENTS,
-            RUNTIME_CHUNK_ELEMENTS,
-        ) or group.per_invocation_output_element_count != RUNTIME_CHUNK_ELEMENTS:
+        if (
+            group.per_invocation_input_element_counts
+            != (
+                RUNTIME_CHUNK_ELEMENTS,
+                RUNTIME_CHUNK_ELEMENTS,
+            )
+            or group.per_invocation_output_element_count != RUNTIME_CHUNK_ELEMENTS
+        ):
             raise RuntimeError(
                 "runtime XGBoost carrier contract changed: "
                 f"inputs={group.per_invocation_input_element_counts!r}, "
@@ -723,8 +710,7 @@ class RuntimeNpuXGBoost:
             )
         if len(group.targets) != RUNTIME_REPLICAS:
             raise RuntimeError(
-                f"runtime XGBoost carrier exposed {len(group.targets)} targets, "
-                f"expected {RUNTIME_REPLICAS}"
+                f"runtime XGBoost carrier exposed {len(group.targets)} targets, " f"expected {RUNTIME_REPLICAS}"
             )
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
@@ -799,9 +785,20 @@ class RuntimeNpuXGBoost:
         if self._mode != "normal":
             raise RuntimeError("internal runtime stages do not support public model replacement")
         ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
+        self._replace_model(ensemble)
+
+    def _replace_model(self, ensemble: Ensemble) -> None:
         started = perf_counter()
         packed_model = pack_runtime_model(ensemble)
         model_pack_ms = (perf_counter() - started) * 1000.0
+        self._upload_model(ensemble, packed_model, model_pack_ms)
+
+    def _upload_model(
+        self,
+        ensemble: Ensemble,
+        packed_model: np.ndarray,
+        model_pack_ms: float,
+    ) -> None:
         started = perf_counter()
         np.copyto(self.shared_inputs["xgboost_forest"], packed_model)
         model_upload_ms = (perf_counter() - started) * 1000.0
@@ -852,12 +849,15 @@ class RuntimeNpuXGBoost:
         if self._mode != "partial":
             raise RuntimeError("this runtime stage cannot produce a partial output")
         copied, timings = self._execute(values, packed=packed)
-        return validate_runtime_partial(
-            copied,
-            expected_samples=values.shape[0],
-            feature_count=self.ensemble.feature_count,
-            tree_count=len(self.ensemble.trees),
-        ), timings
+        return (
+            validate_runtime_partial(
+                copied,
+                expected_samples=values.shape[0],
+                feature_count=self.ensemble.feature_count,
+                tree_count=len(self.ensemble.trees),
+            ),
+            timings,
+        )
 
     def _run_chained(
         self,
@@ -869,12 +869,15 @@ class RuntimeNpuXGBoost:
         if self._mode != "chained":
             raise RuntimeError("this runtime stage cannot consume chained margins")
         copied, timings = self._execute(values, packed=packed)
-        return unpack_runtime_predictions(
-            copied,
-            expected_samples=values.shape[0],
-            feature_count=self.ensemble.feature_count,
-            tree_count=total_tree_count,
-        ), timings
+        return (
+            unpack_runtime_predictions(
+                copied,
+                expected_samples=values.shape[0],
+                feature_count=self.ensemble.feature_count,
+                tree_count=total_tree_count,
+            ),
+            timings,
+        )
 
     def run(self, features: object) -> tuple[Predictions, dict[str, float]]:
         if self._mode != "normal":
@@ -959,13 +962,9 @@ class PartitionedRuntimeNpuXGBoost:
         values = np.asarray(features, dtype=np.float32)
         capacity = partitioned_runtime_batch_capacity(self.ensemble.feature_count)
         if values.ndim != 2 or values.shape[1] != self.ensemble.feature_count:
-            raise ValueError(
-                f"features must have shape (N, {self.ensemble.feature_count})"
-            )
+            raise ValueError(f"features must have shape (N, {self.ensemble.feature_count})")
         if values.shape[0] > capacity:
-            raise ValueError(
-                f"batch size {values.shape[0]} exceeds partitioned runtime capacity {capacity}"
-            )
+            raise ValueError(f"batch size {values.shape[0]} exceeds partitioned runtime capacity {capacity}")
         started = perf_counter()
         packed = pack_runtime_features(values, feature_count=self.ensemble.feature_count)
         pack_ms = (perf_counter() - started) * 1000.0
@@ -989,13 +988,26 @@ class PartitionedRuntimeNpuXGBoost:
             "initial_feature_pack_ms": pack_ms,
             "partial_margin_transfer_pack_ms": chained_pack_ms,
             "upload_ms": first_timings["upload_ms"] + second_timings["upload_ms"],
-            "graphinfer_wall_ms": first_timings["graphinfer_wall_ms"]
-            + second_timings["graphinfer_wall_ms"],
-            "download_ms": first_timings["download_ms"]
-            + second_timings["download_ms"],
+            "graphinfer_wall_ms": first_timings["graphinfer_wall_ms"] + second_timings["graphinfer_wall_ms"],
+            "download_ms": first_timings["download_ms"] + second_timings["download_ms"],
             "traversal_a_graphinfer_wall_ms": first_timings["graphinfer_wall_ms"],
             "traversal_b_graphinfer_wall_ms": second_timings["graphinfer_wall_ms"],
         }
+
+    def load_model(self, model: str | Path | Ensemble) -> None:
+        if len(self.stages) != 2:
+            raise RuntimeError("partitioned runtime is closed")
+        ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
+        partitions = partition_runtime_ensemble(ensemble)
+        packed_models: list[tuple[np.ndarray, float]] = []
+        for partition in partitions:
+            started = perf_counter()
+            packed = pack_runtime_model(partition)
+            packed_models.append((packed, (perf_counter() - started) * 1000.0))
+        for stage, partition, (packed, pack_ms) in zip(self.stages, partitions, packed_models):
+            stage._upload_model(partition, packed, pack_ms)
+        self.ensemble = ensemble
+        self.partitions = partitions
 
     def close(self) -> None:
         for stage in reversed(self.stages):
