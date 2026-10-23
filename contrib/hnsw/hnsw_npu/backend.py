@@ -9,14 +9,15 @@ from time import perf_counter
 import numpy as np
 import npunlock as npu
 
+from .cache import ProgramCache, provenance_identity
 from .index import HnswIndex, SearchStats, search_index
 from .packing import (
     CHUNK_ELEMENTS,
     LOGICAL_ELEMENTS,
     REPLICAS,
     pack_graph,
-    pack_query,
-    unpack_result,
+    pack_queries,
+    unpack_results,
     validate_capacity,
 )
 
@@ -32,6 +33,60 @@ class SearchResult:
     timings: dict[str, float]
 
 
+@dataclass(frozen=True, slots=True)
+class SearchBatch:
+    results: tuple[SearchResult, ...]
+    timings: dict[str, float]
+
+
+def _validate_program(program: npu.Program) -> None:
+    expected_inputs = (
+        ("hnsw_query_vectors", (1, LOGICAL_ELEMENTS), "f32"),
+        ("hnsw_adjacency", (1, LOGICAL_ELEMENTS), "f32"),
+    )
+    actual_inputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.input_contracts)
+    if actual_inputs != expected_inputs:
+        raise RuntimeError(f"HNSW program input contract changed: {actual_inputs!r}")
+    expected_outputs = (("hnsw_results", (1, LOGICAL_ELEMENTS), "f32"),)
+    actual_outputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.output_contracts)
+    if actual_outputs != expected_outputs:
+        raise RuntimeError(f"HNSW program output contract changed: {actual_outputs!r}")
+    if len(program.patch_reports) != 1:
+        raise RuntimeError(f"HNSW program has {len(program.patch_reports)} patch reports, expected one")
+    try:
+        report = json.loads(program.patch_reports[0].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("HNSW patch report is invalid") from error
+    graph_contract = report.get("graph_contract")
+    targets = report.get("targets")
+    validation = report.get("validation")
+    if (
+        report.get("schema") != "npunlock.patchblob.v1"
+        or not isinstance(graph_contract, dict)
+        or graph_contract.get("compiler") != "8.3"
+        or graph_contract.get("npu") != "3720"
+        or not isinstance(targets, list)
+        or len(targets) != REPLICAS
+        or not isinstance(validation, dict)
+        or validation.get("section_contents_preserved") is not True
+        or validation.get("mutation_set_preserved") is not True
+    ):
+        raise RuntimeError("HNSW patch report contract changed")
+    for index, target in enumerate(targets):
+        if (
+            not isinstance(target, dict)
+            or target.get("invocation_index") != index
+            or target.get("range_index") != index
+            or target.get("input_count") != 2
+            or target.get("element_count") != CHUNK_ELEMENTS
+            or target.get("span_bytes") != CHUNK_ELEMENTS * 4
+            or target.get("contract_flags") != 0x3B
+        ):
+            raise RuntimeError(f"HNSW patch target {index} contract changed")
+    if report.get("output_graph_sha256") != hashlib.sha256(program.graph_blob).hexdigest():
+        raise RuntimeError("HNSW final graph hash does not match its patch report")
+
+
 class NpuHnsw:
     """Execute bounded, complete HNSW query traversal on ACT-SHAVE."""
 
@@ -42,6 +97,7 @@ class NpuHnsw:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None = None,
         timeout_ms: int = 20_000,
+        cache_dir: str | Path | None = None,
     ):
         validate_capacity(index)
         self.index = index
@@ -58,32 +114,74 @@ class NpuHnsw:
             carrier="Subtract",
             _name="hnsw_results",
         )
-        prepared = npu.prepare(
-            npu.Graph([query, graph], [output], name="hnsw_l2_search"),
+        graph_definition = npu.Graph([query, graph], [output], name="hnsw_l2_search")
+        cache_started = perf_counter()
+        cache = ProgramCache(
+            cache_dir,
+            source=self.source,
+            movi_dll_dir=movi_dll_dir,
             native_dir=native_dir,
             timeout_ms=timeout_ms,
         )
-        if len(prepared.groups) != 1:
-            raise RuntimeError(f"HNSW carrier exposed {len(prepared.groups)} ACT groups, expected one")
-        group = prepared.groups[0]
-        if group.input_dtypes != ("f32", "f32") or group.output_dtype != "f32":
-            raise RuntimeError(
-                f"HNSW carrier dtype changed: inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
-            )
-        if (
-            group.per_invocation_input_element_counts != (CHUNK_ELEMENTS, CHUNK_ELEMENTS)
-            or group.per_invocation_output_element_count != CHUNK_ELEMENTS
-            or len(group.targets) != REPLICAS
-        ):
-            raise RuntimeError(
-                "HNSW carrier contract changed: "
-                f"inputs={group.per_invocation_input_element_counts!r}, "
-                f"output={group.per_invocation_output_element_count!r}, targets={len(group.targets)}"
-            )
-        started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
-        self.build_ms = (perf_counter() - started) * 1000.0
-        self.carrier_explanation = prepared.explain()
+        self.program = cache.load()
+        if self.program is not None:
+            try:
+                _validate_program(self.program)
+            except Exception as error:
+                self.program.close()
+                self.program = None
+                cache.status = "invalid"
+                cache.diagnostic = str(error)
+        self.cache_load_ms = (perf_counter() - cache_started) * 1000.0 if cache.enabled else 0.0
+        if self.program is None:
+            hash_task = cache.start_dependency_hashes()
+            try:
+                prepared = npu.prepare(
+                    graph_definition,
+                    native_dir=native_dir,
+                    timeout_ms=timeout_ms,
+                    libraries=cache.libraries,
+                )
+                if len(prepared.groups) != 1:
+                    raise RuntimeError(f"HNSW carrier exposed {len(prepared.groups)} ACT groups, expected one")
+                group = prepared.groups[0]
+                if group.input_dtypes != ("f32", "f32") or group.output_dtype != "f32":
+                    raise RuntimeError(
+                        "HNSW carrier dtype changed: " f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
+                    )
+                if (
+                    group.per_invocation_input_element_counts != (CHUNK_ELEMENTS, CHUNK_ELEMENTS)
+                    or group.per_invocation_output_element_count != CHUNK_ELEMENTS
+                    or len(group.targets) != REPLICAS
+                ):
+                    raise RuntimeError(
+                        "HNSW carrier contract changed: "
+                        f"inputs={group.per_invocation_input_element_counts!r}, "
+                        f"output={group.per_invocation_output_element_count!r}, "
+                        f"targets={len(group.targets)}"
+                    )
+                started = perf_counter()
+                self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+                self.build_ms = (perf_counter() - started) * 1000.0
+                _validate_program(self.program)
+                self.carrier_explanation = prepared.explain()
+                cache.store(self.program, hash_task)
+            except BaseException:
+                if hash_task is not None:
+                    hash_task[0].shutdown(wait=True)
+                if self.program is not None:
+                    self.program.close()
+                raise
+        else:
+            self.build_ms = 0.0
+            self.carrier_explanation = "loaded validated HNSW program from cache"
+        self.cache_status = cache.status
+        self.cache_diagnostic = cache.diagnostic
+        self._runtime_provenance = (
+            cache.provenance
+            if cache.provenance is not None
+            else provenance_identity(self.program.ir_provenance) if self.program.ir_provenance is not None else None
+        )
         self.shared_inputs = self.program.shared_inputs()
         self.shared_output = self.program.shared_output()
         np.copyto(self.shared_inputs["hnsw_adjacency"], self.packed_graph)
@@ -109,18 +207,7 @@ class NpuHnsw:
 
     @property
     def runtime_provenance(self) -> dict[str, object] | None:
-        value = self.program.ir_provenance
-        if value is None:
-            return None
-        return {
-            "driver_index": value.driver_index,
-            "device_index": value.device_index,
-            "driver_version": value.driver_version,
-            "vendor_id": value.vendor_id,
-            "device_id": value.device_id,
-            "graph_extension_version": value.graph_extension_version,
-            "compiler_version": list(value.compiler_version),
-        }
+        return self._runtime_provenance
 
     @property
     def movi_toolchain(self) -> dict[str, dict[str, object]]:
@@ -135,9 +222,19 @@ class NpuHnsw:
             result[relative] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         return result
 
-    def search(self, query: object, *, k: int = 5, ef_search: int = 16) -> SearchResult:
+    def search_many(
+        self,
+        queries: object,
+        *,
+        k: int = 5,
+        ef_search: int = 16,
+        verify: bool = True,
+    ) -> SearchBatch:
         started = perf_counter()
-        packed_query = pack_query(self.index, query, k=k, ef_search=ef_search)
+        query_matrix = np.asarray(queries, dtype=np.float32)
+        if query_matrix.ndim == 1:
+            query_matrix = query_matrix.reshape(1, -1)
+        packed_query, query_count = pack_queries(self.index, query_matrix, k=k, ef_search=ef_search)
         pack_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         np.copyto(self.shared_inputs["hnsw_query_vectors"], packed_query)
@@ -154,27 +251,58 @@ class NpuHnsw:
         started = perf_counter()
         copied = np.array(outputs["hnsw_results"], copy=True)
         download_ms = (perf_counter() - started) * 1000.0
-        packed_result = unpack_result(copied, index=self.index, k=k, ef_search=ef_search)
-        reference_ids, reference_distances, reference_stats = search_index(self.index, query, k=k, ef_search=ef_search)
-        if not np.array_equal(packed_result.ids, reference_ids) or not np.array_equal(
-            packed_result.distances.view("V4"), reference_distances.view("V4")
-        ):
-            raise RuntimeError("NPU HNSW result does not match the independent host traversal")
-        if packed_result.stats != reference_stats:
-            raise RuntimeError(
-                f"NPU HNSW traversal counters {packed_result.stats!r} do not match host {reference_stats!r}"
-            )
-        return SearchResult(
-            ids=packed_result.ids,
-            distances=packed_result.distances,
-            stats=packed_result.stats,
-            timings={
-                "pack_ms": pack_ms,
-                "upload_ms": upload_ms,
-                "graphinfer_wall_ms": graphinfer_wall_ms,
-                "download_ms": download_ms,
-            },
+        started = perf_counter()
+        packed_results = unpack_results(
+            copied,
+            index=self.index,
+            k=k,
+            ef_search=ef_search,
+            query_count=query_count,
         )
+        unpack_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
+        if verify:
+            for query, packed_result in zip(query_matrix, packed_results):
+                reference_ids, reference_distances, reference_stats = search_index(
+                    self.index, query, k=k, ef_search=ef_search
+                )
+                if not np.array_equal(packed_result.ids, reference_ids) or not np.array_equal(
+                    packed_result.distances.view("V4"), reference_distances.view("V4")
+                ):
+                    raise RuntimeError("NPU HNSW result does not match the independent host traversal")
+                if packed_result.stats != reference_stats:
+                    raise RuntimeError(
+                        "NPU HNSW traversal counters " f"{packed_result.stats!r} do not match host {reference_stats!r}"
+                    )
+        verify_ms = (perf_counter() - started) * 1000.0
+        timings = {
+            "pack_ms": pack_ms,
+            "upload_ms": upload_ms,
+            "graphinfer_wall_ms": graphinfer_wall_ms,
+            "download_ms": download_ms,
+            "unpack_ms": unpack_ms,
+            "host_verify_ms": verify_ms,
+        }
+        results = tuple(
+            SearchResult(
+                ids=result.ids,
+                distances=result.distances,
+                stats=result.stats,
+                timings=timings,
+            )
+            for result in packed_results
+        )
+        return SearchBatch(results=results, timings=timings)
+
+    def search(
+        self,
+        query: object,
+        *,
+        k: int = 5,
+        ef_search: int = 16,
+        verify: bool = True,
+    ) -> SearchResult:
+        return self.search_many(query, k=k, ef_search=ef_search, verify=verify).results[0]
 
     def close(self) -> None:
         self.program.close()

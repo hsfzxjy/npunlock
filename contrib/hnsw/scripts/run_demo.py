@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--warmup", type=int, default=3)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument(
+        "--cache-dir",
+        help="persistent compiled-program cache (default: OUTPUT_DIR/program-cache)",
+    )
     parser.add_argument("--cpu-only", action="store_true")
     return parser.parse_args()
 
@@ -78,6 +83,8 @@ def main() -> int:
         raise ValueError("query-count must be positive")
     if args.warmup < 0:
         raise ValueError("warmup must be nonnegative")
+    if not 1 <= args.batch_size <= 4:
+        raise ValueError("batch-size must be in [1, 4]")
     if not args.cpu_only and not args.movi_dll_dir:
         raise ValueError("--movi-dll-dir is required unless --cpu-only is selected")
 
@@ -156,26 +163,48 @@ def main() -> int:
     movi_toolchain = None
     carrier_explanation = None
     npu_build_ms = None
+    npu_cache_load_ms = None
+    npu_cache_status = None
+    npu_cache_diagnostic = None
+    npu_submission_wall_ms = None
     if not args.cpu_only:
+        cache_dir = Path(args.cache_dir) if args.cache_dir else output_dir / "program-cache"
         with NpuHnsw(
             index,
             movi_dll_dir=args.movi_dll_dir,
             native_dir=args.native_dir,
+            cache_dir=cache_dir,
         ) as backend:
             npu_build_ms = backend.build_ms
+            npu_cache_load_ms = backend.cache_load_ms
+            npu_cache_status = backend.cache_status
+            npu_cache_diagnostic = backend.cache_diagnostic
             patch_evidence = backend.patch_evidence
             build_manifest = backend.build_manifest
             runtime_provenance = backend.runtime_provenance
             movi_toolchain = backend.movi_toolchain
             carrier_explanation = backend.carrier_explanation
             for _ in range(args.warmup):
-                backend.search(queries[0], k=args.top_k, ef_search=args.ef_search)
-            for query in queries:
-                result = backend.search(query, k=args.top_k, ef_search=args.ef_search)
-                npu_ids.append(result.ids)
-                npu_distances.append(result.distances)
-                npu_timings.append(result.timings)
-                npu_stats.append(result.stats)
+                backend.search_many(
+                    queries[: args.batch_size],
+                    k=args.top_k,
+                    ef_search=args.ef_search,
+                    verify=False,
+                )
+            submission_started = perf_counter()
+            for start in range(0, len(queries), args.batch_size):
+                batch = backend.search_many(
+                    queries[start : start + args.batch_size],
+                    k=args.top_k,
+                    ef_search=args.ef_search,
+                    verify=False,
+                )
+                npu_timings.append(batch.timings)
+                for result in batch.results:
+                    npu_ids.append(result.ids)
+                    npu_distances.append(result.distances)
+                    npu_stats.append(result.stats)
+            npu_submission_wall_ms = (perf_counter() - submission_started) * 1000.0
         npu_ids_array = np.stack(npu_ids)
         if not np.array_equal(npu_ids_array, host_ids_array):
             raise RuntimeError("NPU and host HNSW neighbor IDs differ")
@@ -187,7 +216,7 @@ def main() -> int:
 
     index_bytes = index_path.read_bytes()
     report = {
-        "schema": "npunlock.contrib.hnsw.v1",
+        "schema": "npunlock.contrib.hnsw.v2",
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -227,7 +256,9 @@ def main() -> int:
             "mean_distance_evaluations": float(np.mean([stats.distance_count for stats in host_stats])),
             "total_upper_layer_hops": int(sum(stats.upper_hops for stats in host_stats)),
             "queries_terminated_by_bound": int(sum(stats.terminated_by_bound for stats in host_stats)),
-            "timing_warmup_queries": args.warmup,
+            "timing_warmup_submissions": args.warmup,
+            "queries_per_submission": args.batch_size,
+            "npu_submission_count": None if args.cpu_only else len(npu_timings),
         },
         "timings_ms": {
             "host_index_build": host_build_ms,
@@ -235,17 +266,33 @@ def main() -> int:
             "hnswlib_index_build": hnswlib_build_ms,
             "hnswlib_all_queries": hnswlib_search_ms,
             "npu_program_build": npu_build_ms,
+            "npu_program_cache_load": npu_cache_load_ms,
+            "npu_submission_loop_wall": npu_submission_wall_ms,
             "npu_graphinfer_all_queries": (
                 None if args.cpu_only else sum(item["graphinfer_wall_ms"] for item in npu_timings)
             ),
-            "npu_end_to_end_all_queries": None if args.cpu_only else sum(sum(item.values()) for item in npu_timings),
-            "npu_graphinfer_per_query_median": (
+            "npu_end_to_end_all_queries": (
+                None
+                if args.cpu_only
+                else sum(
+                    item["pack_ms"]
+                    + item["upload_ms"]
+                    + item["graphinfer_wall_ms"]
+                    + item["download_ms"]
+                    + item["unpack_ms"]
+                    for item in npu_timings
+                )
+            ),
+            "npu_graphinfer_per_query_amortized": (
+                None if args.cpu_only else sum(item["graphinfer_wall_ms"] for item in npu_timings) / args.query_count
+            ),
+            "npu_graphinfer_per_submission_median": (
                 None if args.cpu_only else float(np.median([item["graphinfer_wall_ms"] for item in npu_timings]))
             ),
-            "npu_graphinfer_per_query_min": (
+            "npu_graphinfer_per_submission_min": (
                 None if args.cpu_only else min(item["graphinfer_wall_ms"] for item in npu_timings)
             ),
-            "npu_graphinfer_per_query_max": (
+            "npu_graphinfer_per_submission_max": (
                 None if args.cpu_only else max(item["graphinfer_wall_ms"] for item in npu_timings)
             ),
         },
@@ -269,6 +316,10 @@ def main() -> int:
             "runtime_provenance": runtime_provenance,
             "movi_toolchain": movi_toolchain,
             "carrier_explanation": carrier_explanation,
+            "program_cache": {
+                "status": npu_cache_status,
+                "diagnostic": npu_cache_diagnostic,
+            },
         },
         "results": [
             {

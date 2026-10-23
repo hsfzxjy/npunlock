@@ -82,16 +82,20 @@ def pack_graph(index: HnswIndex) -> np.ndarray:
     return _replicate(chunk)
 
 
-def pack_query(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np.ndarray:
+def _validate_search_parameters(index: HnswIndex, *, k: int, ef_search: int) -> None:
+    if not isinstance(ef_search, int) or not 1 <= ef_search <= min(MAX_EF, index.vectors.shape[0]):
+        raise ValueError(f"ef_search must be in [1, {min(MAX_EF, index.vectors.shape[0])}]")
+    if not isinstance(k, int) or not 1 <= k <= min(MAX_K, ef_search):
+        raise ValueError(f"k must be in [1, {min(MAX_K, ef_search)}]")
+
+
+def _pack_query_chunk(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np.ndarray:
     validate_capacity(index)
     vector = np.ascontiguousarray(query, dtype=np.float32).reshape(-1)
     dimensions = index.vectors.shape[1]
     if vector.shape != (dimensions,) or not np.isfinite(vector).all():
         raise ValueError(f"query must be a finite vector of dimension {dimensions}")
-    if not isinstance(ef_search, int) or not 1 <= ef_search <= min(MAX_EF, index.vectors.shape[0]):
-        raise ValueError(f"ef_search must be in [1, {min(MAX_EF, index.vectors.shape[0])}]")
-    if not isinstance(k, int) or not 1 <= k <= min(MAX_K, ef_search):
-        raise ValueError(f"k must be in [1, {min(MAX_K, ef_search)}]")
+    _validate_search_parameters(index, k=k, ef_search=ef_search)
     chunk = np.zeros(CHUNK_ELEMENTS, dtype=np.float32)
     chunk[:QUERY_HEADER_ELEMENTS] = (
         QUERY_MAGIC,
@@ -107,18 +111,39 @@ def pack_query(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np
     chunk[cursor : cursor + dimensions] = vector
     cursor += dimensions
     chunk[cursor : cursor + index.vectors.size] = index.vectors.reshape(-1)
-    return _replicate(chunk)
+    return chunk
 
 
-def unpack_result(output: object, *, index: HnswIndex, k: int, ef_search: int) -> PackedResult:
-    flat = np.asarray(output, dtype=np.float32).reshape(-1)
-    if flat.size != LOGICAL_ELEMENTS:
-        raise ValueError(f"kernel output has {flat.size} elements, expected {LOGICAL_ELEMENTS}")
-    chunks = flat.reshape(REPLICAS, CHUNK_ELEMENTS)
-    for replica in range(1, REPLICAS):
-        if not np.array_equal(chunks[0].view("V4"), chunks[replica].view("V4")):
-            raise ValueError("replicated ACT invocations produced different output bytes")
-    chunk = chunks[0]
+def pack_queries(index: HnswIndex, queries: object, *, k: int, ef_search: int) -> tuple[np.ndarray, int]:
+    """Pack one to four queries into independent ACT invocation payloads.
+
+    Unused invocations repeat the first query. This keeps every invocation valid
+    and retains a byte-for-byte execution check for a single-query submission.
+    """
+
+    validate_capacity(index)
+    matrix = np.asarray(queries, dtype=np.float32)
+    dimensions = index.vectors.shape[1]
+    if matrix.ndim == 1:
+        matrix = matrix.reshape(1, -1)
+    if matrix.ndim != 2 or matrix.shape[1] != dimensions:
+        raise ValueError(f"queries must have shape (count, {dimensions})")
+    if not 1 <= matrix.shape[0] <= REPLICAS:
+        raise ValueError(f"query count must be in [1, {REPLICAS}]")
+    if not np.isfinite(matrix).all():
+        raise ValueError("queries must contain only finite values")
+    chunks = [_pack_query_chunk(index, query, k=k, ef_search=ef_search) for query in np.ascontiguousarray(matrix)]
+    active_count = len(chunks)
+    chunks.extend(chunks[0].copy() for _ in range(REPLICAS - active_count))
+    return np.concatenate(chunks).reshape(1, LOGICAL_ELEMENTS), active_count
+
+
+def pack_query(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np.ndarray:
+    packed, _ = pack_queries(index, query, k=k, ef_search=ef_search)
+    return packed
+
+
+def _unpack_chunk(chunk: np.ndarray, *, index: HnswIndex, k: int, ef_search: int) -> PackedResult:
     header = tuple(int(value) for value in chunk[:OUTPUT_HEADER_ELEMENTS])
     expected = (
         OUTPUT_MAGIC,
@@ -159,3 +184,27 @@ def unpack_result(output: object, *, index: HnswIndex, k: int, ef_search: int) -
             top_peak=header[14],
         ),
     )
+
+
+def unpack_results(
+    output: object,
+    *,
+    index: HnswIndex,
+    k: int,
+    ef_search: int,
+    query_count: int,
+) -> tuple[PackedResult, ...]:
+    flat = np.asarray(output, dtype=np.float32).reshape(-1)
+    if flat.size != LOGICAL_ELEMENTS:
+        raise ValueError(f"kernel output has {flat.size} elements, expected {LOGICAL_ELEMENTS}")
+    if not isinstance(query_count, int) or not 1 <= query_count <= REPLICAS:
+        raise ValueError(f"query_count must be in [1, {REPLICAS}]")
+    chunks = flat.reshape(REPLICAS, CHUNK_ELEMENTS)
+    for replica in range(query_count, REPLICAS):
+        if not np.array_equal(chunks[0].view("V4"), chunks[replica].view("V4")):
+            raise ValueError("unused replicated ACT invocations produced different output bytes")
+    return tuple(_unpack_chunk(chunks[query], index=index, k=k, ef_search=ef_search) for query in range(query_count))
+
+
+def unpack_result(output: object, *, index: HnswIndex, k: int, ef_search: int) -> PackedResult:
+    return unpack_results(output, index=index, k=k, ef_search=ef_search, query_count=1)[0]
