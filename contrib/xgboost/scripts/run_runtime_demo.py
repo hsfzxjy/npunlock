@@ -168,7 +168,7 @@ def main() -> int:
         provenance = backend.runtime_provenance
         assert provenance is not None
         report: dict[str, object] = {
-            "schema": "npunlock-xgboost-runtime-demo-v2",
+            "schema": "npunlock-xgboost-runtime-demo-v3",
             "model": {
                 "path": str(model_path),
                 "sha256": sha256(model_path),
@@ -186,7 +186,8 @@ def main() -> int:
                 "logical_elements_per_input": RUNTIME_LOGICAL_ELEMENTS,
                 "elements_per_invocation_input": RUNTIME_CHUNK_ELEMENTS,
                 "bytes_per_invocation_input": RUNTIME_CHUNK_ELEMENTS * 4,
-                "replicas": RUNTIME_REPLICAS,
+                "act_invocations": RUNTIME_REPLICAS,
+                "samples_per_invocation": capacity // RUNTIME_REPLICAS,
                 "header_elements": RUNTIME_MODEL_HEADER_ELEMENTS,
                 "elements_per_node": 2,
                 "encoded_model_elements": (
@@ -211,7 +212,8 @@ def main() -> int:
                 "margin_mean_abs_error": float(np.mean(margin_error)),
                 "probability_max_abs_error": float(np.max(probability_error)),
                 "probability_mean_abs_error": float(np.mean(probability_error)),
-                "all_replica_outputs_identical": True,
+                "all_active_invocation_shards_validated": True,
+                "inactive_invocations_match_the_first_shard": True,
                 "chunk_timings_ms": correctness_timings,
             },
             "performance": benchmark,

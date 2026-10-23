@@ -890,36 +890,87 @@ class _RuntimeProgramCache:
                     pass
 
 
-def runtime_batch_capacity(feature_count: int) -> int:
+def _runtime_invocation_capacity(feature_count: int) -> int:
     if not isinstance(feature_count, int) or not 0 < feature_count <= RUNTIME_MAX_FEATURES:
         raise ValueError(f"feature_count must be between 1 and {RUNTIME_MAX_FEATURES}")
     return (RUNTIME_CHUNK_ELEMENTS - HEADER_WORDS) // max(feature_count, OUTPUT_WORDS_PER_SAMPLE)
 
 
-def partitioned_runtime_batch_capacity(feature_count: int) -> int:
+def _partitioned_runtime_invocation_capacity(feature_count: int) -> int:
     if not isinstance(feature_count, int) or not 0 < feature_count <= RUNTIME_MAX_FEATURES:
         raise ValueError(f"feature_count must be between 1 and {RUNTIME_MAX_FEATURES}")
     return (RUNTIME_CHUNK_ELEMENTS - HEADER_WORDS) // max(feature_count + 1, OUTPUT_WORDS_PER_SAMPLE)
+
+
+def runtime_batch_capacity(feature_count: int) -> int:
+    return RUNTIME_REPLICAS * _runtime_invocation_capacity(feature_count)
+
+
+def partitioned_runtime_batch_capacity(feature_count: int) -> int:
+    return RUNTIME_REPLICAS * _partitioned_runtime_invocation_capacity(feature_count)
 
 
 def _replicate(chunk: np.ndarray) -> np.ndarray:
     return np.tile(chunk, RUNTIME_REPLICAS).reshape(1, RUNTIME_LOGICAL_ELEMENTS)
 
 
-def pack_runtime_features(features: object, *, feature_count: int) -> np.ndarray:
+def _shard_sizes(sample_count: int, invocation_capacity: int) -> tuple[int, ...]:
+    if sample_count < 0 or invocation_capacity <= 0:
+        raise ValueError("sample count and invocation capacity are invalid")
+    if sample_count > RUNTIME_REPLICAS * invocation_capacity:
+        raise ValueError("sample count exceeds the four-invocation capacity")
+    active_count = max(1, (sample_count + invocation_capacity - 1) // invocation_capacity)
+    return tuple(
+        min(invocation_capacity, max(0, sample_count - replica * invocation_capacity))
+        for replica in range(active_count)
+    )
+
+
+def _pack_runtime_feature_shards(
+    values: np.ndarray,
+    *,
+    feature_count: int,
+    invocation_capacity: int,
+    header_tail: tuple[int, int],
+) -> np.ndarray:
+    chunks = np.zeros((RUNTIME_REPLICAS, RUNTIME_CHUNK_ELEMENTS), dtype=np.float32)
+    sizes = _shard_sizes(values.shape[0], invocation_capacity)
+    row_start = 0
+    for replica, size in enumerate(sizes):
+        chunk = chunks[replica]
+        chunk[:HEADER_WORDS] = (size, feature_count, *header_tail)
+        row_end = row_start + size
+        shard = values[row_start:row_end]
+        chunk[HEADER_WORDS : HEADER_WORDS + shard.size] = shard.reshape(-1)
+        row_start = row_end
+    for replica in range(len(sizes), RUNTIME_REPLICAS):
+        chunks[replica] = chunks[0]
+    return chunks.reshape(1, RUNTIME_LOGICAL_ELEMENTS)
+
+
+def pack_runtime_features(
+    features: object,
+    *,
+    feature_count: int,
+    _invocation_capacity: int | None = None,
+) -> np.ndarray:
     values = np.asarray(features, dtype=np.float32)
     if values.ndim != 2 or values.shape[1] != feature_count:
         raise ValueError(f"features must have shape (N, {feature_count})")
     if np.isinf(values).any():
         raise ValueError("features may contain finite values or NaN, but not infinity")
-    capacity = runtime_batch_capacity(feature_count)
+    invocation_capacity = (
+        _runtime_invocation_capacity(feature_count) if _invocation_capacity is None else _invocation_capacity
+    )
+    capacity = RUNTIME_REPLICAS * invocation_capacity
     if values.shape[0] > capacity:
         raise ValueError(f"batch size {values.shape[0]} exceeds runtime capacity {capacity}")
-    chunk = np.zeros(RUNTIME_CHUNK_ELEMENTS, dtype=np.float32)
-    chunk[0] = values.shape[0]
-    chunk[1] = feature_count
-    chunk[HEADER_WORDS : HEADER_WORDS + values.size] = values.reshape(-1)
-    return _replicate(chunk)
+    return _pack_runtime_feature_shards(
+        values,
+        feature_count=feature_count,
+        invocation_capacity=invocation_capacity,
+        header_tail=(0, 0),
+    )
 
 
 def pack_connected_runtime_features(
@@ -933,20 +984,18 @@ def pack_connected_runtime_features(
         raise ValueError(f"features must have shape (N, {feature_count})")
     if np.isinf(values).any():
         raise ValueError("features may contain finite values or NaN, but not infinity")
-    capacity = partitioned_runtime_batch_capacity(feature_count)
+    invocation_capacity = _partitioned_runtime_invocation_capacity(feature_count)
+    capacity = RUNTIME_REPLICAS * invocation_capacity
     if values.shape[0] > capacity:
         raise ValueError(f"batch size {values.shape[0]} exceeds connected runtime capacity {capacity}")
     if not 1 < total_tree_count <= 64:
         raise ValueError("connected runtime total_tree_count must be between 2 and 64")
-    chunk = np.zeros(RUNTIME_CHUNK_ELEMENTS, dtype=np.float32)
-    chunk[:HEADER_WORDS] = (
-        values.shape[0],
-        feature_count,
-        total_tree_count,
-        0,
+    return _pack_runtime_feature_shards(
+        values,
+        feature_count=feature_count,
+        invocation_capacity=invocation_capacity,
+        header_tail=(total_tree_count, 0),
     )
-    chunk[HEADER_WORDS : HEADER_WORDS + values.size] = values.reshape(-1)
-    return _replicate(chunk)
 
 
 def pack_runtime_model(ensemble: Ensemble) -> np.ndarray:
@@ -1039,23 +1088,28 @@ def unpack_runtime_predictions(
     expected_samples: int,
     feature_count: int,
     tree_count: int,
+    invocation_capacity: int | None = None,
 ) -> Predictions:
     flat = np.asarray(output, dtype=np.float32).reshape(-1)
     if flat.size != RUNTIME_LOGICAL_ELEMENTS:
         raise ValueError(f"runtime kernel output has {flat.size} elements, expected {RUNTIME_LOGICAL_ELEMENTS}")
-    first = flat[:RUNTIME_CHUNK_ELEMENTS]
-    for replica in range(1, RUNTIME_REPLICAS):
-        start = replica * RUNTIME_CHUNK_ELEMENTS
-        other = flat[start : start + RUNTIME_CHUNK_ELEMENTS]
-        if not np.array_equal(first.view("V4"), other.view("V4")):
-            raise ValueError("runtime ACT invocations produced different output bytes")
-    header = tuple(int(float(value)) for value in first[:HEADER_WORDS])
-    expected_header = (expected_samples, feature_count, OUTPUT_WORDS_PER_SAMPLE, tree_count)
-    if header != expected_header:
-        raise ValueError(f"runtime kernel output header {header!r} does not match {expected_header!r}")
-    records = first[HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE].reshape(
-        expected_samples, OUTPUT_WORDS_PER_SAMPLE
-    )
+    per_invocation = _runtime_invocation_capacity(feature_count) if invocation_capacity is None else invocation_capacity
+    sizes = _shard_sizes(expected_samples, per_invocation)
+    chunks = flat.reshape(RUNTIME_REPLICAS, RUNTIME_CHUNK_ELEMENTS)
+    record_shards: list[np.ndarray] = []
+    for replica, size in enumerate(sizes):
+        chunk = chunks[replica]
+        header = tuple(int(float(value)) for value in chunk[:HEADER_WORDS])
+        expected_header = (size, feature_count, OUTPUT_WORDS_PER_SAMPLE, tree_count)
+        if header != expected_header:
+            raise ValueError(f"runtime kernel output header {header!r} does not match {expected_header!r}")
+        record_shards.append(
+            chunk[HEADER_WORDS : HEADER_WORDS + size * OUTPUT_WORDS_PER_SAMPLE].reshape(size, OUTPUT_WORDS_PER_SAMPLE)
+        )
+    for replica in range(len(sizes), RUNTIME_REPLICAS):
+        if not np.array_equal(chunks[0].view("V4"), chunks[replica].view("V4")):
+            raise ValueError("inactive runtime ACT invocations produced different output bytes")
+    records = np.concatenate(record_shards) if record_shards else np.empty((0, OUTPUT_WORDS_PER_SAMPLE))
     if not np.isfinite(records[:, :2]).all():
         raise ValueError("runtime kernel produced a non-finite margin or probability")
     if ((records[:, 1] < 0.0) | (records[:, 1] > 1.0)).any():
@@ -1076,23 +1130,28 @@ def validate_runtime_partial(
     expected_samples: int,
     feature_count: int,
     tree_count: int,
+    invocation_capacity: int | None = None,
 ) -> np.ndarray:
     flat = np.asarray(output, dtype=np.float32).reshape(-1)
     if flat.size != RUNTIME_LOGICAL_ELEMENTS:
         raise ValueError(f"runtime partial output has {flat.size} elements, expected " f"{RUNTIME_LOGICAL_ELEMENTS}")
-    first = flat[:RUNTIME_CHUNK_ELEMENTS]
-    for replica in range(1, RUNTIME_REPLICAS):
-        start = replica * RUNTIME_CHUNK_ELEMENTS
-        other = flat[start : start + RUNTIME_CHUNK_ELEMENTS]
-        if not np.array_equal(first.view("V4"), other.view("V4")):
-            raise ValueError("runtime partial ACT invocations produced different output bytes")
-    header = tuple(int(float(value)) for value in first[:HEADER_WORDS])
-    expected_header = (expected_samples, feature_count, OUTPUT_WORDS_PER_SAMPLE, tree_count)
-    if header != expected_header:
-        raise ValueError(f"runtime partial output header {header!r} does not match {expected_header!r}")
-    margins = first[HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE][::OUTPUT_WORDS_PER_SAMPLE]
-    if not np.isfinite(margins).all():
-        raise ValueError("runtime partial output contains a non-finite margin")
+    per_invocation = (
+        _partitioned_runtime_invocation_capacity(feature_count) if invocation_capacity is None else invocation_capacity
+    )
+    sizes = _shard_sizes(expected_samples, per_invocation)
+    chunks = flat.reshape(RUNTIME_REPLICAS, RUNTIME_CHUNK_ELEMENTS)
+    for replica, size in enumerate(sizes):
+        chunk = chunks[replica]
+        header = tuple(int(float(value)) for value in chunk[:HEADER_WORDS])
+        expected_header = (size, feature_count, OUTPUT_WORDS_PER_SAMPLE, tree_count)
+        if header != expected_header:
+            raise ValueError(f"runtime partial output header {header!r} does not match {expected_header!r}")
+        margins = chunk[HEADER_WORDS : HEADER_WORDS + size * OUTPUT_WORDS_PER_SAMPLE][::OUTPUT_WORDS_PER_SAMPLE]
+        if not np.isfinite(margins).all():
+            raise ValueError("runtime partial output contains a non-finite margin")
+    for replica in range(len(sizes), RUNTIME_REPLICAS):
+        if not np.array_equal(chunks[0].view("V4"), chunks[replica].view("V4")):
+            raise ValueError("inactive runtime partial ACT invocations produced different output bytes")
     return flat.reshape(1, RUNTIME_LOGICAL_ELEMENTS)
 
 
@@ -1109,7 +1168,8 @@ def _pack_chained_runtime_features(
         raise ValueError(f"features must have shape (N, {feature_count})")
     if np.isinf(values).any():
         raise ValueError("features may contain finite values or NaN, but not infinity")
-    capacity = partitioned_runtime_batch_capacity(feature_count)
+    invocation_capacity = _partitioned_runtime_invocation_capacity(feature_count)
+    capacity = RUNTIME_REPLICAS * invocation_capacity
     if values.shape[0] > capacity:
         raise ValueError(f"batch size {values.shape[0]} exceeds partitioned runtime capacity {capacity}")
     if not 0 < first_tree_count < total_tree_count <= 64:
@@ -1119,21 +1179,27 @@ def _pack_chained_runtime_features(
         expected_samples=values.shape[0],
         feature_count=feature_count,
         tree_count=first_tree_count,
-    ).reshape(-1)
-    records = validated[HEADER_WORDS : HEADER_WORDS + values.shape[0] * OUTPUT_WORDS_PER_SAMPLE].reshape(
-        values.shape[0], OUTPUT_WORDS_PER_SAMPLE
-    )
-    chunk = np.zeros(RUNTIME_CHUNK_ELEMENTS, dtype=np.float32)
-    chunk[:HEADER_WORDS] = (
-        values.shape[0],
-        feature_count,
-        first_tree_count,
-        total_tree_count,
-    )
-    feature_end = HEADER_WORDS + values.size
-    chunk[HEADER_WORDS:feature_end] = values.reshape(-1)
-    chunk[feature_end : feature_end + values.shape[0]] = records[:, 0]
-    return _replicate(chunk)
+        invocation_capacity=invocation_capacity,
+    ).reshape(RUNTIME_REPLICAS, RUNTIME_CHUNK_ELEMENTS)
+    sizes = _shard_sizes(values.shape[0], invocation_capacity)
+    chunks = np.zeros((RUNTIME_REPLICAS, RUNTIME_CHUNK_ELEMENTS), dtype=np.float32)
+    row_start = 0
+    for replica, size in enumerate(sizes):
+        row_end = row_start + size
+        shard = values[row_start:row_end]
+        source = validated[replica]
+        records = source[HEADER_WORDS : HEADER_WORDS + size * OUTPUT_WORDS_PER_SAMPLE].reshape(
+            size, OUTPUT_WORDS_PER_SAMPLE
+        )
+        chunk = chunks[replica]
+        chunk[:HEADER_WORDS] = (size, feature_count, first_tree_count, total_tree_count)
+        feature_end = HEADER_WORDS + shard.size
+        chunk[HEADER_WORDS:feature_end] = shard.reshape(-1)
+        chunk[feature_end : feature_end + size] = records[:, 0]
+        row_start = row_end
+    for replica in range(len(sizes), RUNTIME_REPLICAS):
+        chunks[replica] = chunks[0]
+    return chunks.reshape(1, RUNTIME_LOGICAL_ELEMENTS)
 
 
 def _validate_runtime_groups(prepared: npu.PreparedGraph, expected_count: int) -> None:
@@ -1498,6 +1564,7 @@ class RuntimeNpuXGBoost:
                 expected_samples=values.shape[0],
                 feature_count=self.ensemble.feature_count,
                 tree_count=len(self.ensemble.trees),
+                invocation_capacity=_partitioned_runtime_invocation_capacity(self.ensemble.feature_count),
             ),
             timings,
         )
@@ -1518,6 +1585,7 @@ class RuntimeNpuXGBoost:
                 expected_samples=values.shape[0],
                 feature_count=self.ensemble.feature_count,
                 tree_count=total_tree_count,
+                invocation_capacity=_partitioned_runtime_invocation_capacity(self.ensemble.feature_count),
             ),
             timings,
         )
@@ -1532,6 +1600,7 @@ class RuntimeNpuXGBoost:
             expected_samples=values.shape[0],
             feature_count=self.ensemble.feature_count,
             tree_count=len(self.ensemble.trees),
+            invocation_capacity=_runtime_invocation_capacity(self.ensemble.feature_count),
         )
         return predictions, timings
 
@@ -1753,6 +1822,7 @@ class ConnectedRuntimeNpuXGBoost:
             expected_samples=values.shape[0],
             feature_count=self.ensemble.feature_count,
             tree_count=len(self.ensemble.trees),
+            invocation_capacity=_partitioned_runtime_invocation_capacity(self.ensemble.feature_count),
         )
         return predictions, {
             "pack_ms": pack_ms,
@@ -1840,7 +1910,11 @@ class PartitionedRuntimeNpuXGBoost:
         if values.shape[0] > capacity:
             raise ValueError(f"batch size {values.shape[0]} exceeds partitioned runtime capacity {capacity}")
         started = perf_counter()
-        packed = pack_runtime_features(values, feature_count=self.ensemble.feature_count)
+        packed = pack_runtime_features(
+            values,
+            feature_count=self.ensemble.feature_count,
+            _invocation_capacity=_partitioned_runtime_invocation_capacity(self.ensemble.feature_count),
+        )
         pack_ms = (perf_counter() - started) * 1000.0
         first, first_timings = self.stages[0]._run_partial(values, packed=packed)
         started = perf_counter()

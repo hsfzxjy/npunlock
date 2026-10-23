@@ -23,6 +23,7 @@ from xgboost_npu.runtime import (
     RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE,
     RUNTIME_LOGICAL_ELEMENTS,
     RUNTIME_MAX_TOTAL_NODES,
+    RUNTIME_REPLICAS,
     ConnectedRuntimeNpuXGBoost,
     partitioned_runtime_batch_capacity,
 )
@@ -164,7 +165,7 @@ def main() -> int:
         provenance = backend.runtime_provenance
         assert provenance is not None
         report: dict[str, object] = {
-            "schema": "npunlock-xgboost-connected-runtime-demo-v4",
+            "schema": "npunlock-xgboost-connected-runtime-demo-v5",
             "model": {
                 "path": str(model_path),
                 "sha256": sha256(model_path),
@@ -188,11 +189,14 @@ def main() -> int:
                 "two_stage_maximum_nodes": 2 * RUNTIME_MAX_TOTAL_NODES,
                 "logical_elements_per_input": RUNTIME_LOGICAL_ELEMENTS,
                 "elements_per_invocation_input": RUNTIME_CHUNK_ELEMENTS,
+                "act_invocations_per_stage": RUNTIME_REPLICAS,
+                "samples_per_invocation": capacity // RUNTIME_REPLICAS,
                 "maximum_batch_size": capacity,
                 "host_role": (
-                    "packs/copies graph inputs and validates final replicas; stage A forwards "
-                    "features and raw margins directly to stage B inside the graph; traversal, "
-                    "margin addition, sigmoid, and class selection execute on the NPU"
+                    "shards samples across four invocation-local spans, packs/copies graph "
+                    "inputs, and validates every output shard; stage A forwards features and "
+                    "raw margins directly to stage B inside the graph; traversal, margin "
+                    "addition, sigmoid, and class selection execute on the NPU"
                 ),
                 "rounding_note": (
                     "the partition boundary changes FP32 addition association relative to a "
@@ -210,7 +214,8 @@ def main() -> int:
                 "margin_mean_abs_error": float(np.mean(margin_error)),
                 "probability_max_abs_error": float(np.max(probability_error)),
                 "probability_mean_abs_error": float(np.mean(probability_error)),
-                "all_replica_outputs_identical": True,
+                "all_active_invocation_shards_validated": True,
+                "inactive_invocations_match_the_first_shard": True,
                 "chunk_timings_ms": correctness_timings,
             },
             "performance": benchmark,
