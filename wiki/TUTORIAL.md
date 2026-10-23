@@ -688,6 +688,11 @@ different graph structure, not that the C expression itself is invalid.
   `XGBoostRuntime` facade automatically selects the validated single- or
   connected two-stage backend and chunks larger host batches. Both paths use
   one graph execution per chunk; the two-node path is a narrow positional
-  contract, not a claim of arbitrary graph fusion.
+  contract, not a claim of arbitrary graph fusion. Pass an explicit
+  `cache_dir` to reuse a model-independent compiled program across processes;
+  each hit rechecks live driver/compiler provenance, MoviTools and native
+  runtime file identity, bundle integrity, tensor contracts, and the
+  patch-report hash chain before execution. The runtime forest remains a
+  separately uploaded input and is not written to that cache.
 
 [Back to documentation index](README.md)

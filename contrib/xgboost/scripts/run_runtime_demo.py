@@ -65,6 +65,11 @@ def options() -> argparse.Namespace:
         type=Path,
         help="directory containing npunlock.dll and workers",
     )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="optional validated compiled-program cache directory",
+    )
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--runs", type=int, default=20)
     return parser.parse_args()
@@ -96,6 +101,7 @@ def main() -> int:
         ensemble,
         movi_dll_dir=args.movi_dll_dir,
         native_dir=args.native_dir,
+        cache_dir=args.cache_dir,
     ) as backend:
         npu_margins: list[np.ndarray] = []
         npu_probabilities: list[np.ndarray] = []
@@ -159,9 +165,10 @@ def main() -> int:
                 ),
             }
 
-        provenance = backend.program.ir_provenance
+        provenance = backend.runtime_provenance
+        assert provenance is not None
         report: dict[str, object] = {
-            "schema": "npunlock-xgboost-runtime-demo-v1",
+            "schema": "npunlock-xgboost-runtime-demo-v2",
             "model": {
                 "path": str(model_path),
                 "sha256": sha256(model_path),
@@ -217,15 +224,18 @@ def main() -> int:
                     backend.packed_model.tobytes()
                 ).hexdigest(),
                 "build_ms": backend.build_ms,
+                "cache_status": backend.cache_status,
+                "cache_load_ms": backend.cache_load_ms,
+                "cache_diagnostic": backend.cache_diagnostic,
                 "carrier": backend.carrier_explanation,
                 "patch_evidence": backend.patch_evidence,
                 "npunlock_manifest": backend.build_manifest,
                 "ir_provenance": {
-                    "driver_version": provenance.driver_version,
-                    "vendor_id": provenance.vendor_id,
-                    "device_id": provenance.device_id,
-                    "graph_extension_version": provenance.graph_extension_version,
-                    "compiler_version": list(provenance.compiler_version),
+                    "driver_version": provenance["driver_version"],
+                    "vendor_id": provenance["vendor_id"],
+                    "device_id": provenance["device_id"],
+                    "graph_extension_version": provenance["graph_extension_version"],
+                    "compiler_version": provenance["compiler_version"],
                 },
             },
         }

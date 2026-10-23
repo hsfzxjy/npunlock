@@ -34,10 +34,12 @@ class XGBoostRuntime:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None = None,
         timeout_ms: int = 20_000,
+        cache_dir: str | Path | None = None,
     ):
         self._movi_dll_dir = movi_dll_dir
         self._native_dir = native_dir
         self._timeout_ms = timeout_ms
+        self._cache_dir = cache_dir
         ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
         self._backend_kind = runtime_backend_kind(ensemble)
         self._backend = self._create_backend(ensemble, self._backend_kind)
@@ -54,6 +56,7 @@ class XGBoostRuntime:
             movi_dll_dir=self._movi_dll_dir,
             native_dir=self._native_dir,
             timeout_ms=self._timeout_ms,
+            cache_dir=self._cache_dir,
         )
 
     @property
@@ -69,6 +72,18 @@ class XGBoostRuntime:
     @property
     def patch_evidence(self) -> dict[str, object] | dict[str, dict[str, object]]:
         return self._backend.patch_evidence
+
+    @property
+    def cache_status(self) -> str:
+        return self._backend.cache_status
+
+    @property
+    def cache_load_ms(self) -> float:
+        return self._backend.cache_load_ms
+
+    @property
+    def cache_diagnostic(self) -> str | None:
+        return self._backend.cache_diagnostic
 
     def load_model(self, model: str | Path | Ensemble) -> None:
         ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)

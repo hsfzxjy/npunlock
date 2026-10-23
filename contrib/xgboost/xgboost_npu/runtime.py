@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import tempfile
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
@@ -20,6 +24,18 @@ RUNTIME_MODEL_MAGIC = 372020
 RUNTIME_MAX_FEATURES = 63
 RUNTIME_MAX_NODES_PER_TREE = 16
 RUNTIME_MAX_TOTAL_NODES = (RUNTIME_CHUNK_ELEMENTS - RUNTIME_MODEL_HEADER_ELEMENTS) // 2
+
+_RUNTIME_CACHE_SCHEMA = "npunlock-xgboost-runtime-cache-v1"
+_MOVITOOLS_DEPENDENCIES = (
+    "bin/moviCompile64.dll",
+    "bin/moviAsm64.dll",
+    "bin/moviLLD64.dll",
+    "lib/mlibm.a",
+)
+_NATIVE_RUNTIME_DEPENDENCIES = (
+    "npunlock.dll",
+    "npunlock_worker.exe",
+)
 
 _FEATURE_BITS = 6
 _CHILD_BITS = 4
@@ -574,6 +590,306 @@ void controlled_act(unsigned layerParams) {{
 )
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while block := source.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _dependency_records(root: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for relative in _MOVITOOLS_DEPENDENCIES:
+        path = root / Path(relative)
+        before = path.stat()
+        digest = _sha256_file(path)
+        after = path.stat()
+        if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+            raise RuntimeError(f"MoviTools dependency changed while hashing: {path}")
+        records.append(
+            {
+                "path": relative,
+                "size": after.st_size,
+                "mtime_ns": after.st_mtime_ns,
+                "sha256": digest,
+            }
+        )
+    return records
+
+
+def _native_runtime_identity(native_dir: str | Path | None) -> dict[str, object]:
+    if native_dir is not None:
+        root = Path(native_dir).expanduser().resolve()
+    elif configured := os.environ.get("NPUNLOCK_NATIVE_DIR"):
+        root = Path(configured).expanduser().resolve()
+    else:
+        root = Path(npu.__file__).resolve().parent / "_bin"
+    files: list[dict[str, object]] = []
+    for relative in _NATIVE_RUNTIME_DEPENDENCIES:
+        path = root / relative
+        if not path.is_file():
+            raise FileNotFoundError(f"native runtime dependency not found: {path}")
+        stat = path.stat()
+        files.append(
+            {
+                "path": relative,
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "sha256": _sha256_file(path),
+            }
+        )
+    return {"root": str(root), "files": files}
+
+
+def _provenance_identity(value: npu.IrCompileResult) -> dict[str, object]:
+    return {
+        "driver_index": value.driver_index,
+        "device_index": value.device_index,
+        "driver_version": value.driver_version,
+        "vendor_id": value.vendor_id,
+        "device_id": value.device_id,
+        "graph_extension_version": value.graph_extension_version,
+        "compiler_version": list(value.compiler_version),
+    }
+
+
+def _json_sha256(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+class _RuntimeProgramCache:
+    def __init__(
+        self,
+        cache_dir: str | Path | None,
+        *,
+        kind: str,
+        sources: tuple[bytes, ...],
+        movi_dll_dir: str | Path,
+        native_dir: str | Path | None,
+        timeout_ms: int,
+    ):
+        self.status = "disabled"
+        self.diagnostic: str | None = None
+        self.load_ms = 0.0
+        self.cache_dir: Path | None = None
+        self.movi_root: Path | None = None
+        self.libraries: npu.NativeLibraries | None = None
+        self.provenance: dict[str, object] | None = None
+        self.base: dict[str, object] | None = None
+        self.metadata_path: Path | None = None
+        if cache_dir is None:
+            return
+        cache_value = os.fspath(cache_dir)
+        if not cache_value:
+            raise ValueError("cache_dir must not be empty")
+        self.cache_dir = Path(cache_value).expanduser().resolve()
+        if self.cache_dir.exists() and not self.cache_dir.is_dir():
+            raise ValueError(f"cache_dir is not a directory: {self.cache_dir}")
+        self.movi_root = Path(movi_dll_dir).expanduser().resolve()
+        for relative in _MOVITOOLS_DEPENDENCIES:
+            dependency = self.movi_root / Path(relative)
+            if not dependency.is_file():
+                raise FileNotFoundError(f"MoviTools dependency not found: {dependency}")
+        self.libraries = npu.NativeLibraries(native_dir)
+        current = self.libraries.query_ir_provenance(timeout_ms=timeout_ms)
+        self.provenance = _provenance_identity(current)
+        self.base = {
+            "schema": _RUNTIME_CACHE_SCHEMA,
+            "kind": kind,
+            "sources": [hashlib.sha256(source).hexdigest() for source in sources],
+            "movi_root": str(self.movi_root),
+            "native_runtime": _native_runtime_identity(native_dir),
+            "provenance": self.provenance,
+        }
+        base_key = _json_sha256(self.base)
+        self.metadata_path = self.cache_dir / f"{kind}-{base_key}.json"
+        self.status = "miss"
+
+    @property
+    def enabled(self) -> bool:
+        return self.cache_dir is not None
+
+    def _dependencies_match(self, values: object) -> bool:
+        if not isinstance(values, list) or len(values) != len(_MOVITOOLS_DEPENDENCIES):
+            return False
+        assert self.movi_root is not None
+        for relative, value in zip(_MOVITOOLS_DEPENDENCIES, values):
+            if not isinstance(value, dict) or set(value) != {"path", "size", "mtime_ns", "sha256"}:
+                return False
+            if value["path"] != relative:
+                return False
+            size = value["size"]
+            mtime_ns = value["mtime_ns"]
+            digest = value["sha256"]
+            if (
+                isinstance(size, bool)
+                or not isinstance(size, int)
+                or size < 0
+                or isinstance(mtime_ns, bool)
+                or not isinstance(mtime_ns, int)
+                or mtime_ns < 0
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                return False
+            stat = (self.movi_root / Path(relative)).stat()
+            if stat.st_size != size or stat.st_mtime_ns != mtime_ns:
+                return False
+        return True
+
+    def load(self) -> npu.Program | None:
+        if not self.enabled:
+            return None
+        assert self.cache_dir is not None
+        assert self.metadata_path is not None
+        assert self.base is not None
+        assert self.libraries is not None
+        assert self.provenance is not None
+        if not self.metadata_path.is_file():
+            return None
+        started = perf_counter()
+        program: npu.Program | None = None
+        try:
+            if self.metadata_path.stat().st_size > 1024 * 1024:
+                raise ValueError("cache metadata exceeds 1 MiB")
+            metadata = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict) or set(metadata) != {
+                "schema",
+                "base",
+                "dependencies",
+                "full_key",
+                "program",
+            }:
+                raise ValueError("cache metadata fields are invalid")
+            if metadata["schema"] != _RUNTIME_CACHE_SCHEMA or metadata["base"] != self.base:
+                raise ValueError("cache metadata identity is stale")
+            dependencies = metadata["dependencies"]
+            if not self._dependencies_match(dependencies):
+                raise ValueError("cache dependency identity is stale")
+            full_key = _json_sha256({"base": self.base, "dependencies": dependencies})
+            if metadata["full_key"] != full_key:
+                raise ValueError("cache full key is invalid")
+            program_entry = metadata["program"]
+            if not isinstance(program_entry, dict) or set(program_entry) != {"path", "size", "sha256"}:
+                raise ValueError("cache program entry is invalid")
+            program_hash = program_entry["sha256"]
+            if (
+                not isinstance(program_hash, str)
+                or len(program_hash) != 64
+                or any(character not in "0123456789abcdef" for character in program_hash)
+            ):
+                raise ValueError("cache program SHA-256 is invalid")
+            expected_name = f"program-{program_hash}.npu"
+            if program_entry["path"] != expected_name:
+                raise ValueError("cache program path is invalid")
+            program_path = self.cache_dir / expected_name
+            if not program_path.is_file():
+                raise ValueError("cached program is missing")
+            size = program_entry["size"]
+            if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+                raise ValueError("cached program size is invalid")
+            if program_path.stat().st_size != size or _sha256_file(program_path) != program_hash:
+                raise ValueError("cached program size or SHA-256 is invalid")
+            program = npu.load(program_path, libraries=self.libraries)
+            if program.artifact_manifest is None:
+                raise ValueError("cached program has no artifact manifest")
+            manifest = json.loads(program.artifact_manifest.decode("utf-8"))
+            if manifest.get("provenance") != self.provenance:
+                raise ValueError("cached program driver/compiler provenance is stale")
+            self.status = "hit"
+            self.diagnostic = None
+            return program
+        except Exception as error:
+            if program is not None:
+                program.close()
+            self.status = "invalid"
+            self.diagnostic = str(error)
+            return None
+        finally:
+            self.load_ms = (perf_counter() - started) * 1000.0
+
+    def start_dependency_hashes(self) -> tuple[ThreadPoolExecutor, Future[list[dict[str, object]]]] | None:
+        if not self.enabled:
+            return None
+        assert self.movi_root is not None
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="npunlock-xgboost-cache")
+        return executor, executor.submit(_dependency_records, self.movi_root)
+
+    def store(
+        self,
+        program: npu.Program,
+        hash_task: tuple[ThreadPoolExecutor, Future[list[dict[str, object]]]] | None,
+    ) -> None:
+        if not self.enabled:
+            return
+        assert hash_task is not None
+        assert self.cache_dir is not None
+        assert self.metadata_path is not None
+        assert self.base is not None
+        assert self.provenance is not None
+        executor, future = hash_task
+        program_temp: Path | None = None
+        metadata_temp: Path | None = None
+        previous_status = self.status
+        previous_diagnostic = self.diagnostic
+        try:
+            dependencies = future.result()
+            if program.ir_provenance is None or _provenance_identity(program.ir_provenance) != self.provenance:
+                raise RuntimeError("built program provenance changed during cache construction")
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            descriptor, temp_name = tempfile.mkstemp(prefix=".program-", suffix=".tmp", dir=self.cache_dir)
+            os.close(descriptor)
+            program_temp = Path(temp_name)
+            program.export(program_temp)
+            program_size = program_temp.stat().st_size
+            program_hash = _sha256_file(program_temp)
+            program_name = f"program-{program_hash}.npu"
+            program_path = self.cache_dir / program_name
+            os.replace(program_temp, program_path)
+            program_temp = None
+            full_key = _json_sha256({"base": self.base, "dependencies": dependencies})
+            metadata = {
+                "schema": _RUNTIME_CACHE_SCHEMA,
+                "base": self.base,
+                "dependencies": dependencies,
+                "full_key": full_key,
+                "program": {
+                    "path": program_name,
+                    "size": program_size,
+                    "sha256": program_hash,
+                },
+            }
+            descriptor, temp_name = tempfile.mkstemp(prefix=".metadata-", suffix=".tmp", dir=self.cache_dir)
+            os.close(descriptor)
+            metadata_temp = Path(temp_name)
+            metadata_temp.write_text(
+                json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(metadata_temp, self.metadata_path)
+            metadata_temp = None
+            self.status = "refreshed" if previous_status == "invalid" else "stored"
+            self.diagnostic = previous_diagnostic if self.status == "refreshed" else None
+        except Exception as error:
+            self.status = "write-error"
+            self.diagnostic = str(error)
+        finally:
+            executor.shutdown(wait=True)
+            if program_temp is not None:
+                try:
+                    program_temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if metadata_temp is not None:
+                try:
+                    metadata_temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
 def runtime_batch_capacity(feature_count: int) -> int:
     if not isinstance(feature_count, int) or not 0 < feature_count <= RUNTIME_MAX_FEATURES:
         raise ValueError(f"feature_count must be between 1 and {RUNTIME_MAX_FEATURES}")
@@ -865,6 +1181,67 @@ def _summarize_patch_report(payload: bytes) -> dict[str, object]:
     }
 
 
+def _validate_runtime_program(
+    program: npu.Program,
+    *,
+    input_names: tuple[str, ...],
+    patch_report_count: int,
+) -> None:
+    expected_inputs = tuple((name, (1, RUNTIME_LOGICAL_ELEMENTS), "f32") for name in input_names)
+    actual_inputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.input_contracts)
+    if actual_inputs != expected_inputs:
+        raise RuntimeError(f"runtime XGBoost program input contract changed: {actual_inputs!r}")
+    actual_outputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.output_contracts)
+    expected_outputs = (("xgboost_output", (1, RUNTIME_LOGICAL_ELEMENTS), "f32"),)
+    if actual_outputs != expected_outputs:
+        raise RuntimeError(f"runtime XGBoost program output contract changed: {actual_outputs!r}")
+    if len(program.patch_reports) != patch_report_count:
+        raise RuntimeError(
+            f"runtime XGBoost program has {len(program.patch_reports)} patch reports, " f"expected {patch_report_count}"
+        )
+    reports: list[dict[str, object]] = []
+    for index, payload in enumerate(program.patch_reports):
+        try:
+            report = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"runtime XGBoost patch report {index} is invalid") from error
+        if not isinstance(report, dict):
+            raise RuntimeError(f"runtime XGBoost patch report {index} is invalid")
+        graph_contract = report.get("graph_contract")
+        targets = report.get("targets")
+        validation = report.get("validation")
+        if (
+            report.get("schema") != "npunlock.patchblob.v1"
+            or not isinstance(graph_contract, dict)
+            or graph_contract.get("compiler") != "8.3"
+            or graph_contract.get("npu") != "3720"
+            or not isinstance(targets, list)
+            or len(targets) != RUNTIME_REPLICAS
+            or not isinstance(validation, dict)
+            or validation.get("section_contents_preserved") is not True
+            or validation.get("mutation_set_preserved") is not True
+        ):
+            raise RuntimeError(f"runtime XGBoost patch report {index} contract changed")
+        first_invocation = index * RUNTIME_REPLICAS
+        for target_offset, target in enumerate(targets):
+            if (
+                not isinstance(target, dict)
+                or target.get("invocation_index") != first_invocation + target_offset
+                or target.get("range_index") != first_invocation + target_offset
+                or target.get("input_count") != 2
+                or target.get("element_count") != RUNTIME_CHUNK_ELEMENTS
+                or target.get("span_bytes") != RUNTIME_CHUNK_ELEMENTS * 4
+                or target.get("contract_flags") != 0x3B
+            ):
+                raise RuntimeError(f"runtime XGBoost patch report {index} target contract changed")
+        reports.append(report)
+    for previous, current in zip(reports, reports[1:]):
+        if previous.get("output_graph_sha256") != current.get("input_graph_sha256"):
+            raise RuntimeError("runtime XGBoost patch report graph hash chain is broken")
+    if not reports or reports[-1].get("output_graph_sha256") != hashlib.sha256(program.graph_blob).hexdigest():
+        raise RuntimeError("runtime XGBoost final graph hash does not match its patch report")
+
+
 class RuntimeNpuXGBoost:
     """Binary XGBoost inference with a complete runtime-supplied FP32 forest."""
 
@@ -875,12 +1252,14 @@ class RuntimeNpuXGBoost:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None = None,
         timeout_ms: int = 20_000,
+        cache_dir: str | Path | None = None,
     ):
         self._initialize(
             model,
             movi_dll_dir=movi_dll_dir,
             native_dir=native_dir,
             timeout_ms=timeout_ms,
+            cache_dir=cache_dir,
             kernel_source=RUNTIME_KERNEL_SOURCE,
             mode="normal",
         )
@@ -892,6 +1271,7 @@ class RuntimeNpuXGBoost:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None,
         timeout_ms: int,
+        cache_dir: str | Path | None,
         kernel_source: bytes,
         mode: str,
     ):
@@ -920,21 +1300,71 @@ class RuntimeNpuXGBoost:
             carrier="Subtract",
             _name="xgboost_output",
         )
-        prepared = npu.prepare(
-            npu.Graph(
-                [features, forest],
-                [output],
-                name=f"xgboost_runtime_{mode}",
-            ),
+        graph = npu.Graph(
+            [features, forest],
+            [output],
+            name=f"xgboost_runtime_{mode}",
+        )
+        cache_started = perf_counter()
+        cache = _RuntimeProgramCache(
+            cache_dir,
+            kind=f"runtime-{mode}",
+            sources=(kernel_source,),
+            movi_dll_dir=movi_dll_dir,
             native_dir=native_dir,
-            build_flags="",
             timeout_ms=timeout_ms,
         )
-        _validate_runtime_groups(prepared, 1)
-        started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
-        self.build_ms = (perf_counter() - started) * 1000.0
-        self.carrier_explanation = prepared.explain()
+        self.program = cache.load()
+        if self.program is not None:
+            try:
+                _validate_runtime_program(
+                    self.program,
+                    input_names=("xgboost_features", "xgboost_forest"),
+                    patch_report_count=1,
+                )
+            except Exception as error:
+                self.program.close()
+                self.program = None
+                cache.status = "invalid"
+                cache.diagnostic = str(error)
+        self.cache_load_ms = (perf_counter() - cache_started) * 1000.0 if cache.enabled else 0.0
+        if self.program is None:
+            hash_task = cache.start_dependency_hashes()
+            try:
+                prepared = npu.prepare(
+                    graph,
+                    native_dir=native_dir,
+                    build_flags="",
+                    timeout_ms=timeout_ms,
+                    libraries=cache.libraries,
+                )
+                _validate_runtime_groups(prepared, 1)
+                started = perf_counter()
+                self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+                self.build_ms = (perf_counter() - started) * 1000.0
+                _validate_runtime_program(
+                    self.program,
+                    input_names=("xgboost_features", "xgboost_forest"),
+                    patch_report_count=1,
+                )
+                self.carrier_explanation = prepared.explain()
+                cache.store(self.program, hash_task)
+            except BaseException:
+                if hash_task is not None:
+                    hash_task[0].shutdown(wait=True)
+                if self.program is not None:
+                    self.program.close()
+                raise
+        else:
+            self.build_ms = 0.0
+            self.carrier_explanation = "loaded validated runtime program from cache"
+        self.cache_status = cache.status
+        self.cache_diagnostic = cache.diagnostic
+        self.runtime_provenance = (
+            cache.provenance
+            if cache.provenance is not None
+            else _provenance_identity(self.program.ir_provenance) if self.program.ir_provenance is not None else None
+        )
         self.shared_inputs = self.program.shared_inputs()
         self.shared_output = self.program.shared_output()
         started = perf_counter()
@@ -949,6 +1379,7 @@ class RuntimeNpuXGBoost:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None,
         timeout_ms: int,
+        cache_dir: str | Path | None = None,
     ) -> "RuntimeNpuXGBoost":
         stage = cls.__new__(cls)
         stage._initialize(
@@ -956,6 +1387,7 @@ class RuntimeNpuXGBoost:
             movi_dll_dir=movi_dll_dir,
             native_dir=native_dir,
             timeout_ms=timeout_ms,
+            cache_dir=cache_dir,
             kernel_source=RUNTIME_KERNEL_SOURCE,
             mode="partial",
         )
@@ -969,6 +1401,7 @@ class RuntimeNpuXGBoost:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None,
         timeout_ms: int,
+        cache_dir: str | Path | None = None,
     ) -> "RuntimeNpuXGBoost":
         stage = cls.__new__(cls)
         stage._initialize(
@@ -976,6 +1409,7 @@ class RuntimeNpuXGBoost:
             movi_dll_dir=movi_dll_dir,
             native_dir=native_dir,
             timeout_ms=timeout_ms,
+            cache_dir=cache_dir,
             kernel_source=RUNTIME_CHAIN_KERNEL_SOURCE,
             mode="chained",
         )
@@ -1123,6 +1557,7 @@ class ConnectedRuntimeNpuXGBoost:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None = None,
         timeout_ms: int = 20_000,
+        cache_dir: str | Path | None = None,
     ):
         self.ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
         self.partitions = partition_runtime_ensemble(self.ensemble)
@@ -1163,34 +1598,81 @@ class ConnectedRuntimeNpuXGBoost:
                 carrier="Subtract",
                 _name="xgboost_output",
             )
-            prepared = npu.prepare(
-                npu.Graph(
-                    [features, forest_a, forest_b],
-                    [output],
-                    name="xgboost_runtime_connected",
-                ),
+            graph = npu.Graph(
+                [features, forest_a, forest_b],
+                [output],
+                name="xgboost_runtime_connected",
+            )
+            cache_started = perf_counter()
+            cache = _RuntimeProgramCache(
+                cache_dir,
+                kind="runtime-connected",
+                sources=(RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE, RUNTIME_CHAIN_KERNEL_SOURCE),
+                movi_dll_dir=movi_dll_dir,
                 native_dir=native_dir,
-                build_flags="",
                 timeout_ms=timeout_ms,
             )
-            _validate_runtime_groups(prepared, 2)
-            mapping_indices = tuple(
-                mapping.group_indices if mapping.status == "automatic" else () for mapping in prepared.mappings
+            self.program = cache.load()
+            if self.program is not None:
+                try:
+                    _validate_runtime_program(
+                        self.program,
+                        input_names=("xgboost_features", "xgboost_forest_a", "xgboost_forest_b"),
+                        patch_report_count=2,
+                    )
+                except Exception as error:
+                    self.program.close()
+                    self.program = None
+                    cache.status = "invalid"
+                    cache.diagnostic = str(error)
+            self.cache_load_ms = (perf_counter() - cache_started) * 1000.0 if cache.enabled else 0.0
+            if self.program is None:
+                hash_task = cache.start_dependency_hashes()
+                try:
+                    prepared = npu.prepare(
+                        graph,
+                        native_dir=native_dir,
+                        build_flags="",
+                        timeout_ms=timeout_ms,
+                        libraries=cache.libraries,
+                    )
+                    _validate_runtime_groups(prepared, 2)
+                    mapping_indices = tuple(
+                        mapping.group_indices if mapping.status == "automatic" else () for mapping in prepared.mappings
+                    )
+                    if mapping_indices != ((0,), (1,)):
+                        raise RuntimeError(
+                            "connected runtime carrier lost its one-to-one positional mapping: " f"{mapping_indices!r}"
+                        )
+                    plan = prepared.plan()
+                    started = perf_counter()
+                    self.program = plan.build(movi_dll_dir=movi_dll_dir)
+                    self.build_ms = (perf_counter() - started) * 1000.0
+                    _validate_runtime_program(
+                        self.program,
+                        input_names=("xgboost_features", "xgboost_forest_a", "xgboost_forest_b"),
+                        patch_report_count=2,
+                    )
+                    self.carrier_explanation = prepared.explain()
+                    self.build_explanation = plan.explain()
+                    cache.store(self.program, hash_task)
+                except BaseException:
+                    if hash_task is not None:
+                        hash_task[0].shutdown(wait=True)
+                    raise
+            else:
+                self.build_ms = 0.0
+                self.carrier_explanation = "loaded validated connected runtime program from cache"
+                self.build_explanation = "loaded validated connected runtime program from cache"
+            self.cache_status = cache.status
+            self.cache_diagnostic = cache.diagnostic
+            self.runtime_provenance = (
+                cache.provenance
+                if cache.provenance is not None
+                else (
+                    _provenance_identity(self.program.ir_provenance) if self.program.ir_provenance is not None else None
+                )
             )
-            if mapping_indices != ((0,), (1,)):
-                raise RuntimeError(
-                    "connected runtime carrier lost its one-to-one positional mapping: " f"{mapping_indices!r}"
-                )
-            plan = prepared.plan()
-            started = perf_counter()
-            self.program = plan.build(movi_dll_dir=movi_dll_dir)
-            self.build_ms = (perf_counter() - started) * 1000.0
-            if len(self.program.patch_reports) != 2:
-                raise RuntimeError(
-                    f"connected runtime produced {len(self.program.patch_reports)} patch reports, expected 2"
-                )
-            self.carrier_explanation = prepared.explain()
-            self.build_explanation = plan.explain()
             self.shared_inputs = self.program.shared_inputs()
             self.shared_output = self.program.shared_output()
             started = perf_counter()
@@ -1303,6 +1785,7 @@ class PartitionedRuntimeNpuXGBoost:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None = None,
         timeout_ms: int = 20_000,
+        cache_dir: str | Path | None = None,
     ):
         self.ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
         self.partitions = partition_runtime_ensemble(self.ensemble)
@@ -1314,6 +1797,7 @@ class PartitionedRuntimeNpuXGBoost:
                     movi_dll_dir=movi_dll_dir,
                     native_dir=native_dir,
                     timeout_ms=timeout_ms,
+                    cache_dir=cache_dir,
                 )
             )
             self.stages.append(
@@ -1322,6 +1806,7 @@ class PartitionedRuntimeNpuXGBoost:
                     movi_dll_dir=movi_dll_dir,
                     native_dir=native_dir,
                     timeout_ms=timeout_ms,
+                    cache_dir=cache_dir,
                 )
             )
         except BaseException:
