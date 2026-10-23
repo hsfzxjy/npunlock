@@ -122,8 +122,11 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .workspace.inspector-hidden #inspector-panel, .workspace.inspector-hidden #right-splitter { display: none; }
 
 .panel { min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-1); }
-.tree-panel { border-right: 1px solid var(--border); }
-.inspector-panel { border-left: 1px solid var(--border); }
+.tree-panel { grid-column: 1; border-right: 1px solid var(--border); }
+#left-splitter { grid-column: 2; }
+.hex-panel { grid-column: 3; }
+#right-splitter { grid-column: 4; }
+.inspector-panel { grid-column: 5; border-left: 1px solid var(--border); }
 .splitter { background: var(--bg); cursor: col-resize; }
 .splitter:hover, .splitter.dragging { background: var(--select-line); }
 
@@ -175,18 +178,24 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   white-space: nowrap;
 }
 
-.hex-head {
-  min-width: 78ch;
+.hex-head-viewport {
+  overflow: hidden;
   color: var(--text-faint);
   background: var(--surface-1);
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
+}
+.hex-head {
+  height: 100%;
+  min-width: 78ch;
 }
 .offset-head { text-align: right; }
-.hex-labels { word-spacing: .34ch; }
-.ascii-head { letter-spacing: 0; }
+.hex-labels, .ascii-labels { display: flex; height: 18px; align-items: stretch; }
+.hex-labels { gap: .42ch; }
+.hex-labels .hex-label:nth-child(8) { margin-right: .68ch; }
+.hex-label { width: 2ch; min-width: 2ch; text-align: center; }
+.ascii-labels span { width: 1ch; min-width: 1ch; text-align: center; }
 
-.hex-scroll { position: relative; overflow: auto; min-width: 0; scrollbar-color: var(--border-strong) transparent; }
+.hex-scroll { position: relative; overflow: auto; min-width: 0; scrollbar-color: var(--border-strong) transparent; font-family: var(--mono); }
 .hex-space { width: 78ch; min-width: 100%; }
 .hex-rows { position: absolute; inset: 0 auto auto 0; min-width: 78ch; width: 100%; pointer-events: none; }
 .hex-row { position: absolute; left: 0; right: 0; height: var(--row-height); pointer-events: auto; }

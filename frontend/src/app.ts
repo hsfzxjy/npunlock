@@ -100,6 +100,7 @@ class Viewer {
   private artifactTabs = required<HTMLElement>("artifact-tabs");
   private tree = required<HTMLElement>("tree");
   private inspector = required<HTMLElement>("inspector");
+  private hexHead = required<HTMLElement>("hex-head");
   private hexScroll = required<HTMLElement>("hex-scroll");
   private hexSpace = required<HTMLElement>("hex-space");
   private hexRows = required<HTMLElement>("hex-rows");
@@ -170,7 +171,10 @@ class Viewer {
   }
 
   private bind(): void {
-    this.hexScroll.addEventListener("scroll", () => this.renderHex());
+    this.hexScroll.addEventListener("scroll", () => {
+      this.hexHead.scrollLeft = this.hexScroll.scrollLeft;
+      this.renderHex();
+    });
     this.hexScroll.addEventListener("keydown", event => this.hexKey(event));
     required<HTMLFormElement>("offset-form").addEventListener("submit", event => {
       event.preventDefault();

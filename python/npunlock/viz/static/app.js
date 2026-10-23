@@ -76,6 +76,7 @@ class Viewer {
     artifactTabs = required("artifact-tabs");
     tree = required("tree");
     inspector = required("inspector");
+    hexHead = required("hex-head");
     hexScroll = required("hex-scroll");
     hexSpace = required("hex-space");
     hexRows = required("hex-rows");
@@ -150,7 +151,10 @@ class Viewer {
             this.assignDepth(child, depth + 1);
     }
     bind() {
-        this.hexScroll.addEventListener("scroll", () => this.renderHex());
+        this.hexScroll.addEventListener("scroll", () => {
+            this.hexHead.scrollLeft = this.hexScroll.scrollLeft;
+            this.renderHex();
+        });
         this.hexScroll.addEventListener("keydown", event => this.hexKey(event));
         required("offset-form").addEventListener("submit", event => {
             event.preventDefault();

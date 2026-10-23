@@ -190,6 +190,9 @@ def test_bundled_frontend() -> None:
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
+    index = static.joinpath("index.html").read_text(encoding="utf-8")
+    assert index.count('class="hex-label"') == 16
+    assert "hex-head-viewport" in index
 
 
 def main() -> None:
