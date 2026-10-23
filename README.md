@@ -227,6 +227,7 @@ passthrough, so Linux execution is not a supported configuration yet.
 - **[Custom-kernel tutorial](wiki/TUTORIAL.md)** — write a first kernel, choose a compatible carrier, and grow to multi-input and mixed-precision graphs
 - **[Getting MoviTools](wiki/GET_MOVITOOLS.md)** — obtain the compiler toolchain without installing the legacy driver
 - **[Python API](wiki/PYTHON_API.md)** — construct, compile, and execute graphs from Python
+- **[Binary artifact visualizer](docs/VISUALIZER.md)** — inspect bytes, semantic spans, ELF structure, and cross-artifact references locally
 - **[Writing custom kernels](wiki/CUSTOM_KERNELS.md)** — C entry point, tensor contract, and examples
 - **[How npunlock works](wiki/HOW_NPUNLOCK_WORKS.md)** — graph compilation and custom-kernel integration
 - **[Reverse-engineering breakthroughs](wiki/REVERSE_ENGINEERING.md)** — the experiments and discoveries that made custom kernels possible

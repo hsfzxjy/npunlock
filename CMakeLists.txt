@@ -610,6 +610,10 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
         NAME tutorial_docs
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_tutorial.py
       )
+      add_test(
+        NAME python_visualizer
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_viz.py
+      )
     endif()
   endif()
 

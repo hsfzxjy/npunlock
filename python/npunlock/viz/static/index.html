@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Artifact viewer</title>
+    <link rel="stylesheet" href="app.css">
+  </head>
+  <body>
+    <main id="app" aria-label="Binary artifact workspace">
+      <header class="toolbar">
+        <nav id="history-controls" class="button-group" aria-label="Navigation history">
+          <button id="back" type="button" title="Back (Alt+Left)" aria-label="Back">‹</button>
+          <button id="forward" type="button" title="Forward (Alt+Right)" aria-label="Forward">›</button>
+        </nav>
+        <nav id="artifact-tabs" class="artifact-tabs" aria-label="Artifacts"></nav>
+        <form id="offset-form" class="offset-form" autocomplete="off">
+          <label for="offset-input">offset</label>
+          <input id="offset-input" inputmode="text" spellcheck="false" aria-label="File offset">
+        </form>
+        <button id="copy" type="button" title="Copy current location">copy</button>
+        <button id="toggle-tree" type="button" title="Show or hide structure" aria-pressed="true">structure</button>
+        <button id="toggle-inspector" type="button" title="Show or hide inspector" aria-pressed="true">inspector</button>
+      </header>
+      <section id="workspace" class="workspace">
+        <aside id="tree-panel" class="panel tree-panel" aria-label="Structure">
+          <div id="tree" class="tree" role="tree"></div>
+        </aside>
+        <div id="left-splitter" class="splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+        <section id="hex-panel" class="hex-panel" aria-label="Hex bytes">
+          <div id="hex-head" class="hex-head" aria-hidden="true">
+            <span class="offset-head">file offset</span>
+            <span class="hex-labels">00 01 02 03 04 05 06 07&nbsp; 08 09 0a 0b 0c 0d 0e 0f</span>
+            <span class="ascii-head">0123456789abcdef</span>
+          </div>
+          <div id="hex-scroll" class="hex-scroll" tabindex="0" aria-label="Virtualized hex data">
+            <div id="hex-space" class="hex-space"></div>
+            <div id="hex-rows" class="hex-rows"></div>
+          </div>
+          <div id="status" class="status" role="status"></div>
+        </section>
+        <div id="right-splitter" class="splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+        <aside id="inspector-panel" class="panel inspector-panel" aria-label="Inspector">
+          <div id="inspector" class="inspector"></div>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -19,6 +19,7 @@ where = ["python"]
 [tool.setuptools.package-data]
 npunlock = ["py.typed", "*.pyi", "include/npunlock/*.h"]
 "npunlock._bin" = ["*.dll", "*.exe"]
+"npunlock.viz" = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.black]
 line-length = 120

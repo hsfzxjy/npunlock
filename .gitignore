@@ -10,3 +10,4 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 *.excalidraw
+/frontend/node_modules/
