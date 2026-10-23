@@ -17,8 +17,8 @@ CONTRIB_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CONTRIB_ROOT))
 
 from xgboost_npu.backend import NpuXGBoost
-from xgboost_npu.model import load_ensemble
-from xgboost_npu.packing import batch_capacity
+from xgboost_npu.model import Ensemble, load_ensemble
+from xgboost_npu.packing import batch_capacity, transport_spec
 
 
 def summary(values: list[float]) -> dict[str, float]:
@@ -46,58 +46,57 @@ def options() -> argparse.Namespace:
     parser.add_argument("--native-dir", type=Path, help="directory containing npunlock.dll and workers")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--runs", type=int, default=20)
+    parser.add_argument(
+        "--transport",
+        choices=("f16", "f32", "both"),
+        default="both",
+        help="carrier transport profile to execute (default: both)",
+    )
     return parser.parse_args()
 
 
-def main() -> int:
-    args = options()
-    if args.warmup < 0 or args.runs <= 0:
-        raise SystemExit("--warmup must be nonnegative and --runs must be positive")
-    model_path = (args.model_dir / "breast_cancer_xgboost.json").resolve()
-    validation_path = (args.model_dir / "validation.npz").resolve()
-    for path in (model_path, validation_path):
-        if not path.is_file():
-            raise SystemExit(f"required input does not exist: {path}")
-    with np.load(validation_path, allow_pickle=False) as data:
-        features = np.asarray(data["features"], dtype=np.float32)
-        labels = np.asarray(data["labels"], dtype=np.int32)
-    ensemble = load_ensemble(model_path)
-    capacity = batch_capacity(ensemble.feature_count)
-    transported = features.astype(np.float16).astype(np.float32)
-    booster = xgb.Booster()
-    booster.load_model(model_path)
+def run_transport(
+    *,
+    name: str,
+    ensemble: Ensemble,
+    features: np.ndarray,
+    labels: np.ndarray,
+    booster: xgb.Booster,
+    output_dir: Path,
+    movi_dll_dir: Path,
+    native_dir: Path | None,
+    warmup: int,
+    runs: int,
+) -> dict[str, object]:
+    spec = transport_spec(name)
+    capacity = batch_capacity(ensemble.feature_count, transport=spec)
+    transported = features.astype(spec.numpy_dtype).astype(np.float32)
     matrix = xgb.DMatrix(transported)
     official_margins = booster.predict(matrix, output_margin=True).astype(np.float32)
     official_probabilities = booster.predict(matrix).astype(np.float32)
     official_classes = (official_probabilities >= 0.5).astype(np.int32)
     parser_margins = ensemble.predict_margin(transported)
+    kernel_path = output_dir / f"generated_xgboost_{name}.c"
 
-    output_dir = args.output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    kernel_path = output_dir / "generated_xgboost.c"
-    report: dict[str, object] = {
-        "schema": "npunlock-xgboost-demo-v1",
-        "model": {
-            "path": str(model_path),
-            "sha256": sha256(model_path),
-            "features": ensemble.feature_count,
-            "trees": len(ensemble.trees),
-            "nodes": ensemble.node_count,
-            "max_depth": ensemble.max_depth,
-            "base_margin": ensemble.base_margin,
+    result: dict[str, object] = {
+        "transport": {
+            "profile": name,
+            "graph_dtype": spec.dtype,
+            "logical_elements": spec.logical_elements,
+            "elements_per_invocation": spec.chunk_elements,
+            "bytes_per_invocation": spec.chunk_elements * spec.numpy_dtype.itemsize,
             "maximum_batch_size": capacity,
+            "arithmetic": "FP32 SHAVE comparisons, accumulation, and sigmoid",
         },
-        "versions": {
-            name: importlib.metadata.version(name)
-            for name in ("numpy", "xgboost", "scikit-learn", "openvino")
-        },
-        "transport": "FP32 input -> explicit FP16 transport -> FP32 SHAVE arithmetic -> FP16 output",
-        "reference_parser_max_abs_margin_error": float(np.max(np.abs(parser_margins - official_margins))),
+        "reference_parser_max_abs_margin_error": float(
+            np.max(np.abs(parser_margins - official_margins))
+        ),
     }
     with NpuXGBoost(
         ensemble,
-        movi_dll_dir=args.movi_dll_dir,
-        native_dir=args.native_dir,
+        movi_dll_dir=movi_dll_dir,
+        native_dir=native_dir,
+        transport=spec,
     ) as backend:
         kernel_path.write_bytes(backend.source)
         npu_margins: list[np.ndarray] = []
@@ -115,10 +114,11 @@ def main() -> int:
         actual_classes = np.concatenate(npu_classes)
         margin_error = np.abs(actual_margins - official_margins)
         probability_error = np.abs(actual_probabilities - official_probabilities)
-        report["correctness"] = {
+        official_class_agreement = float(np.mean(actual_classes == official_classes))
+        result["correctness"] = {
             "validation_samples": int(features.shape[0]),
             "label_accuracy": float(np.mean(actual_classes == labels)),
-            "official_class_agreement": float(np.mean(actual_classes == official_classes)),
+            "official_class_agreement": official_class_agreement,
             "margin_max_abs_error": float(np.max(margin_error)),
             "margin_mean_abs_error": float(np.mean(margin_error)),
             "probability_max_abs_error": float(np.max(probability_error)),
@@ -130,9 +130,9 @@ def main() -> int:
         benchmark: dict[str, object] = {}
         for size in batch_sizes:
             batch = features[:size]
-            batch_transport = batch.astype(np.float16).astype(np.float32)
+            batch_transport = batch.astype(spec.numpy_dtype).astype(np.float32)
             batch_matrix = xgb.DMatrix(batch_transport)
-            for _ in range(args.warmup):
+            for _ in range(warmup):
                 booster.predict(batch_matrix)
                 backend.run(batch)
             cpu_times: list[float] = []
@@ -141,7 +141,7 @@ def main() -> int:
             upload_times: list[float] = []
             graphinfer_times: list[float] = []
             download_times: list[float] = []
-            for _ in range(args.runs):
+            for _ in range(runs):
                 started = perf_counter()
                 booster.predict(batch_matrix)
                 cpu_times.append((perf_counter() - started) * 1000.0)
@@ -159,10 +159,13 @@ def main() -> int:
                 "host_to_shared_buffer_ms": summary(upload_times),
                 "graphinfer_submission_fence_wall_ms": summary(graphinfer_times),
                 "shared_buffer_to_host_ms": summary(download_times),
-                "note": "Level Zero kernel timestamps are not exposed; graphinfer wall time is not pure kernel time.",
+                "note": (
+                    "Level Zero kernel timestamps are not exposed; graphinfer wall time "
+                    "is not pure kernel time."
+                ),
             }
-        report["performance"] = benchmark
-        report["build"] = {
+        result["performance"] = benchmark
+        result["build"] = {
             "kernel_path": str(kernel_path),
             "kernel_sha256": hashlib.sha256(backend.source).hexdigest(),
             "build_ms": backend.build_ms,
@@ -177,8 +180,61 @@ def main() -> int:
                 "compiler_version": list(backend.program.ir_provenance.compiler_version),
             },
         }
-    if report["correctness"]["official_class_agreement"] != 1.0:  # type: ignore[index]
-        raise RuntimeError("NPU classes disagree with official XGBoost")
+    if official_class_agreement != 1.0:
+        raise RuntimeError(f"{name} NPU classes disagree with official XGBoost")
+    return result
+
+
+def main() -> int:
+    args = options()
+    if args.warmup < 0 or args.runs <= 0:
+        raise SystemExit("--warmup must be nonnegative and --runs must be positive")
+    model_path = (args.model_dir / "breast_cancer_xgboost.json").resolve()
+    validation_path = (args.model_dir / "validation.npz").resolve()
+    for path in (model_path, validation_path):
+        if not path.is_file():
+            raise SystemExit(f"required input does not exist: {path}")
+    with np.load(validation_path, allow_pickle=False) as data:
+        features = np.asarray(data["features"], dtype=np.float32)
+        labels = np.asarray(data["labels"], dtype=np.int32)
+    ensemble = load_ensemble(model_path)
+    booster = xgb.Booster()
+    booster.load_model(model_path)
+
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results: dict[str, object] = {}
+    report: dict[str, object] = {
+        "schema": "npunlock-xgboost-demo-v2",
+        "model": {
+            "path": str(model_path),
+            "sha256": sha256(model_path),
+            "features": ensemble.feature_count,
+            "trees": len(ensemble.trees),
+            "nodes": ensemble.node_count,
+            "max_depth": ensemble.max_depth,
+            "base_margin": ensemble.base_margin,
+        },
+        "versions": {
+            name: importlib.metadata.version(name)
+            for name in ("numpy", "xgboost", "scikit-learn", "openvino")
+        },
+        "results": results,
+    }
+    names = ("f16", "f32") if args.transport == "both" else (args.transport,)
+    for name in names:
+        results[name] = run_transport(
+            name=name,
+            ensemble=ensemble,
+            features=features,
+            labels=labels,
+            booster=booster,
+            output_dir=output_dir,
+            movi_dll_dir=args.movi_dll_dir,
+            native_dir=args.native_dir,
+            warmup=args.warmup,
+            runs=args.runs,
+        )
     report_path = output_dir / "report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))

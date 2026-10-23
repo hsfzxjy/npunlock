@@ -20,13 +20,14 @@ def options() -> argparse.Namespace:
     parser.add_argument("model", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--transport", choices=("f16", "f32"), default="f16")
     return parser.parse_args()
 
 
 def main() -> int:
     args = options()
     ensemble = load_ensemble(args.model)
-    source = generate_kernel_source(ensemble)
+    source = generate_kernel_source(ensemble, transport=args.transport)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(source)
     manifest = {
@@ -38,7 +39,8 @@ def main() -> int:
         "tree_count": len(ensemble.trees),
         "node_count": ensemble.node_count,
         "max_depth": ensemble.max_depth,
-        "maximum_batch_size": batch_capacity(ensemble.feature_count),
+        "maximum_batch_size": batch_capacity(ensemble.feature_count, transport=args.transport),
+        "transport": args.transport,
     }
     if args.manifest is not None:
         args.manifest.parent.mkdir(parents=True, exist_ok=True)

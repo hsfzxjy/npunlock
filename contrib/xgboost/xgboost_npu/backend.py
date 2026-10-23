@@ -9,7 +9,13 @@ import npunlock as npu
 
 from .generate import generate_kernel_source
 from .model import Ensemble, load_ensemble
-from .packing import CHUNK_WORDS, LOGICAL_WORDS, Predictions, pack_features, unpack_predictions
+from .packing import (
+    Predictions,
+    TransportSpec,
+    pack_features,
+    transport_spec,
+    unpack_predictions,
+)
 
 
 class NpuXGBoost:
@@ -22,11 +28,17 @@ class NpuXGBoost:
         movi_dll_dir: str | Path,
         native_dir: str | Path | None = None,
         timeout_ms: int = 20_000,
+        transport: str | TransportSpec = "f16",
     ):
         self.ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
-        self.source = generate_kernel_source(self.ensemble)
+        self.transport = transport_spec(transport)
+        self.source = generate_kernel_source(self.ensemble, transport=self.transport)
         npu.configure(movi_dll_dir=movi_dll_dir)
-        input_tensor = npu.input("xgboost_input", shape=(1, LOGICAL_WORDS), dtype="f16")
+        input_tensor = npu.input(
+            "xgboost_input",
+            shape=(1, self.transport.logical_elements),
+            dtype=self.transport.dtype,
+        )
         output_tensor = npu.custom(
             input_tensor,
             source=self.source,
@@ -36,14 +48,19 @@ class NpuXGBoost:
         prepared = npu.prepare(
             npu.Graph([input_tensor], [output_tensor], name="xgboost_binary_classifier"),
             native_dir=native_dir,
-            build_flags="NPU_TILES=1",
+            build_flags="NPU_TILES=1" if self.transport.name == "f16" else "",
             timeout_ms=timeout_ms,
         )
         if len(prepared.groups) != 1:
             raise RuntimeError(f"XGBoost carrier exposed {len(prepared.groups)} ACT groups, expected one")
         group = prepared.groups[0]
-        if group.per_invocation_input_element_counts != (CHUNK_WORDS,) or (
-            group.per_invocation_output_element_count != CHUNK_WORDS
+        if group.input_dtypes != (self.transport.dtype,) or group.output_dtype != self.transport.dtype:
+            raise RuntimeError(
+                "XGBoost carrier dtype changed: "
+                f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
+            )
+        if group.per_invocation_input_element_counts != (self.transport.chunk_elements,) or (
+            group.per_invocation_output_element_count != self.transport.chunk_elements
         ):
             raise RuntimeError(
                 "XGBoost carrier contract changed: "
@@ -79,7 +96,11 @@ class NpuXGBoost:
     def run(self, features: object, *, shared: bool = True) -> tuple[Predictions, dict[str, float]]:
         values = np.asarray(features, dtype=np.float32)
         started = perf_counter()
-        packed = pack_features(values, feature_count=self.ensemble.feature_count)
+        packed = pack_features(
+            values,
+            feature_count=self.ensemble.feature_count,
+            transport=self.transport,
+        )
         pack_ms = (perf_counter() - started) * 1000.0
         if shared:
             started = perf_counter()
@@ -105,6 +126,7 @@ class NpuXGBoost:
             copied,
             expected_samples=values.shape[0],
             feature_count=self.ensemble.feature_count,
+            transport=self.transport,
         )
         return predictions, {
             "pack_ms": pack_ms,
