@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from importlib.resources import files
@@ -137,6 +141,41 @@ def test_server_ranges_and_lifecycle() -> None:
     assert sum(thread.name == "npunlock-viz" for thread in threading.enumerate()) == viewer_threads
 
 
+def test_windows_ctrl_c_stops_blocking_viewer() -> None:
+    if sys.platform != "win32":
+        return
+    code = (
+        "import ctypes, sys; "
+        "ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False); "
+        f"sys.path.insert(0, {str(ROOT / 'python')!r}); "
+        "from npunlock.viz import ArtifactGraph, show; "
+        "g = ArtifactGraph('ctrl-c'); "
+        "g.artifact('a', data=b'x'); "
+        "print('READY', flush=True); "
+        "show(g, open_browser=False)"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "READY"
+        time.sleep(0.3)
+        os.kill(process.pid, signal.CTRL_C_EVENT)
+        assert process.wait(timeout=5) == 0
+        assert process.stderr is not None
+        assert "Traceback" not in process.stderr.read()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
 def test_npunlock_fixture_annotations() -> None:
     graph = build_npunlock_graph(
         ROOT / "tests/fixtures/npu3720/add1-shared-1x16.blob",
@@ -198,6 +237,7 @@ def test_bundled_frontend() -> None:
 def main() -> None:
     test_model_and_serialization()
     test_server_ranges_and_lifecycle()
+    test_windows_ctrl_c_stops_blocking_viewer()
     test_npunlock_fixture_annotations()
     test_dense_model()
     test_bundled_frontend()

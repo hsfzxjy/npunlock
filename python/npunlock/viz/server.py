@@ -152,7 +152,11 @@ class ViewerSession:
         return self._closed
 
     def wait(self) -> None:
-        self._thread.join()
+        # An indefinite Thread.join() is not interruptible by Ctrl+C on the
+        # supported Windows/Python 3.12 host. Timed joins let the main thread
+        # regularly dispatch KeyboardInterrupt while remaining inexpensive.
+        while self._thread.is_alive():
+            self._thread.join(timeout=0.2)
 
     def close(self) -> None:
         if self._closed:

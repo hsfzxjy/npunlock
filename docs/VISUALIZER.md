@@ -25,7 +25,9 @@ show(graph)
 ```
 
 `show()` binds only to `127.0.0.1`, opens the default browser, and blocks until
-Ctrl+C. Interactive code can retain an explicit session instead:
+Ctrl+C. The blocking wait remains interruptible in Windows PowerShell and
+closes the HTTP server before returning. Interactive code can retain an
+explicit session instead:
 
 ```python
 session = show(graph, block=False)
