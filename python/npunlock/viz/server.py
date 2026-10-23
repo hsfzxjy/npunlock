@@ -186,8 +186,12 @@ def show(
     """
 
     session = ViewerSession(graph, port=port)
-    if open_browser:
-        _browser_open(session.url)
+    try:
+        if open_browser:
+            _browser_open(session.url)
+    except BaseException:
+        session.close()
+        raise
     if block:
         try:
             session.wait()

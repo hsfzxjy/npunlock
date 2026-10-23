@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import urllib.error
 import urllib.request
 from importlib.resources import files
@@ -119,6 +120,20 @@ def test_server_ranges_and_lifecycle() -> None:
         session.close()
     assert session.closed
     session.close()
+
+    def failed_browser(_url: str) -> None:
+        raise RuntimeError("browser launch failed")
+
+    viewer_threads = sum(thread.name == "npunlock-viz" for thread in threading.enumerate())
+    expect_error(
+        RuntimeError,
+        show,
+        graph,
+        block=False,
+        open_browser=True,
+        _browser_open=failed_browser,
+    )
+    assert sum(thread.name == "npunlock-viz" for thread in threading.enumerate()) == viewer_threads
 
 
 def test_npunlock_fixture_annotations() -> None:
