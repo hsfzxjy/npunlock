@@ -114,3 +114,6 @@ class NpuNms:
             "execution_wall_ms": execution_wall_ms,
             "download_ms": download_ms,
         }
+
+    def close(self) -> None:
+        self.program.close()

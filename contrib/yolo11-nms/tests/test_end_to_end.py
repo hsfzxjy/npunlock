@@ -10,6 +10,7 @@ import openvino as ov
 from yolo_nms.npunlock_backend import NpuNms
 from yolo_nms.openvino_backend import CompiledModel, NpuYoloPreselector, letterbox, load_image
 from yolo_nms.reference import preselect_raw_predictions, reference_nms
+from yolo_nms.single_graph_backend import SingleGraphYoloNms
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,8 +44,9 @@ class YoloEndToEndTests(unittest.TestCase):
             movi_dll_dir=movitools,
             native_dir=os.environ.get("NPUNLOCK_NATIVE_DIR"),
         )
+        cases = []
         for image_path in image_paths:
-            with self.subTest(image=image_path.name):
+            with self.subTest(configuration="C", image=image_path.name):
                 input_value, _ = letterbox(load_image(image_path))
                 raw = raw_model.infer(input_value)[0][0]
                 reference = reference_nms(
@@ -60,11 +62,36 @@ class YoloEndToEndTests(unittest.TestCase):
                     iou_threshold=0.7,
                     max_detections=100,
                 )
-
                 np.testing.assert_array_equal(actual.indices, reference.indices)
                 np.testing.assert_array_equal(actual.classes, reference.classes)
                 np.testing.assert_allclose(actual.boxes, reference.boxes, rtol=0.0, atol=0.5)
                 np.testing.assert_allclose(actual.scores, reference.scores, rtol=0.0, atol=0.002)
+                cases.append((image_path, input_value, reference))
+        nms.close()
+
+        single = SingleGraphYoloNms(
+            raw_model=model_dir / "yolo11n_raw.onnx",
+            kernel_path=ROOT / "kernels" / "nms.c",
+            binding_path=ROOT / "bindings" / "npu3720-openvino-2026.3.1.json",
+            artifact_dir=ROOT / "artifacts" / "test-single-graph",
+            movi_dll_dir=movitools,
+            native_dir=os.environ.get("NPUNLOCK_NATIVE_DIR"),
+        )
+        try:
+            for image_path, input_value, reference in cases:
+                with self.subTest(configuration="D", image=image_path.name):
+                    actual, _ = single.run(
+                        input_value,
+                        confidence_threshold=0.25,
+                        iou_threshold=0.7,
+                        max_detections=100,
+                    )
+                    np.testing.assert_array_equal(actual.indices, reference.indices)
+                    np.testing.assert_array_equal(actual.classes, reference.classes)
+                    np.testing.assert_allclose(actual.boxes, reference.boxes, rtol=0.0, atol=0.5)
+                    np.testing.assert_allclose(actual.scores, reference.scores, rtol=0.0, atol=0.002)
+        finally:
+            single.close()
 
 
 if __name__ == "__main__":

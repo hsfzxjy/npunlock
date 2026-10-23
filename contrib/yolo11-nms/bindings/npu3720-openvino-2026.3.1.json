@@ -1,0 +1,59 @@
+{
+  "schema": "npunlock.yolo11.single-graph-binding.v1",
+  "description": "Reviewed explicit ACT binding for the single-graph YOLO11n carrier on the recorded Meteor Lake stack.",
+  "openvino_version": "2026.3.1-22476-759c5a6ab8c-releases/2026/3",
+  "raw_onnx_sha256": "7e69e46112e98b712b77df004708c5a0fbf1bfcf4021176a2ec2cc44231b65b4",
+  "serialized_ir": {
+    "xml_sha256": "7ccadeb42fac27db8ce6fec948b5449305b9e881a856872aa1f53590c532e423",
+    "weights_sha256": "4f16d0ff62c6ec709b4e8170e5bb8bcfca7fd1f9fa742eb2ea2b1fe59da346d2"
+  },
+  "build_flags": "NPU_TILES=1",
+  "native_graph_sha256": "f0e4710edae2777f72807bd06369c202bcfe1644684fa8f2cb4ac1e655ed16f3",
+  "provenance": {
+    "driver_index": 0,
+    "device_index": 0,
+    "driver_version": 1005540,
+    "vendor_id": 32902,
+    "device_id": 32029,
+    "graph_extension_version": 65554,
+    "compiler_version": [8, 3]
+  },
+  "targets": [
+    {
+      "invocation_index": 441,
+      "range_index": 441,
+      "target_flags": 0,
+      "tensors": [
+        {"role": "input", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 7},
+        {"role": "output", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 15}
+      ]
+    },
+    {
+      "invocation_index": 442,
+      "range_index": 442,
+      "target_flags": 0,
+      "tensors": [
+        {"role": "input", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 7},
+        {"role": "output", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 15}
+      ]
+    },
+    {
+      "invocation_index": 443,
+      "range_index": 443,
+      "target_flags": 0,
+      "tensors": [
+        {"role": "input", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 7},
+        {"role": "output", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 15}
+      ]
+    },
+    {
+      "invocation_index": 444,
+      "range_index": 444,
+      "target_flags": 0,
+      "tensors": [
+        {"role": "input", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 7},
+        {"role": "output", "index": 0, "dtype": "f16", "element_count": 2048, "span_bytes": 4096, "observed_flags": 15}
+      ]
+    }
+  ]
+}

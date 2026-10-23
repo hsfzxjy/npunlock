@@ -12,7 +12,7 @@ the two ONNX variants use the official
 weights retain their upstream AGPL-3.0 or Enterprise licensing terms; this
 repository does not redistribute either the checkpoint or generated models.
 
-It compares three configurations with the same 640x640 input, confidence
+It compares four configurations with the same 640x640 input, confidence
 threshold, IoU threshold, pre-NMS capacity, and maximum detection count:
 
 | Configuration | Network | Candidate selection / NMS |
@@ -20,6 +20,7 @@ threshold, IoU threshold, pre-NMS capacity, and maximum detection count:
 | A. OpenVINO baseline | OpenVINO `NPU` | CPU deterministic reference |
 | B. Ultralytics embedded NMS | OpenVINO `NPU` attempt | Exported ONNX NMS subgraph |
 | C. OpenVINO + npunlock | OpenVINO `NPU`, with static preselection in the same graph | npunlock ACT-SHAVE NMS |
+| D. Experimental single graph | OpenVINO-format YOLO/static-preselection graph compiled through the NPU UMD | npunlock ACT-SHAVE NMS patched into that native graph |
 
 Configuration C uses **two separate NPU workloads**. The YOLO network and
 static preselector are one OpenVINO graph, but the npunlock NMS carrier remains
@@ -32,15 +33,35 @@ image --CPU letterbox/normalize--> YOLO11n + static preselector OpenVINO NPU gra
       --host unpack/visualize--> detections
 ```
 
-The raw `(1,84,8400)` YOLO tensor stays inside the first NPU graph. npunlock's
-current validated frontend patches a purpose-built ACT carrier native graph; it
-does not provide a validated way to inject that carrier into the arbitrary
-OpenVINO-compiled YOLO graph. No single fused YOLO-plus-custom-NMS graph is
-claimed.
+The raw `(1,84,8400)` YOLO tensor stays inside the first NPU graph.
 
-The host performs orchestration, fixed-layout packing, memory transfers, output
-unpacking, and visualization. It does not make confidence, ranking, IoU, or
-suppression decisions in configuration C.
+Configuration D is a genuine **single native NPU graph**:
+
+```text
+image + four-word threshold header --> YOLO11n --> TopK/pack --> patched ACT NMS
+                                   one submission / one fence
+                                   --> fixed detection tensor
+```
+
+OpenVINO reads and constructs the static graph and serializes IR. npunlock's
+`ir2blob` C API asks the NPU UMD to compile that IR, `patchblob` substitutes
+the reviewed carrier ranges, and `graphinfer` executes the result. D is not an
+OpenVINO Runtime infer request, and it is not two NPU graphs presented as one.
+No intermediate detection tensor crosses the host boundary.
+
+This path is deliberately narrower than C. Explicit ACT positions are accepted
+only if the model hash, static weights, NPU driver/compiler provenance, and
+complete unpatched native-graph hash match the reviewed manifest under
+`bindings/`. Any mismatch fails closed. General discovery currently rejects an
+unrelated ACT group in the large YOLO graph because that group has inconsistent
+observed tensor contracts; this contribution does not weaken that safety check
+or claim general arbitrary-graph injection.
+
+The host performs preprocessing, orchestration, memory transfers, output
+unpacking, and visualization. It also packs C's intermediate candidate tensor.
+In D, record packing is part of the NPU graph and the host supplies only the
+four-word header. The host makes no confidence, ranking, IoU, or suppression
+decisions in C or D.
 
 ## Why this is interesting
 
@@ -75,10 +96,11 @@ YOLO output and compiled in the same explicit NPU workload performs:
 
 The current ACT contract exposes 2,048 FP16 values (4 KiB) to each invocation.
 The NMS input therefore contains an eight-word header plus 255 eight-word
-candidate records. The 2,048-word buffer is duplicated into a logical
-4,096-word unary carrier so every patched invocation receives one complete
-candidate set within its advertised span. The kernel never reads across an
-invocation boundary.
+candidate records. C duplicates the 2,048-word buffer into a 4,096-word unary
+carrier. D duplicates it four times into an 8,192-word carrier; on the reviewed
+full-model compilation this produces four 2,048-word carrier invocations.
+Every patched invocation therefore receives one complete candidate set within
+its advertised span. The kernel never reads across an invocation boundary.
 
 Each record is:
 
@@ -91,10 +113,10 @@ highest remaining confidence, uses the lower original candidate index as a
 deterministic tie-breaker, suppresses same-class boxes when `IoU > threshold`,
 and stops at `max_det`. Results use the same fixed-capacity representation.
 
-Both A and C deliberately use the same `pre_nms_topk=255` contract. This is not
-identical to Ultralytics' much larger default pre-NMS cap in pathological dense
-scenes. It is a documented consequence of the currently validated ACT-local
-span, not a general YOLO or hardware limit.
+Configurations A, C, and D deliberately use the same `pre_nms_topk=255`
+contract. This is not identical to Ultralytics' much larger default pre-NMS
+cap in pathological dense scenes. It is a documented consequence of the
+currently validated ACT-local span, not a general YOLO or hardware limit.
 
 ## Requirements
 
@@ -134,7 +156,7 @@ $python = '.\build\yolo11-nms-venv\Scripts\python.exe'
   --output-dir contrib\yolo11-nms\artifacts\images
 ```
 
-Run all three configurations and 20 measured iterations after five warm-ups:
+Run all four configurations and 20 measured iterations after five warm-ups:
 
 ```powershell
 & $python contrib\yolo11-nms\scripts\run_demo.py `
@@ -143,7 +165,8 @@ Run all three configurations and 20 measured iterations after five warm-ups:
   --output-dir contrib\yolo11-nms\outputs `
   --movi-dll-dir C:\path\to\MVC_DEPEND `
   --warmup 5 `
-  --runs 20
+  --runs 20 `
+  --require-single-graph
 ```
 
 For a development build instead of an installed package, add the directory
@@ -157,7 +180,13 @@ Outputs are:
 
 - `outputs/report.json`: machine-readable versions, hashes, device placement,
   compatibility result, detections, patch evidence, and timings;
-- `outputs/detections_npunlock.jpg`: visualized configuration-C detections.
+- `outputs/detections_npunlock.jpg`: visualized configuration-C detections;
+- `outputs/detections_single_graph.jpg`: visualized configuration-D detections;
+- `outputs/single-graph-build/`: generated IR used for the hash-bound D build.
+
+Omit `--require-single-graph` to retain A-C results when the installed stack
+does not match the reviewed D binding. Use `--skip-single-graph` to skip D.
+Neither mode silently falls back to CPU.
 
 ## Tests
 
@@ -183,7 +212,8 @@ $env:PYTHONPATH = (Resolve-Path contrib\yolo11-nms)
 same-class suppression, different-class preservation, equal confidences,
 threshold boundaries, and the full 255-candidate capacity. The end-to-end test
 uses real YOLO11n predictions and requires exact source-index/class agreement,
-at most 0.5 network-pixel box drift, and at most 0.002 confidence drift.
+at most 0.5 network-pixel box drift, and at most 0.002 confidence drift. It
+checks both the established two-workload C path and the one-workload D path.
 
 ## Recorded result
 
@@ -197,7 +227,7 @@ Recorded on 2026-10-23:
 | OpenVINO | `2026.3.1-22476-759c5a6ab8c-releases/2026/3` |
 | Ultralytics | `8.4.183` |
 | NPU graph compiler | `8.3` |
-| npunlock commit | `7da7365` plus this follow-up |
+| npunlock base commits | `7da7365`, `f4e088a`, plus this single-graph follow-up |
 
 Model and sample hashes:
 
@@ -213,37 +243,48 @@ With `conf=0.25`, `iou=0.7`, `max_det=100`, ten warm-ups, and 50 runs:
 
 | Measurement | Median |
 | --- | ---: |
-| A: OpenVINO NPU network | 8.95 ms |
-| A: raw-output host copy | 0.555 ms |
-| A: CPU candidate preselection | 1.07 ms |
-| A: CPU NMS | 0.208 ms |
-| A: complete end-to-end wall time | 17.16 ms |
-| C: fused OpenVINO NPU network + preselector | 10.18 ms |
-| C: selected-candidate host copy | 0.058 ms |
-| C: npunlock shared execution/fence wall time | 1.77 ms |
-| C: host pack | 0.140 ms |
-| C: shared-buffer upload copy | 0.0040 ms |
-| C: shared-buffer download copy | 0.0102 ms |
-| C: complete end-to-end wall time | 20.12 ms |
+| A: OpenVINO NPU network | 9.06 ms |
+| A: raw-output host copy | 0.739 ms |
+| A: CPU candidate preselection | 1.15 ms |
+| A: CPU NMS | 0.214 ms |
+| A: complete end-to-end wall time | 16.10 ms |
+| C: fused OpenVINO NPU network + preselector | 10.27 ms |
+| C: selected-candidate host copy | 0.0597 ms |
+| C: npunlock NMS execution/fence wall time | 2.28 ms |
+| C: host candidate pack | 0.112 ms |
+| C: NMS input/output shared-buffer copies | 0.0035 / 0.0092 ms |
+| C: complete end-to-end wall time | 21.91 ms |
+| D: single native graph execution/fence wall time | 11.42 ms |
+| D: image + header shared-buffer copies | 0.367 ms |
+| D: detection-buffer copy | 0.0160 ms |
+| D: complete end-to-end wall time | 19.42 ms |
 
-The npunlock execution API does not expose device-only ACT profiling. The
-reported 1.77 ms is submission-to-fence wall time using shared Level Zero
-buffers, excluding the separately measured host upload/download copies. It
-must not be described as pure kernel time.
+The npunlock execution API does not expose device-only ACT profiling. The C
+and D execution measurements are submission-to-fence wall times using shared
+Level Zero buffers, excluding separately measured host copies. They must not
+be described as pure kernel time. D's retained complete-pipeline median was
+lower than C's, but a repeated run during development varied as high as 28.12
+ms because host preprocessing/copy scheduling varied. No speedup claim is made.
 
-On `bus.jpg`, configurations A and C produced the same five source candidate
+On `bus.jpg`, configurations A, C, and D produced the same five source candidate
 indices and class order (one bus, four people); maximum box difference was
 0.25 pixels in the 640x640 network coordinate space and confidence difference
-was zero. On `zidane.jpg`, both produced the same three source indices/classes
-(two people and one tie), with 0.125-pixel maximum box difference and zero
-confidence difference. The kernel also matched the independent FP16 reference
-exactly in the operator tests.
+was zero. On `zidane.jpg`, all three produced the same three source
+indices/classes (two people and one tie), with 0.125-pixel maximum box
+difference and zero confidence difference. The kernel also matched the
+independent FP16 reference exactly in the operator tests. The complete opt-in
+suite passed 15/15 tests.
 
-The retained npunlock patch report records a validated linked SHAVE ELF hash,
+The retained npunlock patch reports record a validated linked SHAVE ELF hash,
 four changed ACT range/code targets, graph compiler 8.3/NPU3720 provenance,
 and successful section-content and mutation-set preservation checks. This,
 together with exclusive `NPU` device reports and the host-oracle comparison,
 is the execution evidence; graph creation alone is not treated as correctness.
+For D, the report identifies unpatched native graph
+`f0e4710edae2777f72807bd06369c202bcfe1644684fa8f2cb4ac1e655ed16f3`
+and invocations/ranges 441-444, each validated as one FP16 input and one FP16
+output of 2,048 elements. The single submission then produced the same
+real-image detections as the independent A pipeline.
 
 ## Current limitations
 
@@ -251,9 +292,14 @@ is the execution evidence; graph creation alone is not treated as correctness.
 - Pre-NMS capacity is 255 candidates and `max_det` cannot exceed 255.
 - Candidate transport into the ACT kernel is FP16. Boxes and scores are
   compared against an explicitly FP16-quantized operator reference.
-- The fused YOLO/preselector graph and custom NMS are two separate NPU
-  workloads. The 255 selected candidates cross a host-visible boundary; the
-  raw 8,400-candidate tensor does not.
+- C remains two NPU workloads. Its 255 selected candidates cross a host-visible
+  boundary; the raw 8,400-candidate tensor does not.
+- D is one workload, but currently only for the exact reviewed model,
+  OpenVINO, driver, graph compiler, and native-graph hash. New stacks require
+  a new independently reviewed binding; positions are never inferred from a
+  source node name or from merely being the last ACT ranges.
+- The recorded driver could not keep the separate C NMS session and the full D
+  session initialized concurrently. The runner closes C before creating D.
 - Kernel-only hardware timing is unavailable through the current graphinfer
   API.
 - Results apply only to the recorded Meteor Lake driver/compiler combination.

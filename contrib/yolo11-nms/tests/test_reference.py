@@ -4,7 +4,13 @@ import unittest
 
 import numpy as np
 
-from yolo_nms.packing import NMS_CAPACITY, pack_candidates, quantize_candidates, unpack_detections
+from yolo_nms.packing import (
+    NMS_CAPACITY,
+    pack_candidates,
+    pack_nms_header,
+    quantize_candidates,
+    unpack_detections,
+)
 from yolo_nms.reference import DetectionBatch, reference_nms
 
 
@@ -86,6 +92,35 @@ class ReferenceNmsTests(unittest.TestCase):
         np.testing.assert_array_equal(result.scores, expected.scores)
         np.testing.assert_array_equal(result.classes, expected.classes)
         np.testing.assert_array_equal(result.indices, expected.indices)
+
+    def test_single_graph_header(self) -> None:
+        header = pack_nms_header(
+            NMS_CAPACITY,
+            confidence_threshold=0.25,
+            iou_threshold=0.7,
+            max_detections=100,
+        )
+        self.assertEqual(header.shape, (1, 4))
+        self.assertEqual(header.dtype, np.float16)
+        np.testing.assert_array_equal(
+            header,
+            np.asarray([[255, 0.25, np.float16(0.7), 100]], dtype=np.float16),
+        )
+
+    def test_single_graph_header_rejects_invalid_values(self) -> None:
+        for candidate_count, confidence, iou, maximum in (
+            (256, 0.25, 0.7, 100),
+            (255, -0.1, 0.7, 100),
+            (255, 0.25, 1.1, 100),
+            (255, 0.25, 0.7, 256),
+        ):
+            with self.subTest(values=(candidate_count, confidence, iou, maximum)), self.assertRaises(ValueError):
+                pack_nms_header(
+                    candidate_count,
+                    confidence_threshold=confidence,
+                    iou_threshold=iou,
+                    max_detections=maximum,
+                )
 
 
 if __name__ == "__main__":
