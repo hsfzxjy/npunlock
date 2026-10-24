@@ -698,5 +698,15 @@ different graph structure, not that the C expression itself is invalid.
   runtime file identity, bundle integrity, tensor contracts, and the
   patch-report hash chain before execution. The runtime forest remains a
   separately uploaded input and is not written to that cache.
+- [HNSW contribution](../contrib/hnsw/README.md) runs hierarchical greedy
+  descent and dynamic best-first base-layer traversal entirely inside an
+  ACT-SHAVE kernel. It uses the four validated 1,024-element carrier
+  invocations for up to four independent queries per submission while
+  duplicating the bounded 48-node index into each invocation-local span; it
+  does not assume graph-global reads or cross-invocation communication. Its
+  persistent program cache validates kernel, runtime, driver/compiler,
+  MoviTools, bundle, tensor, and patch provenance before reuse. The real-data
+  digits/PCA demo checks node IDs, raw FP32 distances, and traversal counters
+  against a host oracle and compares recall with hnswlib.
 
 [Back to documentation index](README.md)
