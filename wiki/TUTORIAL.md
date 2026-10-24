@@ -717,6 +717,8 @@ different graph structure, not that the C expression itself is invalid.
   shared Level Zero memory for subsequent submissions. Its 16-dimensional
   fast path and host oracle use the same fixed four-lane FP32 reduction tree;
   this is a validated narrow arithmetic contract, not reassociation-invariant
-  distance arithmetic.
+  distance arithmetic. The common `efSearch=16`, top-k 5 case uses a
+  compile-time-bounded path, while other supported values retain the generic
+  heap and termination path.
 
 [Back to documentation index](README.md)

@@ -237,8 +237,9 @@ static unsigned __attribute__((noinline)) hnsw_validate_graph(const float *graph
   return HNSW_STATUS_OK;
 }
 
-static void hnsw_search_chunk(const float *query_payload, const unsigned *query_words,
-                              const float *graph, float *output) {
+static void __attribute__((always_inline))
+hnsw_search_chunk(const float *query_payload, const unsigned *query_words, const float *graph,
+                  float *output, unsigned ef_search, unsigned result_count) {
   const unsigned *graph_words = (const unsigned *)graph;
   unsigned *output_words = (unsigned *)output;
   const float *query;
@@ -252,8 +253,6 @@ static void hnsw_search_chunk(const float *query_payload, const unsigned *query_
   unsigned dimensions;
   unsigned entry_point;
   unsigned max_level;
-  unsigned ef_search;
-  unsigned result_count;
   unsigned value;
   unsigned node;
   unsigned layer;
@@ -274,8 +273,6 @@ static void hnsw_search_chunk(const float *query_payload, const unsigned *query_
   dimensions = query_words[3];
   entry_point = query_words[4];
   max_level = query_words[5];
-  ef_search = query_words[6];
-  result_count = query_words[7];
   query = query_payload + HNSW_QUERY_HEADER;
   vectors = query + dimensions;
 
@@ -450,8 +447,17 @@ void controlled_act(unsigned layerParams) {
     }
     return;
   }
-  for (chunk = 0u; chunk < chunk_count; ++chunk) {
-    unsigned offset = chunk * HNSW_CHUNK_ELEMENTS;
-    hnsw_search_chunk(query_payload + offset, query_words, graph, output + offset);
+  /* Clone the common demo bounds while retaining the configurable path below. */
+  if (query_words[6] == 16u && query_words[7] == 5u) {
+    for (chunk = 0u; chunk < chunk_count; ++chunk) {
+      unsigned offset = chunk * HNSW_CHUNK_ELEMENTS;
+      hnsw_search_chunk(query_payload + offset, query_words, graph, output + offset, 16u, 5u);
+    }
+  } else {
+    for (chunk = 0u; chunk < chunk_count; ++chunk) {
+      unsigned offset = chunk * HNSW_CHUNK_ELEMENTS;
+      hnsw_search_chunk(query_payload + offset, query_words, graph, output + offset, query_words[6],
+                        query_words[7]);
+    }
   }
 }
