@@ -51,12 +51,11 @@ class HnswTests(unittest.TestCase):
         self.assertEqual(packed.dtype, np.float32)
         self.assertEqual(packed.ndim, 2)
 
-        packed, count = pack_queries(
-            index,
-            index.vectors[:MAX_BATCH_QUERIES],
-            k=5,
-            ef_search=16,
+        repetitions = (MAX_BATCH_QUERIES + len(index.vectors) - 1) // len(
+            index.vectors
         )
+        maximum_batch = np.tile(index.vectors, (repetitions, 1))[:MAX_BATCH_QUERIES]
+        packed, count = pack_queries(index, maximum_batch, k=5, ef_search=16)
         self.assertEqual(count, MAX_BATCH_QUERIES)
         self.assertEqual(packed.shape, (1, MAX_BATCH_QUERIES * CHUNK_ELEMENTS))
 

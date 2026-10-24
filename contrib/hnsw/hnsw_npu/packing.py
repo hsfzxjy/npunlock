@@ -11,7 +11,7 @@ from .index import HnswIndex, SearchStats
 CHUNK_ELEMENTS = 1024
 REPLICAS = 4
 LOGICAL_ELEMENTS = REPLICAS * CHUNK_ELEMENTS
-MAX_CHUNKS_PER_INVOCATION = 12
+MAX_CHUNKS_PER_INVOCATION = 80
 MAX_BATCH_QUERIES = REPLICAS * MAX_CHUNKS_PER_INVOCATION
 MAX_NODES = 48
 MAX_DIMENSIONS = 32
@@ -191,7 +191,7 @@ def pack_queries(
     ef_search: int,
     query_capacity: int | None = None,
 ) -> tuple[np.ndarray, int]:
-    """Pack one to 48 queries into independent 1,024-element payloads.
+    """Pack one to 320 queries into independent 1,024-element payloads.
 
     Unused chunks repeat the first query. This keeps every chunk valid and
     retains a byte-for-byte execution check for a single-query submission.
