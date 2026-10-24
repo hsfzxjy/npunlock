@@ -15,6 +15,28 @@ static unsigned nms_original_index(const __fp16 *record) {
   return low + high * 256u;
 }
 
+static float nms_iou(const __fp16 *left, const __fp16 *right);
+
+static int nms_is_suppressed(const __fp16 *candidate, const __fp16 *output, unsigned selected_count,
+                             float iou_threshold) {
+  unsigned candidate_class = (unsigned)(float)candidate[5];
+  for (unsigned selected = 0u; selected < selected_count; ++selected) {
+    const __fp16 *record = output + NMS_HEADER_WORDS + selected * NMS_RECORD_WORDS;
+    if ((unsigned)(float)record[5] == candidate_class &&
+        nms_iou(record, candidate) > iou_threshold) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void nms_append(const __fp16 *candidate, __fp16 *output, unsigned selected_count) {
+  __fp16 *record = output + NMS_HEADER_WORDS + selected_count * NMS_RECORD_WORDS;
+  for (unsigned field = 0u; field < NMS_RECORD_WORDS; ++field) {
+    record[field] = candidate[field];
+  }
+}
+
 static float nms_iou(const __fp16 *left, const __fp16 *right) {
   float left_x1 = (float)left[0];
   float left_y1 = (float)left[1];
@@ -44,8 +66,6 @@ static float nms_iou(const __fp16 *left, const __fp16 *right) {
 
 void controlled_act(unsigned layerParams) {
   act_abi_invocation invocation;
-  unsigned char processed[NMS_CAPACITY];
-  unsigned char suppressed[NMS_CAPACITY];
   const __fp16 *input;
   __fp16 *output;
   unsigned candidate_count;
@@ -82,64 +102,75 @@ void controlled_act(unsigned layerParams) {
   for (unsigned i = 0u; i < NMS_CHUNK_WORDS; ++i) {
     output[i] = (__fp16)0.0f;
   }
-  for (unsigned i = 0u; i < NMS_CAPACITY; ++i) {
-    processed[i] = 0u;
-    suppressed[i] = 0u;
-  }
-
   output[1] = input[1];
   output[2] = input[2];
   output[3] = input[3];
   output[4] = input[0];
-  output[5] = (__fp16)1.0f;
+  output[5] = (__fp16)2.0f;
 
-  while (selected_count < max_detections) {
-    unsigned best = NMS_CAPACITY;
-    unsigned best_original_index = 0u;
-    float best_score = -1.0f;
+  /* The preceding stable NPU TopK supplies non-increasing scores. Process
+   * equal FP16-score groups by original index so transport quantization does
+   * not change the deterministic reference order. */
+  for (unsigned group_begin = 0u;
+       group_begin < candidate_count && selected_count < max_detections;) {
+    const __fp16 *first = input + NMS_HEADER_WORDS + group_begin * NMS_RECORD_WORDS;
+    float score = (float)first[4];
+    unsigned group_end = group_begin + 1u;
+    unsigned last_original = 0u;
+    unsigned last_position = 0u;
+    int have_last = 0;
 
-    for (unsigned i = 0u; i < candidate_count; ++i) {
-      const __fp16 *record = input + NMS_HEADER_WORDS + i * NMS_RECORD_WORDS;
-      float score = (float)record[4];
-      unsigned original_index;
-      if (processed[i] != 0u || suppressed[i] != 0u || !(score > confidence_threshold)) {
-        continue;
-      }
-      original_index = nms_original_index(record);
-      if (best == NMS_CAPACITY || score > best_score ||
-          (score == best_score && original_index < best_original_index)) {
-        best = i;
-        best_score = score;
-        best_original_index = original_index;
-      }
-    }
-    if (best == NMS_CAPACITY) {
+    if (!(score > confidence_threshold)) {
       break;
     }
-
-    processed[best] = 1u;
-    {
-      const __fp16 *best_record = input + NMS_HEADER_WORDS + best * NMS_RECORD_WORDS;
-      __fp16 *output_record = output + NMS_HEADER_WORDS + selected_count * NMS_RECORD_WORDS;
-      unsigned best_class = (unsigned)(float)best_record[5];
-      for (unsigned field = 0u; field < NMS_RECORD_WORDS; ++field) {
-        output_record[field] = best_record[field];
+    while (group_end < candidate_count) {
+      const __fp16 *next = input + NMS_HEADER_WORDS + group_end * NMS_RECORD_WORDS;
+      float next_score = (float)next[4];
+      if (next_score > score) {
+        output[6] = (__fp16)1.0f;
+        output[0] = (__fp16)0.0f;
+        return;
       }
-      ++selected_count;
+      if (next_score != score) {
+        break;
+      }
+      ++group_end;
+    }
 
-      for (unsigned candidate = 0u; candidate < candidate_count; ++candidate) {
-        const __fp16 *record;
-        unsigned candidate_class;
-        if (processed[candidate] != 0u || suppressed[candidate] != 0u) {
+    for (unsigned emitted = group_begin; emitted < group_end && selected_count < max_detections;
+         ++emitted) {
+      unsigned best_position = NMS_CAPACITY;
+      unsigned best_original = 0u;
+      for (unsigned position = group_begin; position < group_end; ++position) {
+        const __fp16 *candidate = input + NMS_HEADER_WORDS + position * NMS_RECORD_WORDS;
+        unsigned original = nms_original_index(candidate);
+        if (have_last != 0 && (original < last_original ||
+                               (original == last_original && position <= last_position))) {
           continue;
         }
-        record = input + NMS_HEADER_WORDS + candidate * NMS_RECORD_WORDS;
-        candidate_class = (unsigned)(float)record[5];
-        if (candidate_class == best_class && nms_iou(best_record, record) > iou_threshold) {
-          suppressed[candidate] = 1u;
+        if (best_position == NMS_CAPACITY || original < best_original ||
+            (original == best_original && position < best_position)) {
+          best_position = position;
+          best_original = original;
         }
       }
+      if (best_position == NMS_CAPACITY) {
+        output[6] = (__fp16)2.0f;
+        output[0] = (__fp16)0.0f;
+        return;
+      }
+      {
+        const __fp16 *candidate = input + NMS_HEADER_WORDS + best_position * NMS_RECORD_WORDS;
+        if (!nms_is_suppressed(candidate, output, selected_count, iou_threshold)) {
+          nms_append(candidate, output, selected_count);
+          ++selected_count;
+        }
+      }
+      last_original = best_original;
+      last_position = best_position;
+      have_last = 1;
     }
+    group_begin = group_end;
   }
   output[0] = (__fp16)(float)selected_count;
 }

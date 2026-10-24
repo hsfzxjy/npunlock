@@ -7,7 +7,13 @@ import json
 import numpy as np
 import npunlock as npu
 
-from .packing import NMS_CHUNK_WORDS, NMS_LOGICAL_WORDS, pack_candidates, unpack_detections
+from .packing import (
+    NMS_CHUNK_WORDS,
+    NMS_LOGICAL_WORDS,
+    pack_candidates,
+    unpack_detections,
+    validate_ranked_candidates,
+)
 from .reference import DetectionBatch
 
 
@@ -80,6 +86,7 @@ class NpuNms:
         max_detections: int,
         shared: bool = True,
     ) -> tuple[DetectionBatch, dict[str, float]]:
+        validate_ranked_candidates(candidates)
         started = perf_counter()
         packed = pack_candidates(
             candidates,

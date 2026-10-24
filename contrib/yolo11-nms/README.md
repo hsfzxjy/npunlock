@@ -57,10 +57,12 @@ On the recorded Core Ultra 5 125H system, OpenVINO 2026.3.1, Intel NPU driver
   confidence drift; and
 - the complete hardware-gated suite passed 15 tests.
 
-Median end-to-end time over the retained 50-run measurement was 16.10 ms for
-the OpenVINO-plus-CPU-NMS baseline, 21.91 ms for the two-workload npunlock
-path, and 19.42 ms for the experimental single graph. These are functional
-results, not a speedup claim.
+The NPU TopK already ranks the candidates, so the ACT kernel reuses that order
+instead of searching all 255 records for every selected box. In a retained
+50-run recheck, the separate NMS workload took 0.43 ms median wall time. Full
+OpenVINO-plus-CPU-NMS, two-workload, and single-graph medians were 14.97,
+14.56, and 13.99 ms. These submission-to-fence results are variable system
+measurements, not a general speedup claim or kernel-only timing.
 
 ## Public smoke test
 
@@ -77,6 +79,9 @@ $env:PYTHONPATH = (Resolve-Path contrib\yolo11-nms)
 - Windows x64, Meteor Lake/NPU3720, batch 1, and static 640x640 input.
 - At most 255 pre-NMS candidates and 255 returned detections.
 - Candidate transport is FP16.
+- The custom kernel consumes the stable score-ranked output of the NPU TopK;
+  it rejects an unranked candidate stream and resolves FP16 score ties by
+  original candidate index.
 - The two-workload path crosses one host-visible candidate boundary.
 - The single-graph binding supports only the exact reviewed model and software
   stack; it never guesses ACT positions for a different graph.

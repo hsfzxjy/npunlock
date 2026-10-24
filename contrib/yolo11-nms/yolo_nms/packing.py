@@ -45,6 +45,16 @@ def quantize_candidates(candidates: DetectionBatch) -> DetectionBatch:
     )
 
 
+def validate_ranked_candidates(candidates: DetectionBatch) -> None:
+    """Validate the non-increasing FP16 score contract supplied by NPU TopK."""
+
+    transported_scores = np.asarray(candidates.scores, dtype=np.float16)
+    if transported_scores.shape != (len(candidates),):
+        raise ValueError("scores must have shape (N,)")
+    if np.any(transported_scores[1:] > transported_scores[:-1]):
+        raise ValueError("NMS candidates must be ranked by the preceding stable NPU TopK")
+
+
 def pack_candidates(
     candidates: DetectionBatch,
     *,
@@ -101,6 +111,9 @@ def unpack_detections(output: object) -> DetectionBatch:
     if flat.size != NMS_LOGICAL_WORDS:
         raise ValueError(f"kernel output has {flat.size} words, expected {NMS_LOGICAL_WORDS}")
     chunk = flat[:NMS_CHUNK_WORDS]
+    status = int(float(chunk[6]))
+    if status != 0:
+        raise ValueError(f"kernel rejected the ranked candidate stream with status {status}")
     count = int(float(chunk[0]))
     if not 0 <= count <= NMS_CAPACITY:
         raise ValueError(f"kernel selected count {count} is outside the fixed capacity")

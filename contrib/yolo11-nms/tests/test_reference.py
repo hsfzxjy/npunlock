@@ -4,7 +4,12 @@ import unittest
 
 import numpy as np
 
-from yolo_nms.packing import pack_candidates, quantize_candidates, unpack_detections
+from yolo_nms.packing import (
+    pack_candidates,
+    quantize_candidates,
+    unpack_detections,
+    validate_ranked_candidates,
+)
 from yolo_nms.reference import DetectionBatch, reference_nms
 
 
@@ -69,6 +74,16 @@ class ReferenceNmsTests(unittest.TestCase):
         np.testing.assert_array_equal(actual.scores, expected.scores)
         np.testing.assert_array_equal(actual.classes, expected.classes)
         np.testing.assert_array_equal(actual.indices, expected.indices)
+
+    def test_ranked_kernel_input_contract(self) -> None:
+        validate_ranked_candidates(candidates([], [], []))
+        validate_ranked_candidates(
+            candidates([[0, 0, 1, 1], [2, 2, 3, 3]], [0.9, 0.8], [0, 0])
+        )
+        with self.assertRaisesRegex(ValueError, "ranked"):
+            validate_ranked_candidates(
+                candidates([[0, 0, 1, 1], [2, 2, 3, 3]], [0.8, 0.9], [0, 0])
+            )
 
 
 if __name__ == "__main__":
