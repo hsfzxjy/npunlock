@@ -1,7 +1,7 @@
 #include <npunlock/npu3720_kernel.h>
 
 #define HNSW_CHUNK_ELEMENTS 1024u
-#define HNSW_MAX_CHUNKS_PER_INVOCATION 8u
+#define HNSW_MAX_CHUNKS_PER_INVOCATION 12u
 #define HNSW_MAX_NODES 48u
 #define HNSW_MAX_DIMENSIONS 32u
 #define HNSW_MAX_LEVELS 4u

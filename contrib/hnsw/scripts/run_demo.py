@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--native-dir", help="directory containing a development npunlock.dll")
     parser.add_argument("--output-dir", default="contrib/hnsw/outputs")
     parser.add_argument("--index-size", type=int, default=48)
-    parser.add_argument("--query-count", type=int, default=32)
+    parser.add_argument("--query-count", type=int, default=48)
     parser.add_argument("--dimensions", type=int, default=16)
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--ef-construction", type=int, default=24)

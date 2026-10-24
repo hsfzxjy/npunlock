@@ -701,9 +701,9 @@ different graph structure, not that the C expression itself is invalid.
 - [HNSW contribution](../contrib/hnsw/README.md) runs hierarchical greedy
   descent and dynamic best-first base-layer traversal entirely inside an
   ACT-SHAVE kernel. Its throughput carrier uses four execution-tested
-  8,192-element FP32 invocation spans, subdivides each into eight independent
-  1,024-element query/index chunks, and therefore runs up to 32 queries per
-  submission. This exact 32 KiB local span is validated only for the documented
+  12,288-element FP32 invocation spans, subdivides each into twelve independent
+  1,024-element query/index chunks, and therefore runs up to 48 queries per
+  submission. This exact 48 KiB local span is validated only for the documented
   FP32 `Subtract` shape on NPU3720/compiler 8.3. The bounded 48-node index is
   duplicated into every chunk; the implementation does not assume graph-global
   reads or cross-invocation communication. Its

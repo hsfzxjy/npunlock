@@ -40,22 +40,22 @@ Then run the same index and queries on the NPU:
 ```
 
 The demo uses real handwritten-digit data, produces 16-dimensional PCA
-embeddings, builds a 48-node index, and searches 32 held-out queries. Generated
+embeddings, builds a 48-node index, and searches 48 held-out queries. Generated
 indices, compiled programs, and reports stay under ignored output directories.
 
 ## What was verified
 
 On the recorded NPU3720/compiler-8.3 system:
 
-- all 32 NPU searches matched the independent Python HNSW traversal exactly in
+- all 48 NPU searches matched the independent Python HNSW traversal exactly in
   neighbor IDs, raw FP32 distances, and traversal counters;
-- the NPU visited 26.6 of 48 nodes on average, so the run was not exhaustive;
-- recall@5 was 0.881 for this small `M=4`, `efSearch=16` graph;
+- the NPU visited 26.3 of 48 nodes on average, so the run was not exhaustive;
+- recall@5 was 0.912 for this small `M=4`, `efSearch=16` graph;
 - one 6,544-byte SHAVE image served four ACT targets; and
-- a 32-query batch averaged 0.600 ms of graph execution and 0.708 ms for the
+- a 48-query batch averaged 0.716 ms of graph execution and 0.833 ms for the
   complete public call in the retained 5,000-run measurement.
 
-hnswlib processed the same tiny batch in 0.055 ms. This contribution shows
+hnswlib processed the same tiny batch in 0.090 ms. This contribution shows
 that irregular graph traversal works on the NPU; it does not claim a CPU
 performance crossover.
 
@@ -73,7 +73,7 @@ $env:PYTHONPATH = (Resolve-Path contrib\hnsw)
 
 - At most 48 nodes, 32 dimensions, four graph layers, four neighbors per layer,
   `efSearch=24`, and top-k 16.
-- One graph submission accepts up to 32 independent queries.
+- One graph submission accepts up to 48 independent queries.
 - The tested carrier is FP32 and keeps every query/index chunk within one ACT
   invocation; there is no cross-invocation communication.
 - The 16-dimensional fast path uses a fixed four-lane FP32 reduction tree; the
