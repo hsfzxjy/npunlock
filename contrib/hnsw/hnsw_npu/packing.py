@@ -232,8 +232,12 @@ def _unpack_result_arrays(
             raise ValueError("unused replicated HNSW chunks produced different output bytes")
 
     headers = chunks[:query_count, :OUTPUT_HEADER_ELEMENTS]
+    records = chunks[:query_count, OUTPUT_HEADER_ELEMENTS : OUTPUT_HEADER_ELEMENTS + 2 * k].reshape(query_count, k, 2)
+    raw_ids = records[:, :, 0]
+    distances = records[:, :, 1].copy()
     with np.errstate(invalid="ignore"):
         integer_headers = headers.astype(np.int32)
+        ids = raw_ids.astype(np.int32)
     if not np.array_equal(headers, integer_headers):
         raise ValueError("kernel output header contains a non-integral or out-of-range value")
     expected = np.asarray(
@@ -257,11 +261,6 @@ def _unpack_result_arrays(
     if ((termination_flags != 0) & (termination_flags != 1)).any():
         raise ValueError("kernel returned an invalid termination flag")
 
-    records = chunks[:query_count, OUTPUT_HEADER_ELEMENTS : OUTPUT_HEADER_ELEMENTS + 2 * k].reshape(query_count, k, 2)
-    raw_ids = records[:, :, 0]
-    distances = records[:, :, 1].copy()
-    with np.errstate(invalid="ignore"):
-        ids = raw_ids.astype(np.int32)
     if not np.array_equal(raw_ids, ids) or (ids < 0).any() or (ids >= index.vectors.shape[0]).any():
         raise ValueError("kernel returned an invalid or non-integral node id")
     if (np.diff(np.sort(ids, axis=1), axis=1) == 0).any():
@@ -279,15 +278,15 @@ def _unpack_result_arrays(
 
     stats = tuple(
         SearchStats(
-            visited_count=int(integer_headers[row, 8]),
-            distance_count=int(integer_headers[row, 9]),
-            upper_hops=int(integer_headers[row, 10]),
-            base_expansions=int(integer_headers[row, 11]),
-            terminated_by_bound=bool(integer_headers[row, 12]),
-            candidate_peak=int(integer_headers[row, 13]),
-            top_peak=int(integer_headers[row, 14]),
+            visited_count=row[0],
+            distance_count=row[1],
+            upper_hops=row[2],
+            base_expansions=row[3],
+            terminated_by_bound=bool(row[4]),
+            candidate_peak=row[5],
+            top_peak=row[6],
         )
-        for row in range(query_count)
+        for row in integer_headers[:, 8:15].tolist()
     )
     return ids, distances, stats
 
