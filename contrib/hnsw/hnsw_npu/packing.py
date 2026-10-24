@@ -22,7 +22,7 @@ MAX_K = 16
 QUERY_MAGIC = 372021
 GRAPH_MAGIC = 372022
 OUTPUT_MAGIC = 372023
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 QUERY_HEADER_ELEMENTS = 8
 GRAPH_HEADER_ELEMENTS = 8
 OUTPUT_HEADER_ELEMENTS = 16
@@ -231,15 +231,10 @@ def _unpack_result_arrays(
         if not np.array_equal(inactive, np.broadcast_to(first, inactive.shape)):
             raise ValueError("unused replicated HNSW chunks produced different output bytes")
 
-    headers = chunks[:query_count, :OUTPUT_HEADER_ELEMENTS]
+    header_words = chunks[:query_count, :OUTPUT_HEADER_ELEMENTS].view(np.uint32)
     records = chunks[:query_count, OUTPUT_HEADER_ELEMENTS : OUTPUT_HEADER_ELEMENTS + 2 * k].reshape(query_count, k, 2)
-    raw_ids = records[:, :, 0]
+    ids = records[:, :, 0].view(np.int32).copy()
     distances = records[:, :, 1].copy()
-    with np.errstate(invalid="ignore"):
-        integer_headers = headers.astype(np.int32)
-        ids = raw_ids.astype(np.int32)
-    if not np.array_equal(headers, integer_headers):
-        raise ValueError("kernel output header contains a non-integral or out-of-range value")
     expected = np.asarray(
         (
             OUTPUT_MAGIC,
@@ -251,18 +246,34 @@ def _unpack_result_arrays(
             ef_search,
             k,
         ),
-        dtype=np.int32,
+        dtype=np.uint32,
     )
-    if not np.all(integer_headers[:, :8] == expected):
+    if not np.all(header_words[:, :8] == expected):
         raise ValueError("kernel output header does not match the requested index and search")
-    if not np.all(integer_headers[:, 15] == k):
+    if not np.all(header_words[:, 15] == k):
         raise ValueError("kernel returned an unexpected result count")
-    termination_flags = integer_headers[:, 12]
+    termination_flags = header_words[:, 12]
     if ((termination_flags != 0) & (termination_flags != 1)).any():
         raise ValueError("kernel returned an invalid termination flag")
+    counters = header_words[:, 8:15]
+    counter_lower_bounds = np.asarray((1, 1, 0, 0, 0, 1, 1), dtype=np.uint32)
+    counter_upper_bounds = np.asarray(
+        (
+            index.vectors.shape[0],
+            MAX_NODES * (MAX_LEVELS * MAX_M + 1),
+            index.vectors.shape[0] * index.max_level,
+            index.vectors.shape[0],
+            1,
+            MAX_NODES,
+            ef_search,
+        ),
+        dtype=np.uint32,
+    )
+    if ((counters < counter_lower_bounds) | (counters > counter_upper_bounds)).any():
+        raise ValueError("kernel returned an out-of-range traversal counter")
 
-    if not np.array_equal(raw_ids, ids) or (ids < 0).any() or (ids >= index.vectors.shape[0]).any():
-        raise ValueError("kernel returned an invalid or non-integral node id")
+    if (ids < 0).any() or (ids >= index.vectors.shape[0]).any():
+        raise ValueError("kernel returned an invalid node id")
     if (np.diff(np.sort(ids, axis=1), axis=1) == 0).any():
         raise ValueError("kernel returned duplicate node ids")
     if not np.isfinite(distances).all() or (distances < 0).any():
@@ -286,7 +297,7 @@ def _unpack_result_arrays(
             candidate_peak=row[5],
             top_peak=row[6],
         )
-        for row in integer_headers[:, 8:15].tolist()
+        for row in counters.tolist()
     )
     return ids, distances, stats
 

@@ -11,7 +11,7 @@
 #define HNSW_QUERY_MAGIC 372021u
 #define HNSW_GRAPH_MAGIC 372022u
 #define HNSW_OUTPUT_MAGIC 372023u
-#define HNSW_FORMAT_VERSION 2u
+#define HNSW_FORMAT_VERSION 3u
 #define HNSW_QUERY_HEADER 8u
 #define HNSW_GRAPH_HEADER 8u
 #define HNSW_OUTPUT_HEADER 16u
@@ -176,14 +176,15 @@ static void hnsw_top_pop(float *distances, unsigned *nodes, unsigned *size) {
   }
 }
 
-static void hnsw_write_status(float *output, unsigned status) {
-  output[0] = (float)HNSW_OUTPUT_MAGIC;
-  output[1] = (float)status;
+static void hnsw_write_status(unsigned *output, unsigned status) {
+  output[0] = HNSW_OUTPUT_MAGIC;
+  output[1] = status;
 }
 
 static void hnsw_search_chunk(const float *query_payload, const float *graph, float *output) {
   const unsigned *query_words = (const unsigned *)query_payload;
   const unsigned *graph_words = (const unsigned *)graph;
+  unsigned *output_words = (unsigned *)output;
   const float *query;
   const float *vectors;
   volatile unsigned visited[HNSW_VISITED_WORDS];
@@ -216,7 +217,7 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
   for (value = 0u; value < HNSW_OUTPUT_ELEMENTS; ++value) {
     output[value] = 0.0f;
   }
-  hnsw_write_status(output, HNSW_STATUS_BAD_QUERY);
+  hnsw_write_status(output_words, HNSW_STATUS_BAD_QUERY);
   node_count = query_words[2];
   dimensions = query_words[3];
   entry_point = query_words[4];
@@ -235,7 +236,7 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
   query = query_payload + HNSW_QUERY_HEADER;
   vectors = query + dimensions;
 
-  hnsw_write_status(output, HNSW_STATUS_BAD_GRAPH);
+  hnsw_write_status(output_words, HNSW_STATUS_BAD_GRAPH);
   if (graph_words[0] != HNSW_GRAPH_MAGIC || graph_words[1] != HNSW_FORMAT_VERSION ||
       graph_words[2] != node_count || graph_words[3] != dimensions ||
       graph_words[4] != entry_point || graph_words[5] != max_level ||
@@ -287,7 +288,7 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
       ++upper_hops;
     }
     if (step == node_count) {
-      hnsw_write_status(output, HNSW_STATUS_INTERNAL_BOUND);
+      hnsw_write_status(output_words, HNSW_STATUS_INTERNAL_BOUND);
       return;
     }
   }
@@ -340,7 +341,7 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
           if (top_size < ef_search ||
               hnsw_better(distance, neighbor, top_distances[0], top_nodes[0])) {
             if (candidate_size >= HNSW_MAX_NODES) {
-              hnsw_write_status(output, HNSW_STATUS_INTERNAL_BOUND);
+              hnsw_write_status(output_words, HNSW_STATUS_INTERNAL_BOUND);
               return;
             }
             hnsw_candidate_push(candidate_distances, candidate_nodes, &candidate_size, distance,
@@ -362,32 +363,32 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
   }
 
   if (top_size < result_count) {
-    hnsw_write_status(output, HNSW_STATUS_BAD_SEARCH);
+    hnsw_write_status(output_words, HNSW_STATUS_BAD_SEARCH);
     return;
   }
-  output[0] = (float)HNSW_OUTPUT_MAGIC;
-  output[1] = (float)HNSW_STATUS_OK;
-  output[2] = (float)node_count;
-  output[3] = (float)dimensions;
-  output[4] = (float)entry_point;
-  output[5] = (float)max_level;
-  output[6] = (float)ef_search;
-  output[7] = (float)result_count;
-  output[8] = (float)visited_count;
-  output[9] = (float)distance_count;
-  output[10] = (float)upper_hops;
-  output[11] = (float)base_expansions;
-  output[12] = (float)terminated_by_bound;
-  output[13] = (float)candidate_peak;
-  output[14] = (float)top_peak;
-  output[15] = (float)result_count;
+  output_words[0] = HNSW_OUTPUT_MAGIC;
+  output_words[1] = HNSW_STATUS_OK;
+  output_words[2] = node_count;
+  output_words[3] = dimensions;
+  output_words[4] = entry_point;
+  output_words[5] = max_level;
+  output_words[6] = ef_search;
+  output_words[7] = result_count;
+  output_words[8] = visited_count;
+  output_words[9] = distance_count;
+  output_words[10] = upper_hops;
+  output_words[11] = base_expansions;
+  output_words[12] = terminated_by_bound;
+  output_words[13] = candidate_peak;
+  output_words[14] = top_peak;
+  output_words[15] = result_count;
 
   while (top_size > result_count) {
     hnsw_top_pop(top_distances, top_nodes, &top_size);
   }
   for (value = result_count; value > 0u; --value) {
     unsigned output_index = HNSW_OUTPUT_HEADER + (value - 1u) * 2u;
-    output[output_index] = (float)top_nodes[0];
+    output_words[output_index] = top_nodes[0];
     output[output_index + 1u] = top_distances[0];
     hnsw_top_pop(top_distances, top_nodes, &top_size);
   }
