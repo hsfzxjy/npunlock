@@ -15,8 +15,9 @@ from .packing import (
     CHUNK_ELEMENTS,
     LOGICAL_ELEMENTS,
     REPLICAS,
+    _make_query_buffer,
+    _update_query_buffer,
     pack_graph,
-    pack_queries,
     unpack_results,
     validate_capacity,
 )
@@ -184,7 +185,10 @@ class NpuHnsw:
         )
         self.shared_inputs = self.program.shared_inputs()
         self.shared_output = self.program.shared_output()
+        started = perf_counter()
+        np.copyto(self.shared_inputs["hnsw_query_vectors"], _make_query_buffer(index))
         np.copyto(self.shared_inputs["hnsw_adjacency"], self.packed_graph)
+        self.static_input_upload_ms = (perf_counter() - started) * 1000.0
 
     @property
     def patch_evidence(self) -> dict[str, object]:
@@ -230,14 +234,15 @@ class NpuHnsw:
         ef_search: int = 16,
         verify: bool = True,
     ) -> SearchBatch:
+        pack_ms = 0.0
         started = perf_counter()
-        query_matrix = np.asarray(queries, dtype=np.float32)
-        if query_matrix.ndim == 1:
-            query_matrix = query_matrix.reshape(1, -1)
-        packed_query, query_count = pack_queries(self.index, query_matrix, k=k, ef_search=ef_search)
-        pack_ms = (perf_counter() - started) * 1000.0
-        started = perf_counter()
-        np.copyto(self.shared_inputs["hnsw_query_vectors"], packed_query)
+        query_matrix, query_count = _update_query_buffer(
+            self.shared_inputs["hnsw_query_vectors"],
+            self.index,
+            queries,
+            k=k,
+            ef_search=ef_search,
+        )
         upload_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         outputs = self.program.run(
@@ -248,12 +253,10 @@ class NpuHnsw:
             outputs={"hnsw_results": self.shared_output},
         )
         graphinfer_wall_ms = (perf_counter() - started) * 1000.0
-        started = perf_counter()
-        copied = np.array(outputs["hnsw_results"], copy=True)
-        download_ms = (perf_counter() - started) * 1000.0
+        download_ms = 0.0
         started = perf_counter()
         packed_results = unpack_results(
-            copied,
+            outputs["hnsw_results"],
             index=self.index,
             k=k,
             ef_search=ef_search,

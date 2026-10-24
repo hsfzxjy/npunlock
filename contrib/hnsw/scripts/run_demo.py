@@ -167,6 +167,7 @@ def main() -> int:
     npu_cache_status = None
     npu_cache_diagnostic = None
     npu_submission_wall_ms = None
+    npu_static_input_upload_ms = None
     if not args.cpu_only:
         cache_dir = Path(args.cache_dir) if args.cache_dir else output_dir / "program-cache"
         with NpuHnsw(
@@ -179,6 +180,7 @@ def main() -> int:
             npu_cache_load_ms = backend.cache_load_ms
             npu_cache_status = backend.cache_status
             npu_cache_diagnostic = backend.cache_diagnostic
+            npu_static_input_upload_ms = backend.static_input_upload_ms
             patch_evidence = backend.patch_evidence
             build_manifest = backend.build_manifest
             runtime_provenance = backend.runtime_provenance
@@ -267,6 +269,7 @@ def main() -> int:
             "hnswlib_all_queries": hnswlib_search_ms,
             "npu_program_build": npu_build_ms,
             "npu_program_cache_load": npu_cache_load_ms,
+            "npu_static_input_upload": npu_static_input_upload_ms,
             "npu_submission_loop_wall": npu_submission_wall_ms,
             "npu_graphinfer_all_queries": (
                 None if args.cpu_only else sum(item["graphinfer_wall_ms"] for item in npu_timings)

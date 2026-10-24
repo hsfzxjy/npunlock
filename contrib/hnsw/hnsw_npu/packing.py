@@ -90,38 +90,7 @@ def _validate_search_parameters(index: HnswIndex, *, k: int, ef_search: int) -> 
         raise ValueError(f"k must be in [1, {min(MAX_K, ef_search)}]")
 
 
-def _pack_query_chunk(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np.ndarray:
-    validate_capacity(index)
-    vector = np.ascontiguousarray(query, dtype=np.float32).reshape(-1)
-    dimensions = index.vectors.shape[1]
-    if vector.shape != (dimensions,) or not np.isfinite(vector).all():
-        raise ValueError(f"query must be a finite vector of dimension {dimensions}")
-    _validate_search_parameters(index, k=k, ef_search=ef_search)
-    chunk = np.zeros(CHUNK_ELEMENTS, dtype=np.float32)
-    chunk[:QUERY_HEADER_ELEMENTS] = (
-        QUERY_MAGIC,
-        FORMAT_VERSION,
-        index.vectors.shape[0],
-        dimensions,
-        index.entry_point,
-        index.max_level,
-        ef_search,
-        k,
-    )
-    cursor = QUERY_HEADER_ELEMENTS
-    chunk[cursor : cursor + dimensions] = vector
-    cursor += dimensions
-    chunk[cursor : cursor + index.vectors.size] = index.vectors.reshape(-1)
-    return chunk
-
-
-def pack_queries(index: HnswIndex, queries: object, *, k: int, ef_search: int) -> tuple[np.ndarray, int]:
-    """Pack one to four queries into independent ACT invocation payloads.
-
-    Unused invocations repeat the first query. This keeps every invocation valid
-    and retains a byte-for-byte execution check for a single-query submission.
-    """
-
+def _normalize_queries(index: HnswIndex, queries: object) -> np.ndarray:
     validate_capacity(index)
     matrix = np.asarray(queries, dtype=np.float32)
     dimensions = index.vectors.shape[1]
@@ -133,10 +102,79 @@ def pack_queries(index: HnswIndex, queries: object, *, k: int, ef_search: int) -
         raise ValueError(f"query count must be in [1, {REPLICAS}]")
     if not np.isfinite(matrix).all():
         raise ValueError("queries must contain only finite values")
-    chunks = [_pack_query_chunk(index, query, k=k, ef_search=ef_search) for query in np.ascontiguousarray(matrix)]
-    active_count = len(chunks)
-    chunks.extend(chunks[0].copy() for _ in range(REPLICAS - active_count))
-    return np.concatenate(chunks).reshape(1, LOGICAL_ELEMENTS), active_count
+    return np.ascontiguousarray(matrix)
+
+
+def _make_query_buffer(index: HnswIndex) -> np.ndarray:
+    """Create the static query/vector payload shared by later submissions."""
+
+    validate_capacity(index)
+    node_count, dimensions = index.vectors.shape
+    chunks = np.zeros((REPLICAS, CHUNK_ELEMENTS), dtype=np.float32)
+    vectors_begin = QUERY_HEADER_ELEMENTS + dimensions
+    for chunk in chunks:
+        chunk[:QUERY_HEADER_ELEMENTS] = (
+            QUERY_MAGIC,
+            FORMAT_VERSION,
+            node_count,
+            dimensions,
+            index.entry_point,
+            index.max_level,
+            1,
+            1,
+        )
+        chunk[vectors_begin : vectors_begin + index.vectors.size] = index.vectors.reshape(-1)
+    return chunks.reshape(1, LOGICAL_ELEMENTS)
+
+
+def _update_query_buffer(
+    target: object,
+    index: HnswIndex,
+    queries: object,
+    *,
+    k: int,
+    ef_search: int,
+) -> tuple[np.ndarray, int]:
+    """Update only dynamic query fields in a prepared packed buffer."""
+
+    matrix = _normalize_queries(index, queries)
+    _validate_search_parameters(index, k=k, ef_search=ef_search)
+    packed = np.asarray(target)
+    if (
+        packed.dtype != np.float32
+        or packed.size != LOGICAL_ELEMENTS
+        or not packed.flags.c_contiguous
+        or not packed.flags.writeable
+    ):
+        raise ValueError(f"target must be a writable contiguous float32 buffer with {LOGICAL_ELEMENTS} elements")
+    chunks = packed.reshape(REPLICAS, CHUNK_ELEMENTS)
+    active_count = matrix.shape[0]
+    for slot, chunk in enumerate(chunks):
+        query = matrix[slot if slot < active_count else 0]
+        chunk[:QUERY_HEADER_ELEMENTS] = (
+            QUERY_MAGIC,
+            FORMAT_VERSION,
+            index.vectors.shape[0],
+            index.vectors.shape[1],
+            index.entry_point,
+            index.max_level,
+            ef_search,
+            k,
+        )
+        chunk[QUERY_HEADER_ELEMENTS : QUERY_HEADER_ELEMENTS + index.vectors.shape[1]] = query
+    return matrix, active_count
+
+
+def pack_queries(index: HnswIndex, queries: object, *, k: int, ef_search: int) -> tuple[np.ndarray, int]:
+    """Pack one to four queries into independent ACT invocation payloads.
+
+    Unused invocations repeat the first query. This keeps every invocation valid
+    and retains a byte-for-byte execution check for a single-query submission.
+    """
+
+    packed = _make_query_buffer(index)
+    _, active_count = _update_query_buffer(packed, index, queries, k=k, ef_search=ef_search)
+    return packed, active_count
 
 
 def pack_query(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np.ndarray:
