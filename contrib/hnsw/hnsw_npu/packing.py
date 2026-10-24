@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -28,6 +29,9 @@ GRAPH_HEADER_ELEMENTS = 8
 OUTPUT_HEADER_ELEMENTS = 16
 OUTPUT_ELEMENTS = OUTPUT_HEADER_ELEMENTS + 2 * MAX_K
 NODE_GRAPH_ELEMENTS = 1 + MAX_LEVELS * (1 + MAX_M)
+
+_COUNTER_LOWER_BOUNDS = np.asarray((1, 1, 0, 0, 0, 1, 1), dtype=np.uint32)
+_COUNTER_LOWER_BOUNDS.flags.writeable = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +213,53 @@ def pack_query(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np
     return packed
 
 
+@lru_cache(maxsize=128)
+def _result_validation_arrays(
+    node_count: int,
+    dimensions: int,
+    entry_point: int,
+    max_level: int,
+    ef_search: int,
+    k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Cache immutable lower and upper bounds for the output header."""
+
+    expected_header = np.asarray(
+        (
+            OUTPUT_MAGIC,
+            0,
+            node_count,
+            dimensions,
+            entry_point,
+            max_level,
+            ef_search,
+            k,
+        ),
+        dtype=np.uint32,
+    )
+    counter_upper_bounds = np.asarray(
+        (
+            node_count,
+            MAX_NODES * (MAX_LEVELS * MAX_M + 1),
+            node_count * max_level,
+            node_count,
+            1,
+            MAX_NODES,
+            ef_search,
+        ),
+        dtype=np.uint32,
+    )
+    header_lower_bounds = np.concatenate(
+        (expected_header, _COUNTER_LOWER_BOUNDS, np.asarray((k,), dtype=np.uint32))
+    )
+    header_upper_bounds = np.concatenate(
+        (expected_header, counter_upper_bounds, np.asarray((k,), dtype=np.uint32))
+    )
+    header_lower_bounds.flags.writeable = False
+    header_upper_bounds.flags.writeable = False
+    return header_lower_bounds, header_upper_bounds
+
+
 def _unpack_result_arrays(
     output: object,
     *,
@@ -235,42 +286,29 @@ def _unpack_result_arrays(
     records = chunks[:query_count, OUTPUT_HEADER_ELEMENTS : OUTPUT_HEADER_ELEMENTS + 2 * k].reshape(query_count, k, 2)
     ids = records[:, :, 0].view(np.int32).copy()
     distances = records[:, :, 1].copy()
-    expected = np.asarray(
-        (
-            OUTPUT_MAGIC,
-            0,
-            index.vectors.shape[0],
-            index.vectors.shape[1],
-            index.entry_point,
-            index.max_level,
-            ef_search,
-            k,
-        ),
-        dtype=np.uint32,
+    header_lower_bounds, header_upper_bounds = _result_validation_arrays(
+        index.vectors.shape[0],
+        index.vectors.shape[1],
+        index.entry_point,
+        index.max_level,
+        ef_search,
+        k,
     )
-    if not np.all(header_words[:, :8] == expected):
-        raise ValueError("kernel output header does not match the requested index and search")
-    if not np.all(header_words[:, 15] == k):
-        raise ValueError("kernel returned an unexpected result count")
-    termination_flags = header_words[:, 12]
-    if ((termination_flags != 0) & (termination_flags != 1)).any():
-        raise ValueError("kernel returned an invalid termination flag")
     counters = header_words[:, 8:15]
-    counter_lower_bounds = np.asarray((1, 1, 0, 0, 0, 1, 1), dtype=np.uint32)
-    counter_upper_bounds = np.asarray(
-        (
-            index.vectors.shape[0],
-            MAX_NODES * (MAX_LEVELS * MAX_M + 1),
-            index.vectors.shape[0] * index.max_level,
-            index.vectors.shape[0],
-            1,
-            MAX_NODES,
-            ef_search,
-        ),
-        dtype=np.uint32,
-    )
-    if ((counters < counter_lower_bounds) | (counters > counter_upper_bounds)).any():
-        raise ValueError("kernel returned an out-of-range traversal counter")
+    if ((header_words < header_lower_bounds) | (header_words > header_upper_bounds)).any():
+        # Keep precise malformed-output diagnostics off the successful hot path.
+        if not np.all(header_words[:, :8] == header_lower_bounds[:8]):
+            raise ValueError("kernel output header does not match the requested index and search")
+        if not np.all(header_words[:, 15] == k):
+            raise ValueError("kernel returned an unexpected result count")
+        termination_flags = header_words[:, 12]
+        if ((termination_flags != 0) & (termination_flags != 1)).any():
+            raise ValueError("kernel returned an invalid termination flag")
+        if (
+            (counters < header_lower_bounds[8:15]) | (counters > header_upper_bounds[8:15])
+        ).any():
+            raise ValueError("kernel returned an out-of-range traversal counter")
+        raise ValueError("kernel returned invalid output metadata")
 
     if (ids < 0).any() or (ids >= index.vectors.shape[0]).any():
         raise ValueError("kernel returned an invalid node id")
