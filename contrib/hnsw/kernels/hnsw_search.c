@@ -176,6 +176,26 @@ static void hnsw_top_pop(float *distances, unsigned *nodes, unsigned *size) {
   }
 }
 
+static void hnsw_top_replace(float *distances, unsigned *nodes, unsigned size, float distance,
+                             unsigned node) {
+  unsigned position = 0u;
+  while (position * 2u + 1u < size) {
+    unsigned child = position * 2u + 1u;
+    if (child + 1u < size &&
+        hnsw_worse(distances[child + 1u], nodes[child + 1u], distances[child], nodes[child])) {
+      ++child;
+    }
+    if (!hnsw_worse(distances[child], nodes[child], distance, node)) {
+      break;
+    }
+    distances[position] = distances[child];
+    nodes[position] = nodes[child];
+    position = child;
+  }
+  distances[position] = distance;
+  nodes[position] = node;
+}
+
 static void hnsw_write_status(unsigned *output, unsigned status) {
   output[0] = HNSW_OUTPUT_MAGIC;
   output[1] = status;
@@ -346,9 +366,10 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
             }
             hnsw_candidate_push(candidate_distances, candidate_nodes, &candidate_size, distance,
                                 neighbor);
-            hnsw_top_push(top_distances, top_nodes, &top_size, distance, neighbor);
-            if (top_size > ef_search) {
-              hnsw_top_pop(top_distances, top_nodes, &top_size);
+            if (top_size < ef_search) {
+              hnsw_top_push(top_distances, top_nodes, &top_size, distance, neighbor);
+            } else {
+              hnsw_top_replace(top_distances, top_nodes, top_size, distance, neighbor);
             }
             if (candidate_size > candidate_peak) {
               candidate_peak = candidate_size;
