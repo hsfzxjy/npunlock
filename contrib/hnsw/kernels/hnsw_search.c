@@ -14,7 +14,9 @@
 #define HNSW_QUERY_HEADER 8u
 #define HNSW_GRAPH_HEADER 8u
 #define HNSW_OUTPUT_HEADER 16u
+#define HNSW_OUTPUT_ELEMENTS (HNSW_OUTPUT_HEADER + HNSW_MAX_K * 2u)
 #define HNSW_NODE_GRAPH_ELEMENTS (1u + HNSW_MAX_LEVELS * (1u + HNSW_MAX_M))
+#define HNSW_VISITED_WORDS ((HNSW_MAX_NODES + 31u) / 32u)
 
 #define HNSW_STATUS_OK 0u
 #define HNSW_STATUS_BAD_QUERY 1u
@@ -46,6 +48,31 @@ static float hnsw_distance(const float *query, const float *vectors, unsigned di
   float total = 0.0f;
   const float *candidate = vectors + node * dimensions;
   unsigned index;
+#define HNSW_ACCUMULATE(INDEX)                                                                     \
+  do {                                                                                             \
+    float delta = query[INDEX] - candidate[INDEX];                                                 \
+    total += delta * delta;                                                                        \
+  } while (0)
+  if (dimensions == 16u) {
+    HNSW_ACCUMULATE(0u);
+    HNSW_ACCUMULATE(1u);
+    HNSW_ACCUMULATE(2u);
+    HNSW_ACCUMULATE(3u);
+    HNSW_ACCUMULATE(4u);
+    HNSW_ACCUMULATE(5u);
+    HNSW_ACCUMULATE(6u);
+    HNSW_ACCUMULATE(7u);
+    HNSW_ACCUMULATE(8u);
+    HNSW_ACCUMULATE(9u);
+    HNSW_ACCUMULATE(10u);
+    HNSW_ACCUMULATE(11u);
+    HNSW_ACCUMULATE(12u);
+    HNSW_ACCUMULATE(13u);
+    HNSW_ACCUMULATE(14u);
+    HNSW_ACCUMULATE(15u);
+    return total;
+  }
+#undef HNSW_ACCUMULATE
   for (index = 0u; index < dimensions; ++index) {
     float delta = query[index] - candidate[index];
     total += delta * delta;
@@ -166,7 +193,7 @@ void controlled_act(unsigned layerParams) {
   float *output;
   const float *query;
   const float *vectors;
-  volatile unsigned char visited[HNSW_MAX_NODES];
+  volatile unsigned visited[HNSW_VISITED_WORDS];
   float candidate_distances[HNSW_MAX_NODES];
   unsigned candidate_nodes[HNSW_MAX_NODES];
   float top_distances[HNSW_MAX_EF];
@@ -200,7 +227,7 @@ void controlled_act(unsigned layerParams) {
   query_payload = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
   graph = ACT_ABI_INPUT_PTR32(const float, invocation, 1u);
   output = ACT_ABI_OUTPUT_PTR32(float, invocation, 2u);
-  for (value = 0u; value < HNSW_CHUNK_ELEMENTS; ++value) {
+  for (value = 0u; value < HNSW_OUTPUT_ELEMENTS; ++value) {
     output[value] = 0.0f;
   }
   hnsw_write_status(output, HNSW_STATUS_BAD_QUERY);
@@ -232,33 +259,9 @@ void controlled_act(unsigned layerParams) {
       HNSW_GRAPH_HEADER + node_count * HNSW_NODE_GRAPH_ELEMENTS > HNSW_CHUNK_ELEMENTS) {
     return;
   }
-  for (node = 0u; node < node_count; ++node) {
-    unsigned node_level;
-    if (!hnsw_exact_uint(graph[hnsw_graph_record(node)], HNSW_MAX_LEVELS - 1u, &node_level)) {
-      return;
-    }
-    if (node == entry_point && node_level != max_level) {
-      return;
-    }
-    for (layer = 0u; layer < HNSW_MAX_LEVELS; ++layer) {
-      unsigned list = hnsw_graph_layer(node, layer);
-      unsigned neighbor_count;
-      if (!hnsw_exact_uint(graph[list], HNSW_MAX_M, &neighbor_count) ||
-          (layer > node_level && neighbor_count != 0u)) {
-        return;
-      }
-      for (slot = 0u; slot < neighbor_count; ++slot) {
-        unsigned neighbor;
-        unsigned neighbor_level;
-        if (!hnsw_exact_uint(graph[list + 1u + slot], node_count - 1u, &neighbor) ||
-            neighbor == node ||
-            !hnsw_exact_uint(graph[hnsw_graph_record(neighbor)], HNSW_MAX_LEVELS - 1u,
-                             &neighbor_level) ||
-            neighbor_level < layer) {
-          return;
-        }
-      }
-    }
+  if (!hnsw_exact_uint(graph[hnsw_graph_record(entry_point)], HNSW_MAX_LEVELS - 1u, &value) ||
+      value != max_level) {
+    return;
   }
 
   current = entry_point;
@@ -268,12 +271,23 @@ void controlled_act(unsigned layerParams) {
     unsigned step;
     for (step = 0u; step < node_count; ++step) {
       unsigned list = hnsw_graph_layer(current, layer);
-      unsigned neighbor_count = (unsigned)graph[list];
+      unsigned neighbor_count;
       unsigned best = current;
       float best_distance = current_distance;
+      if (!hnsw_exact_uint(graph[hnsw_graph_record(current)], HNSW_MAX_LEVELS - 1u, &value) ||
+          value < layer || !hnsw_exact_uint(graph[list], HNSW_MAX_M, &neighbor_count)) {
+        return;
+      }
       for (slot = 0u; slot < neighbor_count; ++slot) {
-        unsigned neighbor = (unsigned)graph[list + 1u + slot];
-        float distance = hnsw_distance(query, vectors, dimensions, neighbor);
+        unsigned neighbor;
+        float distance;
+        if (!hnsw_exact_uint(graph[list + 1u + slot], node_count - 1u, &neighbor) ||
+            neighbor == current ||
+            !hnsw_exact_uint(graph[hnsw_graph_record(neighbor)], HNSW_MAX_LEVELS - 1u, &value) ||
+            value < layer) {
+          return;
+        }
+        distance = hnsw_distance(query, vectors, dimensions, neighbor);
         ++distance_count;
         if (hnsw_better(distance, neighbor, best_distance, best)) {
           best = neighbor;
@@ -293,10 +307,10 @@ void controlled_act(unsigned layerParams) {
     }
   }
 
-  for (node = 0u; node < HNSW_MAX_NODES; ++node) {
+  for (node = 0u; node < HNSW_VISITED_WORDS; ++node) {
     visited[node] = 0u;
   }
-  visited[current] = 1u;
+  visited[current >> 5u] |= 1u << (current & 31u);
   visited_count = 1u;
   hnsw_candidate_push(candidate_distances, candidate_nodes, &candidate_size, current_distance,
                       current);
@@ -317,12 +331,23 @@ void controlled_act(unsigned layerParams) {
     ++base_expansions;
     {
       unsigned list = hnsw_graph_layer(candidate, 0u);
-      unsigned neighbor_count = (unsigned)graph[list];
+      unsigned neighbor_count;
+      if (!hnsw_exact_uint(graph[hnsw_graph_record(candidate)], HNSW_MAX_LEVELS - 1u, &value) ||
+          !hnsw_exact_uint(graph[list], HNSW_MAX_M, &neighbor_count)) {
+        return;
+      }
       for (slot = 0u; slot < neighbor_count; ++slot) {
-        unsigned neighbor = (unsigned)graph[list + 1u + slot];
-        if (visited[neighbor] == 0u) {
+        unsigned neighbor;
+        if (!hnsw_exact_uint(graph[list + 1u + slot], node_count - 1u, &neighbor) ||
+            neighbor == candidate ||
+            !hnsw_exact_uint(graph[hnsw_graph_record(neighbor)], HNSW_MAX_LEVELS - 1u, &value)) {
+          return;
+        }
+        unsigned visited_word = neighbor >> 5u;
+        unsigned visited_mask = 1u << (neighbor & 31u);
+        if ((visited[visited_word] & visited_mask) == 0u) {
           float distance;
-          visited[neighbor] = 1u;
+          visited[visited_word] |= visited_mask;
           ++visited_count;
           distance = hnsw_distance(query, vectors, dimensions, neighbor);
           ++distance_count;

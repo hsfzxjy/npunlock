@@ -24,6 +24,7 @@ FORMAT_VERSION = 1
 QUERY_HEADER_ELEMENTS = 8
 GRAPH_HEADER_ELEMENTS = 8
 OUTPUT_HEADER_ELEMENTS = 16
+OUTPUT_ELEMENTS = OUTPUT_HEADER_ELEMENTS + 2 * MAX_K
 NODE_GRAPH_ELEMENTS = 1 + MAX_LEVELS * (1 + MAX_M)
 
 
@@ -201,7 +202,10 @@ def unpack_results(
         raise ValueError(f"query_count must be in [1, {REPLICAS}]")
     chunks = flat.reshape(REPLICAS, CHUNK_ELEMENTS)
     for replica in range(query_count, REPLICAS):
-        if not np.array_equal(chunks[0].view("V4"), chunks[replica].view("V4")):
+        if not np.array_equal(
+            chunks[0, :OUTPUT_ELEMENTS].view("V4"),
+            chunks[replica, :OUTPUT_ELEMENTS].view("V4"),
+        ):
             raise ValueError("unused replicated ACT invocations produced different output bytes")
     return tuple(_unpack_chunk(chunks[query], index=index, k=k, ef_search=ef_search) for query in range(query_count))
 
