@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--timing-repeats", type=int, default=100)
     parser.add_argument("--cpu-timing-repeats", type=int, default=10_000)
+    parser.add_argument("--cpu-threads", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=MAX_BATCH_QUERIES)
     parser.add_argument(
         "--cache-dir",
@@ -89,6 +90,8 @@ def main() -> int:
         raise ValueError("timing-repeats must be positive")
     if args.cpu_timing_repeats < 1:
         raise ValueError("cpu-timing-repeats must be positive")
+    if args.cpu_threads < 1:
+        raise ValueError("cpu-threads must be positive")
     if not 1 <= args.batch_size <= MAX_BATCH_QUERIES:
         raise ValueError(f"batch-size must be in [1, {MAX_BATCH_QUERIES}]")
     if not args.cpu_only and not args.movi_dll_dir:
@@ -153,11 +156,13 @@ def main() -> int:
     hnswlib_build_ms = (perf_counter() - hnswlib_build_started) * 1000.0
     cpu_index.set_ef(args.ef_search)
     for _ in range(args.warmup):
-        cpu_index.knn_query(queries[:1], k=args.top_k)
+        cpu_index.knn_query(queries[:1], k=args.top_k, num_threads=args.cpu_threads)
     hnswlib_samples_ms = []
     for _ in range(args.cpu_timing_repeats):
         hnswlib_search_started = perf_counter()
-        hnswlib_ids, hnswlib_distances = cpu_index.knn_query(queries, k=args.top_k)
+        hnswlib_ids, hnswlib_distances = cpu_index.knn_query(
+            queries, k=args.top_k, num_threads=args.cpu_threads
+        )
         hnswlib_samples_ms.append((perf_counter() - hnswlib_search_started) * 1000.0)
     hnswlib_search_ms = float(np.mean(hnswlib_samples_ms))
     exact_ids = exact_neighbors(index_vectors, queries, args.top_k)
@@ -298,6 +303,7 @@ def main() -> int:
             "timing_warmup_submissions": args.warmup,
             "timing_repeats": args.timing_repeats,
             "cpu_timing_repeats": args.cpu_timing_repeats,
+            "hnswlib_threads": args.cpu_threads,
             "queries_per_submission": args.batch_size,
             "carrier_query_capacity": None if args.cpu_only else batch_capacity,
             "npu_submissions_per_repeat": (

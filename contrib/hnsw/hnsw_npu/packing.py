@@ -310,12 +310,21 @@ def _unpack_result_arrays(
             raise ValueError("kernel returned an out-of-range traversal counter")
         raise ValueError("kernel returned invalid output metadata")
 
-    if (ids < 0).any() or (ids >= index.vectors.shape[0]).any():
-        raise ValueError("kernel returned an invalid node id")
+    if (
+        (ids < 0)
+        | (ids >= index.vectors.shape[0])
+        | ~np.isfinite(distances)
+        | (distances < 0)
+    ).any():
+        # Preserve specific corruption diagnostics without multiple reductions
+        # on every successful decode.
+        if (ids < 0).any() or (ids >= index.vectors.shape[0]).any():
+            raise ValueError("kernel returned an invalid node id")
+        if not np.isfinite(distances).all() or (distances < 0).any():
+            raise ValueError("kernel returned an invalid distance")
+        raise ValueError("kernel returned invalid result records")
     if (np.diff(np.sort(ids, axis=1), axis=1) == 0).any():
         raise ValueError("kernel returned duplicate node ids")
-    if not np.isfinite(distances).all() or (distances < 0).any():
-        raise ValueError("kernel returned an invalid distance")
     if k > 1:
         previous_distances = distances[:, :-1]
         next_distances = distances[:, 1:]
