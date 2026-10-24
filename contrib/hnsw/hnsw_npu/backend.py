@@ -16,9 +16,9 @@ from .packing import (
     MAX_BATCH_QUERIES,
     REPLICAS,
     _make_query_buffer,
+    _unpack_result_arrays,
     _update_query_buffer,
     pack_graph,
-    unpack_results,
     validate_capacity,
 )
 
@@ -274,7 +274,7 @@ class NpuHnsw:
         graphinfer_wall_ms = (perf_counter() - started) * 1000.0
         download_ms = 0.0
         started = perf_counter()
-        packed_results = unpack_results(
+        result_ids, result_distances, result_stats = _unpack_result_arrays(
             outputs["hnsw_results"],
             index=self.index,
             k=k,
@@ -284,17 +284,22 @@ class NpuHnsw:
         unpack_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         if verify:
-            for query, packed_result in zip(query_matrix, packed_results):
+            for query, ids, distances, stats in zip(
+                query_matrix,
+                result_ids,
+                result_distances,
+                result_stats,
+            ):
                 reference_ids, reference_distances, reference_stats = search_index(
                     self.index, query, k=k, ef_search=ef_search
                 )
-                if not np.array_equal(packed_result.ids, reference_ids) or not np.array_equal(
-                    packed_result.distances.view("V4"), reference_distances.view("V4")
+                if not np.array_equal(ids, reference_ids) or not np.array_equal(
+                    distances.view("V4"), reference_distances.view("V4")
                 ):
                     raise RuntimeError("NPU HNSW result does not match the independent host traversal")
-                if packed_result.stats != reference_stats:
+                if stats != reference_stats:
                     raise RuntimeError(
-                        "NPU HNSW traversal counters " f"{packed_result.stats!r} do not match host {reference_stats!r}"
+                        "NPU HNSW traversal counters " f"{stats!r} do not match host {reference_stats!r}"
                     )
         verify_ms = (perf_counter() - started) * 1000.0
         timings = {
@@ -307,12 +312,12 @@ class NpuHnsw:
         }
         results = tuple(
             SearchResult(
-                ids=result.ids,
-                distances=result.distances,
-                stats=result.stats,
+                ids=result_ids[row],
+                distances=result_distances[row],
+                stats=result_stats[row],
                 timings=timings,
             )
-            for result in packed_results
+            for row in range(query_count)
         )
         return SearchBatch(results=results, timings=timings)
 

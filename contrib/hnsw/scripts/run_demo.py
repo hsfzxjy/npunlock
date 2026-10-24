@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--timing-repeats", type=int, default=100)
+    parser.add_argument("--cpu-timing-repeats", type=int, default=10_000)
     parser.add_argument("--batch-size", type=int, default=MAX_BATCH_QUERIES)
     parser.add_argument(
         "--cache-dir",
@@ -86,6 +87,8 @@ def main() -> int:
         raise ValueError("warmup must be nonnegative")
     if args.timing_repeats < 1:
         raise ValueError("timing-repeats must be positive")
+    if args.cpu_timing_repeats < 1:
+        raise ValueError("cpu-timing-repeats must be positive")
     if not 1 <= args.batch_size <= MAX_BATCH_QUERIES:
         raise ValueError(f"batch-size must be in [1, {MAX_BATCH_QUERIES}]")
     if not args.cpu_only and not args.movi_dll_dir:
@@ -152,7 +155,7 @@ def main() -> int:
     for _ in range(args.warmup):
         cpu_index.knn_query(queries[:1], k=args.top_k)
     hnswlib_samples_ms = []
-    for _ in range(args.timing_repeats):
+    for _ in range(args.cpu_timing_repeats):
         hnswlib_search_started = perf_counter()
         hnswlib_ids, hnswlib_distances = cpu_index.knn_query(queries, k=args.top_k)
         hnswlib_samples_ms.append((perf_counter() - hnswlib_search_started) * 1000.0)
@@ -176,6 +179,8 @@ def main() -> int:
     npu_graph_samples_ms = None
     npu_end_to_end_samples_ms = None
     npu_wall_samples_ms = None
+    npu_query_update_samples_ms = None
+    npu_unpack_samples_ms = None
     if not args.cpu_only:
         cache_dir = Path(args.cache_dir) if args.cache_dir else output_dir / "program-cache"
         batch_capacity = max(4, ((args.batch_size + 3) // 4) * 4)
@@ -206,6 +211,8 @@ def main() -> int:
             npu_graph_samples_ms = []
             npu_end_to_end_samples_ms = []
             npu_wall_samples_ms = []
+            npu_query_update_samples_ms = []
+            npu_unpack_samples_ms = []
             for repeat in range(args.timing_repeats):
                 submission_started = perf_counter()
                 repeat_timings = []
@@ -224,6 +231,8 @@ def main() -> int:
                             npu_stats.append(result.stats)
                 npu_wall_samples_ms.append((perf_counter() - submission_started) * 1000.0)
                 npu_graph_samples_ms.append(sum(item["graphinfer_wall_ms"] for item in repeat_timings))
+                npu_query_update_samples_ms.append(sum(item["upload_ms"] for item in repeat_timings))
+                npu_unpack_samples_ms.append(sum(item["unpack_ms"] for item in repeat_timings))
                 npu_end_to_end_samples_ms.append(
                     sum(
                         item["pack_ms"]
@@ -288,6 +297,7 @@ def main() -> int:
             "queries_terminated_by_bound": int(sum(stats.terminated_by_bound for stats in host_stats)),
             "timing_warmup_submissions": args.warmup,
             "timing_repeats": args.timing_repeats,
+            "cpu_timing_repeats": args.cpu_timing_repeats,
             "queries_per_submission": args.batch_size,
             "carrier_query_capacity": None if args.cpu_only else batch_capacity,
             "npu_submissions_per_repeat": (
@@ -308,6 +318,8 @@ def main() -> int:
             "npu_submission_loop_wall_median": (None if args.cpu_only else float(np.median(npu_wall_samples_ms))),
             "npu_submission_loop_wall_p95": (None if args.cpu_only else float(np.percentile(npu_wall_samples_ms, 95))),
             "npu_graphinfer_all_queries": (None if args.cpu_only else float(np.mean(npu_graph_samples_ms))),
+            "npu_query_update_all_queries": (None if args.cpu_only else float(np.mean(npu_query_update_samples_ms))),
+            "npu_result_unpack_all_queries": (None if args.cpu_only else float(np.mean(npu_unpack_samples_ms))),
             "npu_end_to_end_all_queries": (None if args.cpu_only else float(np.mean(npu_end_to_end_samples_ms))),
             "npu_graphinfer_per_query_amortized": (
                 None if args.cpu_only else float(np.mean(npu_graph_samples_ms)) / args.query_count

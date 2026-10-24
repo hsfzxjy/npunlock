@@ -209,47 +209,87 @@ def pack_query(index: HnswIndex, query: object, *, k: int, ef_search: int) -> np
     return packed
 
 
-def _unpack_chunk(chunk: np.ndarray, *, index: HnswIndex, k: int, ef_search: int) -> PackedResult:
-    header = tuple(int(value) for value in chunk[:OUTPUT_HEADER_ELEMENTS])
-    expected = (
-        OUTPUT_MAGIC,
-        0,
-        index.vectors.shape[0],
-        index.vectors.shape[1],
-        index.entry_point,
-        index.max_level,
-        ef_search,
-        k,
+def _unpack_result_arrays(
+    output: object,
+    *,
+    index: HnswIndex,
+    k: int,
+    ef_search: int,
+    query_count: int,
+) -> tuple[np.ndarray, np.ndarray, tuple[SearchStats, ...]]:
+    flat = np.asarray(output, dtype=np.float32).reshape(-1)
+    if flat.size % CHUNK_ELEMENTS != 0:
+        raise ValueError("kernel output element count is not a multiple of the HNSW chunk size")
+    query_capacity = flat.size // CHUNK_ELEMENTS
+    _validate_query_capacity(query_capacity)
+    if not isinstance(query_count, int) or not 1 <= query_count <= query_capacity:
+        raise ValueError(f"query_count must be in [1, {query_capacity}]")
+    chunks = flat.reshape(query_capacity, CHUNK_ELEMENTS)
+    if query_count < query_capacity:
+        inactive = chunks[query_count:, :OUTPUT_ELEMENTS].view(np.uint32)
+        first = chunks[0, :OUTPUT_ELEMENTS].view(np.uint32)
+        if not np.array_equal(inactive, np.broadcast_to(first, inactive.shape)):
+            raise ValueError("unused replicated HNSW chunks produced different output bytes")
+
+    headers = chunks[:query_count, :OUTPUT_HEADER_ELEMENTS]
+    with np.errstate(invalid="ignore"):
+        integer_headers = headers.astype(np.int32)
+    if not np.array_equal(headers, integer_headers):
+        raise ValueError("kernel output header contains a non-integral or out-of-range value")
+    expected = np.asarray(
+        (
+            OUTPUT_MAGIC,
+            0,
+            index.vectors.shape[0],
+            index.vectors.shape[1],
+            index.entry_point,
+            index.max_level,
+            ef_search,
+            k,
+        ),
+        dtype=np.int32,
     )
-    if header[:8] != expected:
-        raise ValueError(f"kernel output header {header[:8]!r} does not match {expected!r}")
-    if header[15] != k:
-        raise ValueError(f"kernel returned {header[15]} results, expected {k}")
-    records = chunk[OUTPUT_HEADER_ELEMENTS : OUTPUT_HEADER_ELEMENTS + 2 * k].reshape(k, 2)
-    ids = records[:, 0].astype(np.int32)
-    distances = records[:, 1].copy()
-    if not np.array_equal(records[:, 0], ids.astype(np.float32)):
-        raise ValueError("kernel returned a non-integral node id")
-    if (ids < 0).any() or (ids >= index.vectors.shape[0]).any() or len(set(ids.tolist())) != k:
-        raise ValueError("kernel returned invalid or duplicate node ids")
+    if not np.all(integer_headers[:, :8] == expected):
+        raise ValueError("kernel output header does not match the requested index and search")
+    if not np.all(integer_headers[:, 15] == k):
+        raise ValueError("kernel returned an unexpected result count")
+    termination_flags = integer_headers[:, 12]
+    if ((termination_flags != 0) & (termination_flags != 1)).any():
+        raise ValueError("kernel returned an invalid termination flag")
+
+    records = chunks[:query_count, OUTPUT_HEADER_ELEMENTS : OUTPUT_HEADER_ELEMENTS + 2 * k].reshape(query_count, k, 2)
+    raw_ids = records[:, :, 0]
+    distances = records[:, :, 1].copy()
+    with np.errstate(invalid="ignore"):
+        ids = raw_ids.astype(np.int32)
+    if not np.array_equal(raw_ids, ids) or (ids < 0).any() or (ids >= index.vectors.shape[0]).any():
+        raise ValueError("kernel returned an invalid or non-integral node id")
+    if (np.diff(np.sort(ids, axis=1), axis=1) == 0).any():
+        raise ValueError("kernel returned duplicate node ids")
     if not np.isfinite(distances).all() or (distances < 0).any():
         raise ValueError("kernel returned an invalid distance")
-    order = list(zip(distances.tolist(), ids.tolist()))
-    if order != sorted(order):
-        raise ValueError("kernel results are not ordered by distance and node id")
-    return PackedResult(
-        ids=ids,
-        distances=distances,
-        stats=SearchStats(
-            visited_count=header[8],
-            distance_count=header[9],
-            upper_hops=header[10],
-            base_expansions=header[11],
-            terminated_by_bound=bool(header[12]),
-            candidate_peak=header[13],
-            top_peak=header[14],
-        ),
+    if k > 1:
+        previous_distances = distances[:, :-1]
+        next_distances = distances[:, 1:]
+        if (
+            (next_distances < previous_distances)
+            | ((next_distances == previous_distances) & (ids[:, 1:] < ids[:, :-1]))
+        ).any():
+            raise ValueError("kernel results are not ordered by distance and node id")
+
+    stats = tuple(
+        SearchStats(
+            visited_count=int(integer_headers[row, 8]),
+            distance_count=int(integer_headers[row, 9]),
+            upper_hops=int(integer_headers[row, 10]),
+            base_expansions=int(integer_headers[row, 11]),
+            terminated_by_bound=bool(integer_headers[row, 12]),
+            candidate_peak=int(integer_headers[row, 13]),
+            top_peak=int(integer_headers[row, 14]),
+        )
+        for row in range(query_count)
     )
+    return ids, distances, stats
 
 
 def unpack_results(
@@ -260,21 +300,14 @@ def unpack_results(
     ef_search: int,
     query_count: int,
 ) -> tuple[PackedResult, ...]:
-    flat = np.asarray(output, dtype=np.float32).reshape(-1)
-    if flat.size % CHUNK_ELEMENTS != 0:
-        raise ValueError("kernel output element count is not a multiple of the HNSW chunk size")
-    query_capacity = flat.size // CHUNK_ELEMENTS
-    _validate_query_capacity(query_capacity)
-    if not isinstance(query_count, int) or not 1 <= query_count <= query_capacity:
-        raise ValueError(f"query_count must be in [1, {query_capacity}]")
-    chunks = flat.reshape(query_capacity, CHUNK_ELEMENTS)
-    for replica in range(query_count, query_capacity):
-        if not np.array_equal(
-            chunks[0, :OUTPUT_ELEMENTS].view("V4"),
-            chunks[replica, :OUTPUT_ELEMENTS].view("V4"),
-        ):
-            raise ValueError("unused replicated HNSW chunks produced different output bytes")
-    return tuple(_unpack_chunk(chunks[query], index=index, k=k, ef_search=ef_search) for query in range(query_count))
+    ids, distances, stats = _unpack_result_arrays(
+        output,
+        index=index,
+        k=k,
+        ef_search=ef_search,
+        query_count=query_count,
+    )
+    return tuple(PackedResult(ids=ids[row], distances=distances[row], stats=stats[row]) for row in range(query_count))
 
 
 def unpack_result(output: object, *, index: HnswIndex, k: int, ef_search: int) -> PackedResult:
