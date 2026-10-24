@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
@@ -36,8 +36,24 @@ class SearchResult:
 
 @dataclass(frozen=True, slots=True)
 class SearchBatch:
-    results: tuple[SearchResult, ...]
+    ids: np.ndarray
+    distances: np.ndarray
+    stats: tuple[SearchStats, ...]
     timings: dict[str, float]
+    _results: tuple[SearchResult, ...] | None = field(default=None, init=False, repr=False, compare=False)
+
+    @property
+    def results(self) -> tuple[SearchResult, ...]:
+        """Materialize backward-compatible per-query wrappers on first access."""
+
+        results = self._results
+        if results is None:
+            results = tuple(
+                SearchResult(self.ids[row], self.distances[row], self.stats[row], self.timings)
+                for row in range(self.ids.shape[0])
+            )
+            object.__setattr__(self, "_results", results)
+        return results
 
 
 def _validate_program(program: npu.Program, *, logical_elements: int) -> None:
@@ -310,16 +326,12 @@ class NpuHnsw:
             "unpack_ms": unpack_ms,
             "host_verify_ms": verify_ms,
         }
-        results = tuple(
-            SearchResult(
-                ids=result_ids[row],
-                distances=result_distances[row],
-                stats=result_stats[row],
-                timings=timings,
-            )
-            for row in range(query_count)
+        return SearchBatch(
+            ids=result_ids,
+            distances=result_distances,
+            stats=result_stats,
+            timings=timings,
         )
-        return SearchBatch(results=results, timings=timings)
 
     def search(
         self,
