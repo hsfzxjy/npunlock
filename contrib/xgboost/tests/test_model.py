@@ -7,6 +7,12 @@ import numpy as np
 from xgboost_npu.generate import generate_kernel_source
 from xgboost_npu.model import load_ensemble
 from xgboost_npu.packing import FP16_TRANSPORT, FP32_TRANSPORT, pack_features
+from xgboost_npu.runtime import (
+    RUNTIME_CHUNK_ELEMENTS,
+    RUNTIME_REPLICAS,
+    pack_runtime_features,
+    runtime_batch_capacity,
+)
 
 
 def stump_model() -> dict[str, object]:
@@ -87,6 +93,21 @@ class ModelTests(unittest.TestCase):
                     first.view(f"V{transport.numpy_dtype.itemsize}"),
                     second.view(f"V{transport.numpy_dtype.itemsize}"),
                 )
+
+    def test_runtime_features_balance_across_four_invocations(self) -> None:
+        self.assertEqual(runtime_batch_capacity(30), 136)
+        features = np.arange(8 * 30, dtype=np.float32).reshape(8, 30)
+        chunks = pack_runtime_features(features, feature_count=30).reshape(
+            RUNTIME_REPLICAS,
+            RUNTIME_CHUNK_ELEMENTS,
+        )
+        self.assertEqual(tuple(int(chunk[0]) for chunk in chunks), (2, 2, 2, 2))
+        for replica in range(RUNTIME_REPLICAS):
+            start = replica * 2
+            np.testing.assert_array_equal(
+                chunks[replica, 4 : 4 + 2 * 30],
+                features[start : start + 2].reshape(-1),
+            )
 
 
 if __name__ == "__main__":

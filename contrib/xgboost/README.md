@@ -11,7 +11,8 @@ a deterministic train/test split. It supports two useful styles:
 - keep a generic kernel and upload the forest through a second NPU input.
 
 `XGBoostRuntime` selects the validated single-stage or connected two-part
-runtime automatically and splits larger host batches while preserving order.
+runtime automatically, balances each graph chunk across four independent
+invocation-local spans, and splits larger host batches while preserving order.
 
 ```python
 from xgboost_npu import XGBoostRuntime
@@ -60,6 +61,10 @@ with official XGBoost on every class.
 Maximum raw-margin error was 0.001945 for FP16 transport and 4.77e-7 for both
 FP32 paths. The generic runtime kernel linked to a 3,472-byte SHAVE image; the
 forest stayed in a separate ordinary NPU input.
+
+On the recorded system, balancing a 32-row batch across four ACT invocations
+reduced submission-through-fence wall time by 53% for the 502-node runtime
+model and 52% for the connected 612-node model, with byte-identical results.
 
 This is primarily a programmability example. The small recorded workload did
 not establish a general performance win over the optimized CPU implementation.

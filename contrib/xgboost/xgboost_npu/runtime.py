@@ -919,11 +919,12 @@ def _shard_sizes(sample_count: int, invocation_capacity: int) -> tuple[int, ...]
         raise ValueError("sample count and invocation capacity are invalid")
     if sample_count > RUNTIME_REPLICAS * invocation_capacity:
         raise ValueError("sample count exceeds the four-invocation capacity")
-    active_count = max(1, (sample_count + invocation_capacity - 1) // invocation_capacity)
-    return tuple(
-        min(invocation_capacity, max(0, sample_count - replica * invocation_capacity))
-        for replica in range(active_count)
-    )
+    active_count = min(RUNTIME_REPLICAS, max(1, sample_count))
+    quotient, remainder = divmod(sample_count, active_count)
+    sizes = tuple(quotient + (replica < remainder) for replica in range(active_count))
+    if any(size > invocation_capacity for size in sizes):
+        raise ValueError("balanced sample shard exceeds invocation capacity")
+    return sizes
 
 
 def _pack_runtime_feature_shards(
