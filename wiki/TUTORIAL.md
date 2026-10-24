@@ -707,6 +707,8 @@ different graph structure, not that the C expression itself is invalid.
   persistent program cache validates kernel, runtime, driver/compiler,
   MoviTools, bundle, tensor, and patch provenance before reuse. The real-data
   digits/PCA demo checks node IDs, raw FP32 distances, and traversal counters
-  against a host oracle and compares recall with hnswlib.
+  against a host oracle and compares recall with hnswlib. The backend uploads
+  the repeated graph/vector payload once, then updates only per-query slices in
+  shared Level Zero memory for subsequent submissions.
 
 [Back to documentation index](README.md)

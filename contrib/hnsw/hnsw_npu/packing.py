@@ -149,19 +149,20 @@ def _update_query_buffer(
         raise ValueError(f"target must be a writable contiguous float32 buffer with {LOGICAL_ELEMENTS} elements")
     chunks = packed.reshape(REPLICAS, CHUNK_ELEMENTS)
     active_count = matrix.shape[0]
-    for slot, chunk in enumerate(chunks):
-        query = matrix[slot if slot < active_count else 0]
-        chunk[:QUERY_HEADER_ELEMENTS] = (
-            QUERY_MAGIC,
-            FORMAT_VERSION,
-            index.vectors.shape[0],
-            index.vectors.shape[1],
-            index.entry_point,
-            index.max_level,
-            ef_search,
-            k,
-        )
-        chunk[QUERY_HEADER_ELEMENTS : QUERY_HEADER_ELEMENTS + index.vectors.shape[1]] = query
+    chunks[:, :QUERY_HEADER_ELEMENTS] = (
+        QUERY_MAGIC,
+        FORMAT_VERSION,
+        index.vectors.shape[0],
+        index.vectors.shape[1],
+        index.entry_point,
+        index.max_level,
+        ef_search,
+        k,
+    )
+    query_end = QUERY_HEADER_ELEMENTS + index.vectors.shape[1]
+    chunks[:active_count, QUERY_HEADER_ELEMENTS:query_end] = matrix
+    if active_count < REPLICAS:
+        chunks[active_count:, QUERY_HEADER_ELEMENTS:query_end] = matrix[0]
     return matrix, active_count
 
 
