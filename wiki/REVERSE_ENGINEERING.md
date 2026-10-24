@@ -18,6 +18,25 @@ that result without treating every observed field as a general vendor ABI.
 
 Status: experimental. Last updated 2026-10-20.
 
+## The short version
+
+The graph compiler already knows how to partition tensors, schedule work, move
+data, and build the ACT invocation records. `npunlock` keeps that machinery and
+replaces only the executable image selected by a compatible ACT range. The
+custom image is compiled separately from C with MoviTools.
+
+The early experiments established that split, showed that one appended image
+can serve several work partitions, and mapped the invocation-local tensor
+records needed by unary and multi-input kernels. Later work extended the same
+careful method to additional precisions, scalar and row-broadcast layouts,
+mixed-precision conversion, and evidence-backed routing between graph stages.
+
+The result is useful, but intentionally not universal. The evidence supports
+specific NPU3720/compiler-8.3 contracts; it does not establish arbitrary
+source-node mapping, dynamic layouts, cross-invocation memory, or a stable
+vendor ABI. The numbered sections below retain the exact observations and
+limits behind each conclusion.
+
 ## How the conclusions were established
 
 The work used differential compilation and controlled mutation rather than

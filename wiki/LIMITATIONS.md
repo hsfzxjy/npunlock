@@ -6,6 +6,17 @@
 hardware and graph configuration. The project fails closed when compiler
 output does not match that contract.
 
+In practical terms, start with a static FP16 graph on a Meteor Lake NPU and
+use one of the documented carrier layouts. A custom kernel sees the chunk for
+one compiler-created invocation, not an unrestricted whole-tensor view. Other
+precisions and input layouts are available only where this page names an exact
+execution-tested carrier.
+
+That narrowness is deliberate. A graph that loads successfully has passed a
+driver check; it has not proved that a custom kernel computed the right answer.
+Use a host oracle for semantics, and treat anything outside the contracts
+below as unsupported rather than "probably compatible."
+
 ## Supported baseline
 
 | Area | Confirmed scope |

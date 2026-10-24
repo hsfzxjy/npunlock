@@ -15,6 +15,19 @@ They share `npunlock_view`, `npunlock_buffer`, `npunlock_status`, and
 symbols are exported by `npunlock.dll`; the component separation remains in
 the source/object targets and installed CMake link targets.
 
+## Choose the smallest useful layer
+
+You do not need to adopt the whole pipeline. Use `shavecc` when you only need
+to compile and validate a kernel, `ir2blob` when you only need a native graph,
+`patchblob` for offline discovery or substitution, and `graphinfer` to execute
+an existing native graph. The `npurun` executable is the file-oriented wrapper
+for end-to-end use; these C APIs stay buffer-oriented so applications can
+compose only the stages they need.
+
+If you are building a Python application rather than a C integration, begin
+with the [Python API](../wiki/PYTHON_API.md). The ownership and failure rules
+on this page still describe the native layer underneath it.
+
 ## Linking
 
 After installing the CMake package, consumers can link only the stages they
