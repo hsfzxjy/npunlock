@@ -22,7 +22,7 @@ MAX_K = 16
 QUERY_MAGIC = 372021
 GRAPH_MAGIC = 372022
 OUTPUT_MAGIC = 372023
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 QUERY_HEADER_ELEMENTS = 8
 GRAPH_HEADER_ELEMENTS = 8
 OUTPUT_HEADER_ELEMENTS = 16
@@ -72,7 +72,8 @@ def pack_graph(index: HnswIndex, *, query_capacity: int = REPLICAS) -> np.ndarra
     _validate_query_capacity(query_capacity)
     node_count, dimensions = index.vectors.shape
     chunk = np.zeros(CHUNK_ELEMENTS, dtype=np.float32)
-    chunk[:GRAPH_HEADER_ELEMENTS] = (
+    words = chunk.view(np.uint32)
+    words[:GRAPH_HEADER_ELEMENTS] = (
         GRAPH_MAGIC,
         FORMAT_VERSION,
         node_count,
@@ -84,14 +85,13 @@ def pack_graph(index: HnswIndex, *, query_capacity: int = REPLICAS) -> np.ndarra
     )
     cursor = GRAPH_HEADER_ELEMENTS
     for node in range(node_count):
-        chunk[cursor] = index.levels[node]
+        words[cursor] = index.levels[node]
         cursor += 1
         for layer in range(MAX_LEVELS):
             links = index.neighbors[node][layer] if layer <= index.levels[node] else ()
-            chunk[cursor] = len(links)
+            words[cursor] = len(links)
             cursor += 1
-            for slot in range(MAX_M):
-                chunk[cursor + slot] = links[slot] if slot < len(links) else -1.0
+            words[cursor : cursor + len(links)] = links
             cursor += MAX_M
     return _replicate(chunk, query_capacity)
 
@@ -127,7 +127,7 @@ def _make_query_buffer(index: HnswIndex, *, query_capacity: int = REPLICAS) -> n
     chunks = np.zeros((query_capacity, CHUNK_ELEMENTS), dtype=np.float32)
     vectors_begin = QUERY_HEADER_ELEMENTS + dimensions
     for chunk in chunks:
-        chunk[:QUERY_HEADER_ELEMENTS] = (
+        chunk.view(np.uint32)[:QUERY_HEADER_ELEMENTS] = (
             QUERY_MAGIC,
             FORMAT_VERSION,
             node_count,
@@ -162,7 +162,7 @@ def _update_query_buffer(
         raise ValueError("target must be a writable contiguous float32 buffer")
     chunks = packed.reshape(query_capacity, CHUNK_ELEMENTS)
     active_count = matrix.shape[0]
-    chunks[:, :QUERY_HEADER_ELEMENTS] = (
+    chunks.view(np.uint32)[:, :QUERY_HEADER_ELEMENTS] = (
         QUERY_MAGIC,
         FORMAT_VERSION,
         index.vectors.shape[0],
