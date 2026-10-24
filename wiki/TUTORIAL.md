@@ -704,9 +704,11 @@ different graph structure, not that the C expression itself is invalid.
   81,920-element FP32 invocation spans, subdivides each into eighty independent
   1,024-element query/index chunks, and therefore runs up to 320 queries per
   submission. This exact 320 KiB local span is validated only for the documented
-  FP32 `Subtract` shape on NPU3720/compiler 8.3. The bounded 48-node index is
-  duplicated into every chunk; the implementation does not assume graph-global
-  reads or cross-invocation communication. Its
+  FP32 `Subtract` shape on NPU3720/compiler 8.3. The bounded 48-vector table is
+  duplicated into every query record, while each invocation holds one local
+  adjacency copy; the implementation does not assume graph-global reads or
+  cross-invocation communication. The authoritative search header and adjacency
+  are fully validated outside the eighty hot traversal loops. Its
   persistent program cache validates kernel, runtime, driver/compiler,
   MoviTools, bundle, tensor, and patch provenance before reuse. The real-data
   digits/PCA demo checks node IDs, raw FP32 distances, and traversal counters

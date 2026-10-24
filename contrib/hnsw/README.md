@@ -51,12 +51,12 @@ On the recorded NPU3720/compiler-8.3 system:
   neighbor IDs, raw FP32 distances, and traversal counters;
 - the NPU visited 26.4 of 48 nodes on average, so the run was not exhaustive;
 - recall@5 was 0.897 for this small `M=4`, `efSearch=16` graph;
-- one 6,544-byte SHAVE image served four ACT targets; and
-- a 320-query batch averaged 2.722 ms of graph execution (117,540 query/s) and
-  3.015 ms for the complete public call (106,152 query/s) in the retained
+- one 7,392-byte SHAVE image served four ACT targets; and
+- a 320-query batch averaged 2.276 ms of graph execution (140,572 query/s) and
+  2.563 ms for the complete public call (124,876 query/s) in the retained
   5,000-run measurement.
 
-hnswlib processed the same tiny-index batch in 0.800 ms. This contribution shows
+hnswlib processed the same tiny-index batch in 0.836 ms. This contribution shows
 that irregular graph traversal works on the NPU; it does not claim a CPU
 performance crossover.
 
@@ -77,6 +77,8 @@ $env:PYTHONPATH = (Resolve-Path contrib\hnsw)
 - One graph submission accepts up to 320 independent queries.
 - The tested carrier is FP32 and keeps every query/index chunk within one ACT
   invocation; there is no cross-invocation communication.
+- Static search metadata and the complete adjacency graph are validated once
+  per invocation before its query traversals begin.
 - The 16-dimensional fast path uses a fixed four-lane FP32 reduction tree; the
   host oracle reproduces that order instead of assuming scalar accumulation.
 - Construction stays on the CPU. There are no deletions, filters, cosine or

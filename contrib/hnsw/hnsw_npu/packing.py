@@ -23,7 +23,7 @@ MAX_K = 16
 QUERY_MAGIC = 372021
 GRAPH_MAGIC = 372022
 OUTPUT_MAGIC = 372023
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 QUERY_HEADER_ELEMENTS = 8
 GRAPH_HEADER_ELEMENTS = 8
 OUTPUT_HEADER_ELEMENTS = 16
@@ -67,8 +67,8 @@ def _validate_query_capacity(query_capacity: int) -> None:
         raise ValueError(f"query_capacity must be a multiple of {REPLICAS} in " f"[{REPLICAS}, {MAX_BATCH_QUERIES}]")
 
 
-def _replicate(chunk: np.ndarray, copies: int = REPLICAS) -> np.ndarray:
-    return np.tile(chunk, copies).reshape(1, copies * CHUNK_ELEMENTS)
+def _invocation_starts(query_capacity: int) -> np.ndarray:
+    return np.arange(REPLICAS) * (query_capacity // REPLICAS)
 
 
 def pack_graph(index: HnswIndex, *, query_capacity: int = REPLICAS) -> np.ndarray:
@@ -97,7 +97,9 @@ def pack_graph(index: HnswIndex, *, query_capacity: int = REPLICAS) -> np.ndarra
             cursor += 1
             words[cursor : cursor + len(links)] = links
             cursor += MAX_M
-    return _replicate(chunk, query_capacity)
+    chunks = np.zeros((query_capacity, CHUNK_ELEMENTS), dtype=np.float32)
+    chunks[_invocation_starts(query_capacity)] = chunk
+    return chunks.reshape(1, query_capacity * CHUNK_ELEMENTS)
 
 
 def _validate_search_parameters(index: HnswIndex, *, k: int, ef_search: int) -> None:
@@ -130,18 +132,17 @@ def _make_query_buffer(index: HnswIndex, *, query_capacity: int = REPLICAS) -> n
     node_count, dimensions = index.vectors.shape
     chunks = np.zeros((query_capacity, CHUNK_ELEMENTS), dtype=np.float32)
     vectors_begin = QUERY_HEADER_ELEMENTS + dimensions
-    for chunk in chunks:
-        chunk.view(np.uint32)[:QUERY_HEADER_ELEMENTS] = (
-            QUERY_MAGIC,
-            FORMAT_VERSION,
-            node_count,
-            dimensions,
-            index.entry_point,
-            index.max_level,
-            1,
-            1,
-        )
-        chunk[vectors_begin : vectors_begin + index.vectors.size] = index.vectors.reshape(-1)
+    chunks.view(np.uint32)[_invocation_starts(query_capacity), :QUERY_HEADER_ELEMENTS] = (
+        QUERY_MAGIC,
+        FORMAT_VERSION,
+        node_count,
+        dimensions,
+        index.entry_point,
+        index.max_level,
+        1,
+        1,
+    )
+    chunks[:, vectors_begin : vectors_begin + index.vectors.size] = index.vectors.reshape(-1)
     return chunks.reshape(1, query_capacity * CHUNK_ELEMENTS)
 
 
@@ -166,7 +167,7 @@ def _update_query_buffer(
         raise ValueError("target must be a writable contiguous float32 buffer")
     chunks = packed.reshape(query_capacity, CHUNK_ELEMENTS)
     active_count = matrix.shape[0]
-    chunks.view(np.uint32)[:, :QUERY_HEADER_ELEMENTS] = (
+    chunks.view(np.uint32)[_invocation_starts(query_capacity), :QUERY_HEADER_ELEMENTS] = (
         QUERY_MAGIC,
         FORMAT_VERSION,
         index.vectors.shape[0],
@@ -191,10 +192,10 @@ def pack_queries(
     ef_search: int,
     query_capacity: int | None = None,
 ) -> tuple[np.ndarray, int]:
-    """Pack one to 320 queries into independent 1,024-element payloads.
+    """Pack one to 320 queries into invocation-local 1,024-element records.
 
-    Unused chunks repeat the first query. This keeps every chunk valid and
-    retains a byte-for-byte execution check for a single-query submission.
+    Each invocation has one validated search header and adjacency copy. Unused
+    query records repeat the first query so their outputs remain byte-identical.
     """
 
     matrix = _normalize_queries(index, queries)

@@ -11,7 +11,7 @@
 #define HNSW_QUERY_MAGIC 372021u
 #define HNSW_GRAPH_MAGIC 372022u
 #define HNSW_OUTPUT_MAGIC 372023u
-#define HNSW_FORMAT_VERSION 3u
+#define HNSW_FORMAT_VERSION 4u
 #define HNSW_QUERY_HEADER 8u
 #define HNSW_GRAPH_HEADER 8u
 #define HNSW_OUTPUT_HEADER 16u
@@ -194,8 +194,51 @@ static void __attribute__((noinline)) hnsw_write_failure(float *output, unsigned
   hnsw_write_status((unsigned *)output, status);
 }
 
-static void hnsw_search_chunk(const float *query_payload, const float *graph, float *output) {
-  const unsigned *query_words = (const unsigned *)query_payload;
+static unsigned __attribute__((noinline)) hnsw_validate_graph(const float *graph) {
+  const unsigned *graph_words = (const unsigned *)graph;
+  unsigned node_count = graph_words[2];
+  unsigned dimensions = graph_words[3];
+  unsigned entry_point = graph_words[4];
+  unsigned max_level = graph_words[5];
+  unsigned node;
+  unsigned layer;
+  if (graph_words[0] != HNSW_GRAPH_MAGIC || graph_words[1] != HNSW_FORMAT_VERSION ||
+      node_count == 0u || node_count > HNSW_MAX_NODES || dimensions == 0u ||
+      dimensions > HNSW_MAX_DIMENSIONS || entry_point >= node_count ||
+      max_level >= HNSW_MAX_LEVELS || graph_words[6] != HNSW_MAX_LEVELS ||
+      graph_words[7] == 0u || graph_words[7] > HNSW_MAX_M ||
+      HNSW_GRAPH_HEADER + node_count * HNSW_NODE_GRAPH_ELEMENTS > HNSW_CHUNK_ELEMENTS) {
+    return HNSW_STATUS_BAD_GRAPH;
+  }
+  if (graph_words[hnsw_graph_record(entry_point)] != max_level) {
+    return HNSW_STATUS_BAD_GRAPH;
+  }
+  for (node = 0u; node < node_count; ++node) {
+    unsigned node_level = graph_words[hnsw_graph_record(node)];
+    if (node_level >= HNSW_MAX_LEVELS || node_level > max_level) {
+      return HNSW_STATUS_BAD_GRAPH;
+    }
+    for (layer = 0u; layer < HNSW_MAX_LEVELS; ++layer) {
+      unsigned list = hnsw_graph_layer(node, layer);
+      unsigned neighbor_count = graph_words[list];
+      unsigned slot;
+      if (neighbor_count > HNSW_MAX_M || (layer > node_level && neighbor_count != 0u)) {
+        return HNSW_STATUS_BAD_GRAPH;
+      }
+      for (slot = 0u; slot < neighbor_count; ++slot) {
+        unsigned neighbor = graph_words[list + 1u + slot];
+        if (neighbor >= node_count || neighbor == node ||
+            graph_words[hnsw_graph_record(neighbor)] < layer) {
+          return HNSW_STATUS_BAD_GRAPH;
+        }
+      }
+    }
+  }
+  return HNSW_STATUS_OK;
+}
+
+static void hnsw_search_chunk(const float *query_payload, const unsigned *query_words,
+                              const float *graph, float *output) {
   const unsigned *graph_words = (const unsigned *)graph;
   unsigned *output_words = (unsigned *)output;
   const float *query;
@@ -233,31 +276,8 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
   max_level = query_words[5];
   ef_search = query_words[6];
   result_count = query_words[7];
-  if (query_words[0] != HNSW_QUERY_MAGIC || query_words[1] != HNSW_FORMAT_VERSION ||
-      node_count == 0u || node_count > HNSW_MAX_NODES || dimensions == 0u ||
-      dimensions > HNSW_MAX_DIMENSIONS || entry_point >= node_count ||
-      max_level >= HNSW_MAX_LEVELS || ef_search == 0u || ef_search > HNSW_MAX_EF ||
-      ef_search > node_count || result_count == 0u || result_count > HNSW_MAX_K ||
-      result_count > ef_search ||
-      HNSW_QUERY_HEADER + dimensions * (node_count + 1u) > HNSW_CHUNK_ELEMENTS) {
-    hnsw_write_failure(output, HNSW_STATUS_BAD_QUERY);
-    return;
-  }
   query = query_payload + HNSW_QUERY_HEADER;
   vectors = query + dimensions;
-
-  if (graph_words[0] != HNSW_GRAPH_MAGIC || graph_words[1] != HNSW_FORMAT_VERSION ||
-      graph_words[2] != node_count || graph_words[3] != dimensions ||
-      graph_words[4] != entry_point || graph_words[5] != max_level ||
-      graph_words[6] != HNSW_MAX_LEVELS || graph_words[7] == 0u || graph_words[7] > HNSW_MAX_M ||
-      HNSW_GRAPH_HEADER + node_count * HNSW_NODE_GRAPH_ELEMENTS > HNSW_CHUNK_ELEMENTS) {
-    hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-    return;
-  }
-  if (graph_words[hnsw_graph_record(entry_point)] != max_level) {
-    hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-    return;
-  }
 
   current = entry_point;
   current_distance = hnsw_distance(query, vectors, dimensions, current);
@@ -269,24 +289,10 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
       unsigned neighbor_count;
       unsigned best = current;
       float best_distance = current_distance;
-      value = graph_words[hnsw_graph_record(current)];
       neighbor_count = graph_words[list];
-      if (value >= HNSW_MAX_LEVELS || value < layer || neighbor_count > HNSW_MAX_M) {
-        hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-        return;
-      }
       for (slot = 0u; slot < neighbor_count; ++slot) {
         unsigned neighbor = graph_words[list + 1u + slot];
         float distance;
-        if (neighbor >= node_count || neighbor == current) {
-          hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-          return;
-        }
-        value = graph_words[hnsw_graph_record(neighbor)];
-        if (value >= HNSW_MAX_LEVELS || value < layer) {
-          hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-          return;
-        }
         distance = hnsw_distance(query, vectors, dimensions, neighbor);
         ++distance_count;
         if (hnsw_better(distance, neighbor, best_distance, best)) {
@@ -332,21 +338,8 @@ static void hnsw_search_chunk(const float *query_payload, const float *graph, fl
     {
       unsigned list = hnsw_graph_layer(candidate, 0u);
       unsigned neighbor_count = graph_words[list];
-      if (graph_words[hnsw_graph_record(candidate)] >= HNSW_MAX_LEVELS ||
-          neighbor_count > HNSW_MAX_M) {
-        hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-        return;
-      }
       for (slot = 0u; slot < neighbor_count; ++slot) {
         unsigned neighbor = graph_words[list + 1u + slot];
-        if (neighbor >= node_count || neighbor == candidate) {
-          hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-          return;
-        }
-        if (graph_words[hnsw_graph_record(neighbor)] >= HNSW_MAX_LEVELS) {
-          hnsw_write_failure(output, HNSW_STATUS_BAD_GRAPH);
-          return;
-        }
         unsigned visited_word = neighbor >> 5u;
         unsigned visited_mask = 1u << (neighbor & 31u);
         if ((visited[visited_word] & visited_mask) == 0u) {
@@ -422,6 +415,8 @@ void controlled_act(unsigned layerParams) {
   float *output;
   unsigned chunk_count;
   unsigned chunk;
+  unsigned graph_status;
+  const unsigned *query_words;
 
   ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
   if (invocation.element_count == 0u ||
@@ -433,8 +428,30 @@ void controlled_act(unsigned layerParams) {
   graph = ACT_ABI_INPUT_PTR32(const float, invocation, 1u);
   output = ACT_ABI_OUTPUT_PTR32(float, invocation, 2u);
   chunk_count = invocation.element_count / HNSW_CHUNK_ELEMENTS;
+  query_words = (const unsigned *)query_payload;
+  graph_status = hnsw_validate_graph(graph);
+  if (graph_status != HNSW_STATUS_OK) {
+    for (chunk = 0u; chunk < chunk_count; ++chunk) {
+      hnsw_write_failure(output + chunk * HNSW_CHUNK_ELEMENTS, graph_status);
+    }
+    return;
+  }
+  if (query_words[0] != HNSW_QUERY_MAGIC || query_words[1] != HNSW_FORMAT_VERSION ||
+      query_words[2] != ((const unsigned *)graph)[2] ||
+      query_words[3] != ((const unsigned *)graph)[3] ||
+      query_words[4] != ((const unsigned *)graph)[4] ||
+      query_words[5] != ((const unsigned *)graph)[5] || query_words[6] == 0u ||
+      query_words[6] > HNSW_MAX_EF || query_words[6] > query_words[2] ||
+      query_words[7] == 0u || query_words[7] > HNSW_MAX_K ||
+      query_words[7] > query_words[6] ||
+      HNSW_QUERY_HEADER + query_words[3] * (query_words[2] + 1u) > HNSW_CHUNK_ELEMENTS) {
+    for (chunk = 0u; chunk < chunk_count; ++chunk) {
+      hnsw_write_failure(output + chunk * HNSW_CHUNK_ELEMENTS, HNSW_STATUS_BAD_QUERY);
+    }
+    return;
+  }
   for (chunk = 0u; chunk < chunk_count; ++chunk) {
     unsigned offset = chunk * HNSW_CHUNK_ELEMENTS;
-    hnsw_search_chunk(query_payload + offset, graph + offset, output + offset);
+    hnsw_search_chunk(query_payload + offset, query_words, graph, output + offset);
   }
 }
