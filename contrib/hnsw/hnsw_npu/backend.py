@@ -16,6 +16,7 @@ from .packing import (
     MAX_BATCH_QUERIES,
     REPLICAS,
     _make_query_buffer,
+    _stats_from_counter_rows,
     _unpack_result_arrays,
     _update_query_buffer,
     pack_graph,
@@ -38,9 +39,20 @@ class SearchResult:
 class SearchBatch:
     ids: np.ndarray
     distances: np.ndarray
-    stats: tuple[SearchStats, ...]
     timings: dict[str, float]
+    _counter_rows: np.ndarray = field(repr=False, compare=False)
+    _stats: tuple[SearchStats, ...] | None = field(default=None, repr=False, compare=False)
     _results: tuple[SearchResult, ...] | None = field(default=None, init=False, repr=False, compare=False)
+
+    @property
+    def stats(self) -> tuple[SearchStats, ...]:
+        """Materialize traversal-counter objects on first access."""
+
+        stats = self._stats
+        if stats is None:
+            stats = _stats_from_counter_rows(self._counter_rows)
+            object.__setattr__(self, "_stats", stats)
+        return stats
 
     @property
     def results(self) -> tuple[SearchResult, ...]:
@@ -48,8 +60,9 @@ class SearchBatch:
 
         results = self._results
         if results is None:
+            stats = self.stats
             results = tuple(
-                SearchResult(self.ids[row], self.distances[row], self.stats[row], self.timings)
+                SearchResult(self.ids[row], self.distances[row], stats[row], self.timings)
                 for row in range(self.ids.shape[0])
             )
             object.__setattr__(self, "_results", results)
@@ -290,7 +303,7 @@ class NpuHnsw:
         graphinfer_wall_ms = (perf_counter() - started) * 1000.0
         download_ms = 0.0
         started = perf_counter()
-        result_ids, result_distances, result_stats = _unpack_result_arrays(
+        result_ids, result_distances, counter_rows = _unpack_result_arrays(
             outputs["hnsw_results"],
             index=self.index,
             k=k,
@@ -299,7 +312,9 @@ class NpuHnsw:
         )
         unpack_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
+        result_stats = None
         if verify:
+            result_stats = _stats_from_counter_rows(counter_rows)
             for query, ids, distances, stats in zip(
                 query_matrix,
                 result_ids,
@@ -329,8 +344,9 @@ class NpuHnsw:
         return SearchBatch(
             ids=result_ids,
             distances=result_distances,
-            stats=result_stats,
             timings=timings,
+            _counter_rows=counter_rows,
+            _stats=result_stats,
         )
 
     def search(

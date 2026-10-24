@@ -216,7 +216,7 @@ def _unpack_result_arrays(
     k: int,
     ef_search: int,
     query_count: int,
-) -> tuple[np.ndarray, np.ndarray, tuple[SearchStats, ...]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     flat = np.asarray(output, dtype=np.float32).reshape(-1)
     if flat.size % CHUNK_ELEMENTS != 0:
         raise ValueError("kernel output element count is not a multiple of the HNSW chunk size")
@@ -287,7 +287,11 @@ def _unpack_result_arrays(
         ).any():
             raise ValueError("kernel results are not ordered by distance and node id")
 
-    stats = tuple(
+    return ids, distances, counters.copy()
+
+
+def _stats_from_counter_rows(counters: np.ndarray) -> tuple[SearchStats, ...]:
+    return tuple(
         SearchStats(
             visited_count=row[0],
             distance_count=row[1],
@@ -299,7 +303,6 @@ def _unpack_result_arrays(
         )
         for row in counters.tolist()
     )
-    return ids, distances, stats
 
 
 def unpack_results(
@@ -310,13 +313,14 @@ def unpack_results(
     ef_search: int,
     query_count: int,
 ) -> tuple[PackedResult, ...]:
-    ids, distances, stats = _unpack_result_arrays(
+    ids, distances, counters = _unpack_result_arrays(
         output,
         index=index,
         k=k,
         ef_search=ef_search,
         query_count=query_count,
     )
+    stats = _stats_from_counter_rows(counters)
     return tuple(PackedResult(ids=ids[row], distances=distances[row], stats=stats[row]) for row in range(query_count))
 
 
