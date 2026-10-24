@@ -1,7 +1,7 @@
 #include <npunlock/npu3720_kernel.h>
 
 #define HNSW_CHUNK_ELEMENTS 1024u
-#define HNSW_MAX_CHUNKS_PER_INVOCATION 6u
+#define HNSW_MAX_CHUNKS_PER_INVOCATION 8u
 #define HNSW_MAX_NODES 48u
 #define HNSW_MAX_DIMENSIONS 32u
 #define HNSW_MAX_LEVELS 4u
@@ -39,7 +39,7 @@ static float hnsw_distance(const float *query, const float *vectors, unsigned di
   const float *candidate = vectors + node * dimensions;
   unsigned index;
   if (dimensions == 16u) {
-    /* Vectorize arithmetic but reduce in source order to preserve FP32 results. */
+    /* Fixed four-lane reduction tree mirrored by the host oracle. */
     const hnsw_float4 *query4 = (const hnsw_float4 *)query;
     const hnsw_float4 *candidate4 = (const hnsw_float4 *)candidate;
     hnsw_float4 delta0 = query4[0] - candidate4[0];

@@ -7,6 +7,8 @@ import unittest
 import numpy as np
 
 from hnsw_npu import (
+    CHUNK_ELEMENTS,
+    MAX_BATCH_QUERIES,
     build_hnsw,
     load_index,
     pack_queries,
@@ -48,6 +50,15 @@ class HnswTests(unittest.TestCase):
         self.assertEqual(count, 3)
         self.assertEqual(packed.dtype, np.float32)
         self.assertEqual(packed.ndim, 2)
+
+        packed, count = pack_queries(
+            index,
+            index.vectors[:MAX_BATCH_QUERIES],
+            k=5,
+            ef_search=16,
+        )
+        self.assertEqual(count, MAX_BATCH_QUERIES)
+        self.assertEqual(packed.shape, (1, MAX_BATCH_QUERIES * CHUNK_ELEMENTS))
 
     def test_index_round_trip(self) -> None:
         index = build_hnsw(vectors(), seed=1729)
