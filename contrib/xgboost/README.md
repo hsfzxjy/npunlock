@@ -59,12 +59,13 @@ specialized FP16, specialized FP32, and runtime-loaded FP32 NPU paths agreed
 with official XGBoost on every class.
 
 Maximum raw-margin error was 0.001945 for FP16 transport and 4.77e-7 for both
-FP32 paths. The generic runtime kernel linked to a 3,472-byte SHAVE image; the
+FP32 paths. The generic runtime kernel linked to a 3,344-byte SHAVE image; the
 forest stayed in a separate ordinary NPU input.
 
-On the recorded system, balancing a 32-row batch across four ACT invocations
-reduced submission-through-fence wall time by 53% for the 502-node runtime
-model and 52% for the connected 612-node model, with byte-identical results.
+With balanced scheduling and one-pass packed-forest validation, the current
+batch-32 NPU path was 11% faster than official XGBoost CPU for the 502-node
+model and 13% faster for the connected 612-node model. At full one-execution
+capacity, the CPU remained 8% and 13% faster respectively.
 
 This is primarily a programmability example. The small recorded workload did
 not establish a general performance win over the optimized CPU implementation.

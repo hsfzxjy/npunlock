@@ -10,6 +10,7 @@ from xgboost_npu.packing import FP16_TRANSPORT, FP32_TRANSPORT, pack_features
 from xgboost_npu.runtime import (
     RUNTIME_CHUNK_ELEMENTS,
     RUNTIME_REPLICAS,
+    pack_runtime_model,
     pack_runtime_features,
     runtime_batch_capacity,
 )
@@ -73,10 +74,14 @@ class ModelTests(unittest.TestCase):
         )
 
     def test_generator_contains_the_model_branch(self) -> None:
-        source = generate_kernel_source(load_ensemble(stump_model())).decode("utf-8")
+        ensemble = load_ensemble(stump_model())
+        source = generate_kernel_source(ensemble).decode("utf-8")
         self.assertIn("value != value", source)
         self.assertIn("value < 1.0f", source)
         self.assertIn("expf", source)
+        packed_model = pack_runtime_model(ensemble).reshape(-1)
+        root_metadata = int(packed_model.view(np.uint32)[5])
+        self.assertEqual(root_metadata & ~0x7FFFF, 0x3F800000)
 
     def test_feature_payload_is_replicated(self) -> None:
         features = np.asarray([[1.0, np.nan], [-2.5, 4.0]], dtype=np.float32)

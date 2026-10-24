@@ -46,6 +46,8 @@ _LEFT_SHIFT = _FEATURE_BITS
 _RIGHT_SHIFT = _LEFT_SHIFT + _CHILD_BITS
 _DEFAULT_SHIFT = _RIGHT_SHIFT + _CHILD_BITS
 _TREE_SIZE_SHIFT = _DEFAULT_SHIFT + 1
+_METADATA_PAYLOAD_MASK = 0x7FFFF
+_METADATA_BASE_BITS = 0x3F800000
 
 
 RUNTIME_KERNEL_SOURCE: bytes = (
@@ -68,6 +70,8 @@ RUNTIME_KERNEL_SOURCE: bytes = (
 #define XGB_RIGHT_SHIFT {_RIGHT_SHIFT}u
 #define XGB_DEFAULT_SHIFT {_DEFAULT_SHIFT}u
 #define XGB_TREE_SIZE_SHIFT {_TREE_SIZE_SHIFT}u
+#define XGB_METADATA_PAYLOAD_MASK {_METADATA_PAYLOAD_MASK}u
+#define XGB_METADATA_BASE {_METADATA_BASE_BITS}u
 
 float expf(float value);
 
@@ -92,6 +96,48 @@ static float xgb_sigmoid(float value) {{
     return exponential / (1.0f + exponential);
 }}
 
+static int xgb_validate_model(
+    const float *model,
+    unsigned feature_count,
+    unsigned tree_count,
+    unsigned node_count) {{
+    const unsigned *model_words = (const unsigned *)model;
+    unsigned root = 0u;
+    for (unsigned tree = 0u; tree < tree_count; ++tree) {{
+        if (root >= node_count) {{
+            return 0;
+        }}
+        unsigned root_word = model_words[XGB_MODEL_HEADER + root * 2u];
+        if ((root_word & ~XGB_METADATA_PAYLOAD_MASK) != XGB_METADATA_BASE) {{
+            return 0;
+        }}
+        unsigned root_metadata = root_word & XGB_METADATA_PAYLOAD_MASK;
+        unsigned tree_nodes =
+            ((root_metadata >> XGB_TREE_SIZE_SHIFT) & XGB_CHILD_MASK) + 1u;
+        if (root + tree_nodes > node_count) {{
+            return 0;
+        }}
+        for (unsigned node = 0u; node < tree_nodes; ++node) {{
+            unsigned word = XGB_MODEL_HEADER + (root + node) * 2u;
+            unsigned metadata_word = model_words[word];
+            if ((metadata_word & ~XGB_METADATA_PAYLOAD_MASK) != XGB_METADATA_BASE) {{
+                return 0;
+            }}
+            unsigned metadata = metadata_word & XGB_METADATA_PAYLOAD_MASK;
+            unsigned feature = metadata & XGB_FEATURE_MASK;
+            if (feature != XGB_LEAF_FEATURE) {{
+                unsigned left = (metadata >> XGB_LEFT_SHIFT) & XGB_CHILD_MASK;
+                unsigned right = (metadata >> XGB_RIGHT_SHIFT) & XGB_CHILD_MASK;
+                if (feature >= feature_count || left >= tree_nodes || right >= tree_nodes) {{
+                    return 0;
+                }}
+            }}
+        }}
+        root += tree_nodes;
+    }}
+    return root == node_count;
+}}
+
 static int xgb_margin(
     const float *features,
     const float *model,
@@ -107,26 +153,17 @@ static int xgb_margin(
         unsigned tree_nodes;
         unsigned node = 0u;
         int found_leaf = 0;
-        if (root >= node_count || !xgb_exact_uint(
-                model[XGB_MODEL_HEADER + root * 2u], 0x7ffffu, &root_metadata)) {{
-            return 0;
-        }}
+        root_metadata = ((const unsigned *)model)[
+            XGB_MODEL_HEADER + root * 2u
+        ] & XGB_METADATA_PAYLOAD_MASK;
         tree_nodes = ((root_metadata >> XGB_TREE_SIZE_SHIFT) & XGB_CHILD_MASK) + 1u;
-        if (root + tree_nodes > node_count) {{
-            return 0;
-        }}
         for (unsigned step = 0u; step < XGB_MAX_TREE_NODES; ++step) {{
             unsigned metadata;
             unsigned feature;
             unsigned word;
             float split_or_leaf;
-            if (node >= tree_nodes) {{
-                return 0;
-            }}
             word = XGB_MODEL_HEADER + (root + node) * 2u;
-            if (!xgb_exact_uint(model[word], 0x7ffffu, &metadata)) {{
-                return 0;
-            }}
+            metadata = ((const unsigned *)model)[word] & XGB_METADATA_PAYLOAD_MASK;
             feature = metadata & XGB_FEATURE_MASK;
             split_or_leaf = model[word + 1u];
             if (feature == XGB_LEAF_FEATURE) {{
@@ -134,17 +171,11 @@ static int xgb_margin(
                 found_leaf = 1;
                 break;
             }}
-            if (feature >= feature_count) {{
-                return 0;
-            }}
             unsigned left = (metadata >> XGB_LEFT_SHIFT) & XGB_CHILD_MASK;
             unsigned right = (metadata >> XGB_RIGHT_SHIFT) & XGB_CHILD_MASK;
             float value = features[
                 XGB_FEATURE_HEADER + sample * feature_count + feature
             ];
-            if (left >= tree_nodes || right >= tree_nodes) {{
-                return 0;
-            }}
             if (value != value) {{
                 node = ((metadata >> XGB_DEFAULT_SHIFT) & 1u) != 0u ? left : right;
             }} else {{
@@ -161,6 +192,13 @@ static int xgb_margin(
     }}
     *result = margin;
     return 1;
+}}
+
+static void xgb_write_failure(float *output) {{
+    for (unsigned index = 0u; index < XGB_CHUNK_ELEMENTS; ++index) {{
+        output[index] = 0.0f;
+    }}
+    output[3] = -1.0f;
 }}
 
 void controlled_act(unsigned layerParams) {{
@@ -191,7 +229,9 @@ void controlled_act(unsigned layerParams) {{
         !xgb_exact_uint(model[1], 64u, &tree_count) || tree_count == 0u ||
         !xgb_exact_uint(model[2], XGB_MAX_TOTAL_NODES, &node_count) || node_count == 0u ||
         !xgb_exact_uint(model[3], XGB_MAX_FEATURES, &model_feature_count) ||
-        model_feature_count != feature_count) {{
+        model_feature_count != feature_count ||
+        !xgb_validate_model(model, feature_count, tree_count, node_count)) {{
+        xgb_write_failure(output);
         return;
     }}
     for (unsigned index = 0u; index < XGB_CHUNK_ELEMENTS; ++index) {{
@@ -245,6 +285,8 @@ RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE: bytes = (
 #define XGB_RIGHT_SHIFT {_RIGHT_SHIFT}u
 #define XGB_DEFAULT_SHIFT {_DEFAULT_SHIFT}u
 #define XGB_TREE_SIZE_SHIFT {_TREE_SIZE_SHIFT}u
+#define XGB_METADATA_PAYLOAD_MASK {_METADATA_PAYLOAD_MASK}u
+#define XGB_METADATA_BASE {_METADATA_BASE_BITS}u
 
 static int xgb_exact_uint(float value, unsigned maximum, unsigned *result) {{
     unsigned converted;
@@ -257,6 +299,48 @@ static int xgb_exact_uint(float value, unsigned maximum, unsigned *result) {{
     }}
     *result = converted;
     return 1;
+}}
+
+static int xgb_validate_model(
+    const float *model,
+    unsigned feature_count,
+    unsigned tree_count,
+    unsigned node_count) {{
+    const unsigned *model_words = (const unsigned *)model;
+    unsigned root = 0u;
+    for (unsigned tree = 0u; tree < tree_count; ++tree) {{
+        if (root >= node_count) {{
+            return 0;
+        }}
+        unsigned root_word = model_words[XGB_MODEL_HEADER + root * 2u];
+        if ((root_word & ~XGB_METADATA_PAYLOAD_MASK) != XGB_METADATA_BASE) {{
+            return 0;
+        }}
+        unsigned root_metadata = root_word & XGB_METADATA_PAYLOAD_MASK;
+        unsigned tree_nodes =
+            ((root_metadata >> XGB_TREE_SIZE_SHIFT) & XGB_CHILD_MASK) + 1u;
+        if (root + tree_nodes > node_count) {{
+            return 0;
+        }}
+        for (unsigned node = 0u; node < tree_nodes; ++node) {{
+            unsigned word = XGB_MODEL_HEADER + (root + node) * 2u;
+            unsigned metadata_word = model_words[word];
+            if ((metadata_word & ~XGB_METADATA_PAYLOAD_MASK) != XGB_METADATA_BASE) {{
+                return 0;
+            }}
+            unsigned metadata = metadata_word & XGB_METADATA_PAYLOAD_MASK;
+            unsigned feature = metadata & XGB_FEATURE_MASK;
+            if (feature != XGB_LEAF_FEATURE) {{
+                unsigned left = (metadata >> XGB_LEFT_SHIFT) & XGB_CHILD_MASK;
+                unsigned right = (metadata >> XGB_RIGHT_SHIFT) & XGB_CHILD_MASK;
+                if (feature >= feature_count || left >= tree_nodes || right >= tree_nodes) {{
+                    return 0;
+                }}
+            }}
+        }}
+        root += tree_nodes;
+    }}
+    return root == node_count;
 }}
 
 static int xgb_margin(
@@ -274,26 +358,17 @@ static int xgb_margin(
         unsigned tree_nodes;
         unsigned node = 0u;
         int found_leaf = 0;
-        if (root >= node_count || !xgb_exact_uint(
-                model[XGB_MODEL_HEADER + root * 2u], 0x7ffffu, &root_metadata)) {{
-            return 0;
-        }}
+        root_metadata = ((const unsigned *)model)[
+            XGB_MODEL_HEADER + root * 2u
+        ] & XGB_METADATA_PAYLOAD_MASK;
         tree_nodes = ((root_metadata >> XGB_TREE_SIZE_SHIFT) & XGB_CHILD_MASK) + 1u;
-        if (root + tree_nodes > node_count) {{
-            return 0;
-        }}
         for (unsigned step = 0u; step < XGB_MAX_TREE_NODES; ++step) {{
             unsigned metadata;
             unsigned feature;
             unsigned word;
             float split_or_leaf;
-            if (node >= tree_nodes) {{
-                return 0;
-            }}
             word = XGB_MODEL_HEADER + (root + node) * 2u;
-            if (!xgb_exact_uint(model[word], 0x7ffffu, &metadata)) {{
-                return 0;
-            }}
+            metadata = ((const unsigned *)model)[word] & XGB_METADATA_PAYLOAD_MASK;
             feature = metadata & XGB_FEATURE_MASK;
             split_or_leaf = model[word + 1u];
             if (feature == XGB_LEAF_FEATURE) {{
@@ -301,17 +376,11 @@ static int xgb_margin(
                 found_leaf = 1;
                 break;
             }}
-            if (feature >= feature_count) {{
-                return 0;
-            }}
             unsigned left = (metadata >> XGB_LEFT_SHIFT) & XGB_CHILD_MASK;
             unsigned right = (metadata >> XGB_RIGHT_SHIFT) & XGB_CHILD_MASK;
             float value = features[
                 XGB_FEATURE_HEADER + sample * feature_count + feature
             ];
-            if (left >= tree_nodes || right >= tree_nodes) {{
-                return 0;
-            }}
             if (value != value) {{
                 node = ((metadata >> XGB_DEFAULT_SHIFT) & 1u) != 0u ? left : right;
             }} else {{
@@ -328,6 +397,13 @@ static int xgb_margin(
     }}
     *result = margin;
     return 1;
+}}
+
+static void xgb_write_failure(float *output) {{
+    for (unsigned index = 0u; index < XGB_CHUNK_ELEMENTS; ++index) {{
+        output[index] = 0.0f;
+    }}
+    output[3] = -1.0f;
 }}
 
 void controlled_act(unsigned layerParams) {{
@@ -361,7 +437,9 @@ void controlled_act(unsigned layerParams) {{
         tree_count >= total_tree_count ||
         !xgb_exact_uint(model[2], XGB_MAX_TOTAL_NODES, &node_count) || node_count == 0u ||
         !xgb_exact_uint(model[3], XGB_MAX_FEATURES, &model_feature_count) ||
-        model_feature_count != feature_count) {{
+        model_feature_count != feature_count ||
+        !xgb_validate_model(model, feature_count, tree_count, node_count)) {{
+        xgb_write_failure(output);
         return;
     }}
     for (unsigned index = 0u; index < XGB_CHUNK_ELEMENTS; ++index) {{
@@ -418,6 +496,8 @@ RUNTIME_CHAIN_KERNEL_SOURCE: bytes = (
 #define XGB_RIGHT_SHIFT {_RIGHT_SHIFT}u
 #define XGB_DEFAULT_SHIFT {_DEFAULT_SHIFT}u
 #define XGB_TREE_SIZE_SHIFT {_TREE_SIZE_SHIFT}u
+#define XGB_METADATA_PAYLOAD_MASK {_METADATA_PAYLOAD_MASK}u
+#define XGB_METADATA_BASE {_METADATA_BASE_BITS}u
 
 float expf(float value);
 
@@ -442,6 +522,48 @@ static float xgb_sigmoid(float value) {{
     return exponential / (1.0f + exponential);
 }}
 
+static int xgb_validate_model(
+    const float *model,
+    unsigned feature_count,
+    unsigned tree_count,
+    unsigned node_count) {{
+    const unsigned *model_words = (const unsigned *)model;
+    unsigned root = 0u;
+    for (unsigned tree = 0u; tree < tree_count; ++tree) {{
+        if (root >= node_count) {{
+            return 0;
+        }}
+        unsigned root_word = model_words[XGB_MODEL_HEADER + root * 2u];
+        if ((root_word & ~XGB_METADATA_PAYLOAD_MASK) != XGB_METADATA_BASE) {{
+            return 0;
+        }}
+        unsigned root_metadata = root_word & XGB_METADATA_PAYLOAD_MASK;
+        unsigned tree_nodes =
+            ((root_metadata >> XGB_TREE_SIZE_SHIFT) & XGB_CHILD_MASK) + 1u;
+        if (root + tree_nodes > node_count) {{
+            return 0;
+        }}
+        for (unsigned node = 0u; node < tree_nodes; ++node) {{
+            unsigned word = XGB_MODEL_HEADER + (root + node) * 2u;
+            unsigned metadata_word = model_words[word];
+            if ((metadata_word & ~XGB_METADATA_PAYLOAD_MASK) != XGB_METADATA_BASE) {{
+                return 0;
+            }}
+            unsigned metadata = metadata_word & XGB_METADATA_PAYLOAD_MASK;
+            unsigned feature = metadata & XGB_FEATURE_MASK;
+            if (feature != XGB_LEAF_FEATURE) {{
+                unsigned left = (metadata >> XGB_LEFT_SHIFT) & XGB_CHILD_MASK;
+                unsigned right = (metadata >> XGB_RIGHT_SHIFT) & XGB_CHILD_MASK;
+                if (feature >= feature_count || left >= tree_nodes || right >= tree_nodes) {{
+                    return 0;
+                }}
+            }}
+        }}
+        root += tree_nodes;
+    }}
+    return root == node_count;
+}}
+
 static int xgb_chained_margin(
     const float *features,
     const float *model,
@@ -462,26 +584,17 @@ static int xgb_chained_margin(
         unsigned tree_nodes;
         unsigned node = 0u;
         int found_leaf = 0;
-        if (root >= node_count || !xgb_exact_uint(
-                model[XGB_MODEL_HEADER + root * 2u], 0x7ffffu, &root_metadata)) {{
-            return 0;
-        }}
+        root_metadata = ((const unsigned *)model)[
+            XGB_MODEL_HEADER + root * 2u
+        ] & XGB_METADATA_PAYLOAD_MASK;
         tree_nodes = ((root_metadata >> XGB_TREE_SIZE_SHIFT) & XGB_CHILD_MASK) + 1u;
-        if (root + tree_nodes > node_count) {{
-            return 0;
-        }}
         for (unsigned step = 0u; step < XGB_MAX_TREE_NODES; ++step) {{
             unsigned metadata;
             unsigned feature;
             unsigned word;
             float split_or_leaf;
-            if (node >= tree_nodes) {{
-                return 0;
-            }}
             word = XGB_MODEL_HEADER + (root + node) * 2u;
-            if (!xgb_exact_uint(model[word], 0x7ffffu, &metadata)) {{
-                return 0;
-            }}
+            metadata = ((const unsigned *)model)[word] & XGB_METADATA_PAYLOAD_MASK;
             feature = metadata & XGB_FEATURE_MASK;
             split_or_leaf = model[word + 1u];
             if (feature == XGB_LEAF_FEATURE) {{
@@ -489,17 +602,11 @@ static int xgb_chained_margin(
                 found_leaf = 1;
                 break;
             }}
-            if (feature >= feature_count) {{
-                return 0;
-            }}
             unsigned left = (metadata >> XGB_LEFT_SHIFT) & XGB_CHILD_MASK;
             unsigned right = (metadata >> XGB_RIGHT_SHIFT) & XGB_CHILD_MASK;
             float value = features[
                 XGB_FEATURE_HEADER + sample * feature_count + feature
             ];
-            if (left >= tree_nodes || right >= tree_nodes) {{
-                return 0;
-            }}
             if (value != value) {{
                 node = ((metadata >> XGB_DEFAULT_SHIFT) & 1u) != 0u ? left : right;
             }} else {{
@@ -516,6 +623,13 @@ static int xgb_chained_margin(
     }}
     *result = margin;
     return 1;
+}}
+
+static void xgb_write_failure(float *output) {{
+    for (unsigned index = 0u; index < XGB_CHUNK_ELEMENTS; ++index) {{
+        output[index] = 0.0f;
+    }}
+    output[3] = -1.0f;
 }}
 
 void controlled_act(unsigned layerParams) {{
@@ -553,7 +667,9 @@ void controlled_act(unsigned layerParams) {{
         first_tree_count + tree_count != total_tree_count ||
         !xgb_exact_uint(model[2], XGB_MAX_TOTAL_NODES, &node_count) || node_count == 0u ||
         !xgb_exact_uint(model[3], XGB_MAX_FEATURES, &model_feature_count) ||
-        model_feature_count != feature_count || model[4] != 0.0f) {{
+        model_feature_count != feature_count || model[4] != 0.0f ||
+        !xgb_validate_model(model, feature_count, tree_count, node_count)) {{
+        xgb_write_failure(output);
         return;
     }}
     for (unsigned index = 0u; index < XGB_CHUNK_ELEMENTS; ++index) {{
@@ -1016,6 +1132,7 @@ def pack_runtime_model(ensemble: Ensemble) -> np.ndarray:
         ensemble.feature_count,
         ensemble.base_margin,
     )
+    chunk_words = chunk.view(np.uint32)
     node_base = 0
     for tree in ensemble.trees:
         if tree.node_count > RUNTIME_MAX_NODES_PER_TREE:
@@ -1045,7 +1162,7 @@ def pack_runtime_model(ensemble: Ensemble) -> np.ndarray:
             if node == 0:
                 metadata |= (tree.node_count - 1) << _TREE_SIZE_SHIFT
             word = RUNTIME_MODEL_HEADER_ELEMENTS + (node_base + node) * 2
-            chunk[word] = metadata
+            chunk_words[word] = _METADATA_BASE_BITS | metadata
             chunk[word + 1] = tree.split_or_leaf[node]
         node_base += tree.node_count
     return _replicate(chunk)
