@@ -51,11 +51,11 @@ On the recorded NPU3720/compiler-8.3 system:
   neighbor IDs, raw FP32 distances, and traversal counters;
 - the NPU visited 26.5 of 48 nodes on average, so the run was not exhaustive;
 - recall@5 was 0.875 for this small `M=4`, `efSearch=16` graph;
-- one 6,784-byte SHAVE image served four ACT targets; and
-- a 24-query batch averaged 0.555 ms of graph execution and 0.659 ms for the
+- one 6,640-byte SHAVE image served four ACT targets; and
+- a 24-query batch averaged 0.552 ms of graph execution and 0.646 ms for the
   complete public call in the retained 5,000-run measurement.
 
-hnswlib processed the same tiny batch in 0.0416 ms. This contribution shows
+hnswlib processed the same tiny batch in 0.041 ms. This contribution shows
 that irregular graph traversal works on the NPU; it does not claim a CPU
 performance crossover.
 
