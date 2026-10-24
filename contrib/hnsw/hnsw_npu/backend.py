@@ -13,7 +13,7 @@ from .cache import ProgramCache, provenance_identity
 from .index import HnswIndex, SearchStats, search_index
 from .packing import (
     CHUNK_ELEMENTS,
-    LOGICAL_ELEMENTS,
+    MAX_BATCH_QUERIES,
     REPLICAS,
     _make_query_buffer,
     _update_query_buffer,
@@ -40,15 +40,15 @@ class SearchBatch:
     timings: dict[str, float]
 
 
-def _validate_program(program: npu.Program) -> None:
+def _validate_program(program: npu.Program, *, logical_elements: int) -> None:
     expected_inputs = (
-        ("hnsw_query_vectors", (1, LOGICAL_ELEMENTS), "f32"),
-        ("hnsw_adjacency", (1, LOGICAL_ELEMENTS), "f32"),
+        ("hnsw_query_vectors", (1, logical_elements), "f32"),
+        ("hnsw_adjacency", (1, logical_elements), "f32"),
     )
     actual_inputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.input_contracts)
     if actual_inputs != expected_inputs:
         raise RuntimeError(f"HNSW program input contract changed: {actual_inputs!r}")
-    expected_outputs = (("hnsw_results", (1, LOGICAL_ELEMENTS), "f32"),)
+    expected_outputs = (("hnsw_results", (1, logical_elements), "f32"),)
     actual_outputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.output_contracts)
     if actual_outputs != expected_outputs:
         raise RuntimeError(f"HNSW program output contract changed: {actual_outputs!r}")
@@ -74,13 +74,14 @@ def _validate_program(program: npu.Program) -> None:
     ):
         raise RuntimeError("HNSW patch report contract changed")
     for index, target in enumerate(targets):
+        invocation_elements = logical_elements // REPLICAS
         if (
             not isinstance(target, dict)
             or target.get("invocation_index") != index
             or target.get("range_index") != index
             or target.get("input_count") != 2
-            or target.get("element_count") != CHUNK_ELEMENTS
-            or target.get("span_bytes") != CHUNK_ELEMENTS * 4
+            or target.get("element_count") != invocation_elements
+            or target.get("span_bytes") != invocation_elements * 4
             or target.get("contract_flags") != 0x3B
         ):
             raise RuntimeError(f"HNSW patch target {index} contract changed")
@@ -99,15 +100,28 @@ class NpuHnsw:
         native_dir: str | Path | None = None,
         timeout_ms: int = 20_000,
         cache_dir: str | Path | None = None,
+        batch_capacity: int = REPLICAS,
     ):
         validate_capacity(index)
+        if (
+            not isinstance(batch_capacity, int)
+            or batch_capacity < REPLICAS
+            or batch_capacity > MAX_BATCH_QUERIES
+            or batch_capacity % REPLICAS != 0
+        ):
+            raise ValueError(
+                f"batch_capacity must be a multiple of {REPLICAS} in " f"[{REPLICAS}, {MAX_BATCH_QUERIES}]"
+            )
         self.index = index
+        self.batch_capacity = batch_capacity
+        self.logical_elements = batch_capacity * CHUNK_ELEMENTS
+        self.invocation_elements = self.logical_elements // REPLICAS
         self.movi_dll_dir = Path(movi_dll_dir).resolve()
         self.source = KERNEL_PATH.read_bytes()
-        self.packed_graph = pack_graph(index)
+        self.packed_graph = pack_graph(index, query_capacity=batch_capacity)
         npu.configure(movi_dll_dir=movi_dll_dir)
-        query = npu.input("hnsw_query_vectors", shape=(1, LOGICAL_ELEMENTS), dtype="f32")
-        graph = npu.input("hnsw_adjacency", shape=(1, LOGICAL_ELEMENTS), dtype="f32")
+        query = npu.input("hnsw_query_vectors", shape=(1, self.logical_elements), dtype="f32")
+        graph = npu.input("hnsw_adjacency", shape=(1, self.logical_elements), dtype="f32")
         output = npu.custom(
             query,
             graph,
@@ -115,11 +129,12 @@ class NpuHnsw:
             carrier="Subtract",
             _name="hnsw_results",
         )
-        graph_definition = npu.Graph([query, graph], [output], name="hnsw_l2_search")
+        graph_definition = npu.Graph([query, graph], [output], name=f"hnsw_l2_search_{batch_capacity}q")
         cache_started = perf_counter()
         cache = ProgramCache(
             cache_dir,
             source=self.source,
+            logical_elements=self.logical_elements,
             movi_dll_dir=movi_dll_dir,
             native_dir=native_dir,
             timeout_ms=timeout_ms,
@@ -127,7 +142,7 @@ class NpuHnsw:
         self.program = cache.load()
         if self.program is not None:
             try:
-                _validate_program(self.program)
+                _validate_program(self.program, logical_elements=self.logical_elements)
             except Exception as error:
                 self.program.close()
                 self.program = None
@@ -151,8 +166,8 @@ class NpuHnsw:
                         "HNSW carrier dtype changed: " f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
                     )
                 if (
-                    group.per_invocation_input_element_counts != (CHUNK_ELEMENTS, CHUNK_ELEMENTS)
-                    or group.per_invocation_output_element_count != CHUNK_ELEMENTS
+                    group.per_invocation_input_element_counts != (self.invocation_elements, self.invocation_elements)
+                    or group.per_invocation_output_element_count != self.invocation_elements
                     or len(group.targets) != REPLICAS
                 ):
                     raise RuntimeError(
@@ -164,7 +179,7 @@ class NpuHnsw:
                 started = perf_counter()
                 self.program = prepared.build(movi_dll_dir=movi_dll_dir)
                 self.build_ms = (perf_counter() - started) * 1000.0
-                _validate_program(self.program)
+                _validate_program(self.program, logical_elements=self.logical_elements)
                 self.carrier_explanation = prepared.explain()
                 cache.store(self.program, hash_task)
             except BaseException:
@@ -186,7 +201,10 @@ class NpuHnsw:
         self.shared_inputs = self.program.shared_inputs()
         self.shared_output = self.program.shared_output()
         started = perf_counter()
-        np.copyto(self.shared_inputs["hnsw_query_vectors"], _make_query_buffer(index))
+        np.copyto(
+            self.shared_inputs["hnsw_query_vectors"],
+            _make_query_buffer(index, query_capacity=batch_capacity),
+        )
         np.copyto(self.shared_inputs["hnsw_adjacency"], self.packed_graph)
         self.static_input_upload_ms = (perf_counter() - started) * 1000.0
 
@@ -200,6 +218,7 @@ class NpuHnsw:
             "output_graph_sha256": report["output_graph_sha256"],
             "graph_contract": report["graph_contract"],
             "append": report["append"],
+            "targets": report["targets"],
             "validation": report["validation"],
             "patched_target_count": len(report["targets"]),
         }

@@ -1,6 +1,7 @@
 #include <npunlock/npu3720_kernel.h>
 
 #define HNSW_CHUNK_ELEMENTS 1024u
+#define HNSW_MAX_CHUNKS_PER_INVOCATION 6u
 #define HNSW_MAX_NODES 48u
 #define HNSW_MAX_DIMENSIONS 32u
 #define HNSW_MAX_LEVELS 4u
@@ -186,11 +187,7 @@ static void hnsw_write_status(float *output, unsigned status) {
   output[1] = (float)status;
 }
 
-void controlled_act(unsigned layerParams) {
-  act_abi_invocation invocation;
-  const float *query_payload;
-  const float *graph;
-  float *output;
+static void hnsw_search_chunk(const float *query_payload, const float *graph, float *output) {
   const float *query;
   const float *vectors;
   volatile unsigned visited[HNSW_VISITED_WORDS];
@@ -220,13 +217,6 @@ void controlled_act(unsigned layerParams) {
   unsigned top_peak = 0u;
   unsigned visited_count = 0u;
 
-  ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
-  if (invocation.element_count != HNSW_CHUNK_ELEMENTS) {
-    return;
-  }
-  query_payload = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
-  graph = ACT_ABI_INPUT_PTR32(const float, invocation, 1u);
-  output = ACT_ABI_OUTPUT_PTR32(float, invocation, 2u);
   for (value = 0u; value < HNSW_OUTPUT_ELEMENTS; ++value) {
     output[value] = 0.0f;
   }
@@ -404,5 +394,29 @@ void controlled_act(unsigned layerParams) {
     output[output_index] = (float)top_nodes[0];
     output[output_index + 1u] = top_distances[0];
     hnsw_top_pop(top_distances, top_nodes, &top_size);
+  }
+}
+
+void controlled_act(unsigned layerParams) {
+  act_abi_invocation invocation;
+  const float *query_payload;
+  const float *graph;
+  float *output;
+  unsigned chunk_count;
+  unsigned chunk;
+
+  ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
+  if (invocation.element_count == 0u ||
+      invocation.element_count > HNSW_CHUNK_ELEMENTS * HNSW_MAX_CHUNKS_PER_INVOCATION ||
+      invocation.element_count % HNSW_CHUNK_ELEMENTS != 0u) {
+    return;
+  }
+  query_payload = ACT_ABI_INPUT_PTR32(const float, invocation, 0u);
+  graph = ACT_ABI_INPUT_PTR32(const float, invocation, 1u);
+  output = ACT_ABI_OUTPUT_PTR32(float, invocation, 2u);
+  chunk_count = invocation.element_count / HNSW_CHUNK_ELEMENTS;
+  for (chunk = 0u; chunk < chunk_count; ++chunk) {
+    unsigned offset = chunk * HNSW_CHUNK_ELEMENTS;
+    hnsw_search_chunk(query_payload + offset, graph + offset, output + offset);
   }
 }

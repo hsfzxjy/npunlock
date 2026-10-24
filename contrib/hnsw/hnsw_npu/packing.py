@@ -8,8 +8,10 @@ from .index import HnswIndex, SearchStats
 
 
 CHUNK_ELEMENTS = 1024
-LOGICAL_ELEMENTS = 4096
 REPLICAS = 4
+LOGICAL_ELEMENTS = REPLICAS * CHUNK_ELEMENTS
+MAX_CHUNKS_PER_INVOCATION = 6
+MAX_BATCH_QUERIES = REPLICAS * MAX_CHUNKS_PER_INVOCATION
 MAX_NODES = 48
 MAX_DIMENSIONS = 32
 MAX_LEVELS = 4
@@ -46,17 +48,28 @@ def validate_capacity(index: HnswIndex) -> None:
     if index.max_level >= MAX_LEVELS:
         raise ValueError(f"index has level {index.max_level}, maximum is {MAX_LEVELS - 1}")
     if QUERY_HEADER_ELEMENTS + dimensions * (node_count + 1) > CHUNK_ELEMENTS:
-        raise ValueError("query and vector payload do not fit one validated ACT invocation")
+        raise ValueError("query and vector payload do not fit one HNSW chunk")
     if GRAPH_HEADER_ELEMENTS + node_count * NODE_GRAPH_ELEMENTS > CHUNK_ELEMENTS:
-        raise ValueError("adjacency payload does not fit one validated ACT invocation")
+        raise ValueError("adjacency payload does not fit one HNSW chunk")
 
 
-def _replicate(chunk: np.ndarray) -> np.ndarray:
-    return np.tile(chunk, REPLICAS).reshape(1, LOGICAL_ELEMENTS)
+def _validate_query_capacity(query_capacity: int) -> None:
+    if (
+        not isinstance(query_capacity, int)
+        or query_capacity < REPLICAS
+        or query_capacity > MAX_BATCH_QUERIES
+        or query_capacity % REPLICAS != 0
+    ):
+        raise ValueError(f"query_capacity must be a multiple of {REPLICAS} in " f"[{REPLICAS}, {MAX_BATCH_QUERIES}]")
 
 
-def pack_graph(index: HnswIndex) -> np.ndarray:
+def _replicate(chunk: np.ndarray, copies: int = REPLICAS) -> np.ndarray:
+    return np.tile(chunk, copies).reshape(1, copies * CHUNK_ELEMENTS)
+
+
+def pack_graph(index: HnswIndex, *, query_capacity: int = REPLICAS) -> np.ndarray:
     validate_capacity(index)
+    _validate_query_capacity(query_capacity)
     node_count, dimensions = index.vectors.shape
     chunk = np.zeros(CHUNK_ELEMENTS, dtype=np.float32)
     chunk[:GRAPH_HEADER_ELEMENTS] = (
@@ -80,7 +93,7 @@ def pack_graph(index: HnswIndex) -> np.ndarray:
             for slot in range(MAX_M):
                 chunk[cursor + slot] = links[slot] if slot < len(links) else -1.0
             cursor += MAX_M
-    return _replicate(chunk)
+    return _replicate(chunk, query_capacity)
 
 
 def _validate_search_parameters(index: HnswIndex, *, k: int, ef_search: int) -> None:
@@ -90,7 +103,7 @@ def _validate_search_parameters(index: HnswIndex, *, k: int, ef_search: int) -> 
         raise ValueError(f"k must be in [1, {min(MAX_K, ef_search)}]")
 
 
-def _normalize_queries(index: HnswIndex, queries: object) -> np.ndarray:
+def _normalize_queries(index: HnswIndex, queries: object, *, maximum: int = MAX_BATCH_QUERIES) -> np.ndarray:
     validate_capacity(index)
     matrix = np.asarray(queries, dtype=np.float32)
     dimensions = index.vectors.shape[1]
@@ -98,19 +111,20 @@ def _normalize_queries(index: HnswIndex, queries: object) -> np.ndarray:
         matrix = matrix.reshape(1, -1)
     if matrix.ndim != 2 or matrix.shape[1] != dimensions:
         raise ValueError(f"queries must have shape (count, {dimensions})")
-    if not 1 <= matrix.shape[0] <= REPLICAS:
-        raise ValueError(f"query count must be in [1, {REPLICAS}]")
+    if not 1 <= matrix.shape[0] <= maximum:
+        raise ValueError(f"query count must be in [1, {maximum}]")
     if not np.isfinite(matrix).all():
         raise ValueError("queries must contain only finite values")
     return np.ascontiguousarray(matrix)
 
 
-def _make_query_buffer(index: HnswIndex) -> np.ndarray:
+def _make_query_buffer(index: HnswIndex, *, query_capacity: int = REPLICAS) -> np.ndarray:
     """Create the static query/vector payload shared by later submissions."""
 
     validate_capacity(index)
+    _validate_query_capacity(query_capacity)
     node_count, dimensions = index.vectors.shape
-    chunks = np.zeros((REPLICAS, CHUNK_ELEMENTS), dtype=np.float32)
+    chunks = np.zeros((query_capacity, CHUNK_ELEMENTS), dtype=np.float32)
     vectors_begin = QUERY_HEADER_ELEMENTS + dimensions
     for chunk in chunks:
         chunk[:QUERY_HEADER_ELEMENTS] = (
@@ -124,7 +138,7 @@ def _make_query_buffer(index: HnswIndex) -> np.ndarray:
             1,
         )
         chunk[vectors_begin : vectors_begin + index.vectors.size] = index.vectors.reshape(-1)
-    return chunks.reshape(1, LOGICAL_ELEMENTS)
+    return chunks.reshape(1, query_capacity * CHUNK_ELEMENTS)
 
 
 def _update_query_buffer(
@@ -137,17 +151,16 @@ def _update_query_buffer(
 ) -> tuple[np.ndarray, int]:
     """Update only dynamic query fields in a prepared packed buffer."""
 
-    matrix = _normalize_queries(index, queries)
-    _validate_search_parameters(index, k=k, ef_search=ef_search)
     packed = np.asarray(target)
-    if (
-        packed.dtype != np.float32
-        or packed.size != LOGICAL_ELEMENTS
-        or not packed.flags.c_contiguous
-        or not packed.flags.writeable
-    ):
-        raise ValueError(f"target must be a writable contiguous float32 buffer with {LOGICAL_ELEMENTS} elements")
-    chunks = packed.reshape(REPLICAS, CHUNK_ELEMENTS)
+    if packed.size % CHUNK_ELEMENTS != 0:
+        raise ValueError("target element count must be a multiple of the HNSW chunk size")
+    query_capacity = packed.size // CHUNK_ELEMENTS
+    _validate_query_capacity(query_capacity)
+    matrix = _normalize_queries(index, queries, maximum=query_capacity)
+    _validate_search_parameters(index, k=k, ef_search=ef_search)
+    if packed.dtype != np.float32 or not packed.flags.c_contiguous or not packed.flags.writeable:
+        raise ValueError("target must be a writable contiguous float32 buffer")
+    chunks = packed.reshape(query_capacity, CHUNK_ELEMENTS)
     active_count = matrix.shape[0]
     chunks[:, :QUERY_HEADER_ELEMENTS] = (
         QUERY_MAGIC,
@@ -161,20 +174,33 @@ def _update_query_buffer(
     )
     query_end = QUERY_HEADER_ELEMENTS + index.vectors.shape[1]
     chunks[:active_count, QUERY_HEADER_ELEMENTS:query_end] = matrix
-    if active_count < REPLICAS:
+    if active_count < query_capacity:
         chunks[active_count:, QUERY_HEADER_ELEMENTS:query_end] = matrix[0]
     return matrix, active_count
 
 
-def pack_queries(index: HnswIndex, queries: object, *, k: int, ef_search: int) -> tuple[np.ndarray, int]:
-    """Pack one to four queries into independent ACT invocation payloads.
+def pack_queries(
+    index: HnswIndex,
+    queries: object,
+    *,
+    k: int,
+    ef_search: int,
+    query_capacity: int | None = None,
+) -> tuple[np.ndarray, int]:
+    """Pack one to 24 queries into independent 1,024-element payloads.
 
-    Unused invocations repeat the first query. This keeps every invocation valid
-    and retains a byte-for-byte execution check for a single-query submission.
+    Unused chunks repeat the first query. This keeps every chunk valid and
+    retains a byte-for-byte execution check for a single-query submission.
     """
 
-    packed = _make_query_buffer(index)
-    _, active_count = _update_query_buffer(packed, index, queries, k=k, ef_search=ef_search)
+    matrix = _normalize_queries(index, queries)
+    if query_capacity is None:
+        query_capacity = max(REPLICAS, ((matrix.shape[0] + REPLICAS - 1) // REPLICAS) * REPLICAS)
+    _validate_query_capacity(query_capacity)
+    if matrix.shape[0] > query_capacity:
+        raise ValueError(f"query count {matrix.shape[0]} exceeds capacity {query_capacity}")
+    packed = _make_query_buffer(index, query_capacity=query_capacity)
+    _, active_count = _update_query_buffer(packed, index, matrix, k=k, ef_search=ef_search)
     return packed, active_count
 
 
@@ -235,17 +261,19 @@ def unpack_results(
     query_count: int,
 ) -> tuple[PackedResult, ...]:
     flat = np.asarray(output, dtype=np.float32).reshape(-1)
-    if flat.size != LOGICAL_ELEMENTS:
-        raise ValueError(f"kernel output has {flat.size} elements, expected {LOGICAL_ELEMENTS}")
-    if not isinstance(query_count, int) or not 1 <= query_count <= REPLICAS:
-        raise ValueError(f"query_count must be in [1, {REPLICAS}]")
-    chunks = flat.reshape(REPLICAS, CHUNK_ELEMENTS)
-    for replica in range(query_count, REPLICAS):
+    if flat.size % CHUNK_ELEMENTS != 0:
+        raise ValueError("kernel output element count is not a multiple of the HNSW chunk size")
+    query_capacity = flat.size // CHUNK_ELEMENTS
+    _validate_query_capacity(query_capacity)
+    if not isinstance(query_count, int) or not 1 <= query_count <= query_capacity:
+        raise ValueError(f"query_count must be in [1, {query_capacity}]")
+    chunks = flat.reshape(query_capacity, CHUNK_ELEMENTS)
+    for replica in range(query_count, query_capacity):
         if not np.array_equal(
             chunks[0, :OUTPUT_ELEMENTS].view("V4"),
             chunks[replica, :OUTPUT_ELEMENTS].view("V4"),
         ):
-            raise ValueError("unused replicated ACT invocations produced different output bytes")
+            raise ValueError("unused replicated HNSW chunks produced different output bytes")
     return tuple(_unpack_chunk(chunks[query], index=index, k=k, ef_search=ef_search) for query in range(query_count))
 
 

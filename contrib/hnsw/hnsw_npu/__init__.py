@@ -5,6 +5,7 @@ from .index import HnswIndex, SearchStats, build_hnsw, load_index, save_index, s
 from .packing import (
     CHUNK_ELEMENTS,
     LOGICAL_ELEMENTS,
+    MAX_BATCH_QUERIES,
     MAX_EF,
     MAX_K,
     MAX_LEVELS,
@@ -21,6 +22,7 @@ __all__ = [
     "CHUNK_ELEMENTS",
     "HnswIndex",
     "LOGICAL_ELEMENTS",
+    "MAX_BATCH_QUERIES",
     "MAX_EF",
     "MAX_K",
     "MAX_LEVELS",

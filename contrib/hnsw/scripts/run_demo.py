@@ -20,7 +20,7 @@ from sklearn.preprocessing import StandardScaler
 CONTRIB_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CONTRIB_ROOT))
 
-from hnsw_npu import NpuHnsw, build_hnsw, pack_query, save_index, search_index
+from hnsw_npu import MAX_BATCH_QUERIES, NpuHnsw, build_hnsw, pack_query, save_index, search_index
 from hnsw_npu.backend import KERNEL_PATH
 from hnsw_npu.packing import validate_capacity
 
@@ -41,7 +41,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--warmup", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--timing-repeats", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=MAX_BATCH_QUERIES)
     parser.add_argument(
         "--cache-dir",
         help="persistent compiled-program cache (default: OUTPUT_DIR/program-cache)",
@@ -83,8 +84,10 @@ def main() -> int:
         raise ValueError("query-count must be positive")
     if args.warmup < 0:
         raise ValueError("warmup must be nonnegative")
-    if not 1 <= args.batch_size <= 4:
-        raise ValueError("batch-size must be in [1, 4]")
+    if args.timing_repeats < 1:
+        raise ValueError("timing-repeats must be positive")
+    if not 1 <= args.batch_size <= MAX_BATCH_QUERIES:
+        raise ValueError(f"batch-size must be in [1, {MAX_BATCH_QUERIES}]")
     if not args.cpu_only and not args.movi_dll_dir:
         raise ValueError("--movi-dll-dir is required unless --cpu-only is selected")
 
@@ -148,14 +151,16 @@ def main() -> int:
     cpu_index.set_ef(args.ef_search)
     for _ in range(args.warmup):
         cpu_index.knn_query(queries[:1], k=args.top_k)
-    hnswlib_search_started = perf_counter()
-    hnswlib_ids, hnswlib_distances = cpu_index.knn_query(queries, k=args.top_k)
-    hnswlib_search_ms = (perf_counter() - hnswlib_search_started) * 1000.0
+    hnswlib_samples_ms = []
+    for _ in range(args.timing_repeats):
+        hnswlib_search_started = perf_counter()
+        hnswlib_ids, hnswlib_distances = cpu_index.knn_query(queries, k=args.top_k)
+        hnswlib_samples_ms.append((perf_counter() - hnswlib_search_started) * 1000.0)
+    hnswlib_search_ms = float(np.mean(hnswlib_samples_ms))
     exact_ids = exact_neighbors(index_vectors, queries, args.top_k)
 
     npu_ids: list[np.ndarray] = []
     npu_distances: list[np.ndarray] = []
-    npu_timings: list[dict[str, float]] = []
     npu_stats = []
     patch_evidence = None
     build_manifest = None
@@ -168,13 +173,18 @@ def main() -> int:
     npu_cache_diagnostic = None
     npu_submission_wall_ms = None
     npu_static_input_upload_ms = None
+    npu_graph_samples_ms = None
+    npu_end_to_end_samples_ms = None
+    npu_wall_samples_ms = None
     if not args.cpu_only:
         cache_dir = Path(args.cache_dir) if args.cache_dir else output_dir / "program-cache"
+        batch_capacity = max(4, ((args.batch_size + 3) // 4) * 4)
         with NpuHnsw(
             index,
             movi_dll_dir=args.movi_dll_dir,
             native_dir=args.native_dir,
             cache_dir=cache_dir,
+            batch_capacity=batch_capacity,
         ) as backend:
             npu_build_ms = backend.build_ms
             npu_cache_load_ms = backend.cache_load_ms
@@ -193,20 +203,38 @@ def main() -> int:
                     ef_search=args.ef_search,
                     verify=False,
                 )
-            submission_started = perf_counter()
-            for start in range(0, len(queries), args.batch_size):
-                batch = backend.search_many(
-                    queries[start : start + args.batch_size],
-                    k=args.top_k,
-                    ef_search=args.ef_search,
-                    verify=False,
+            npu_graph_samples_ms = []
+            npu_end_to_end_samples_ms = []
+            npu_wall_samples_ms = []
+            for repeat in range(args.timing_repeats):
+                submission_started = perf_counter()
+                repeat_timings = []
+                for start in range(0, len(queries), args.batch_size):
+                    batch = backend.search_many(
+                        queries[start : start + args.batch_size],
+                        k=args.top_k,
+                        ef_search=args.ef_search,
+                        verify=False,
+                    )
+                    repeat_timings.append(batch.timings)
+                    if repeat == 0:
+                        for result in batch.results:
+                            npu_ids.append(result.ids)
+                            npu_distances.append(result.distances)
+                            npu_stats.append(result.stats)
+                npu_wall_samples_ms.append((perf_counter() - submission_started) * 1000.0)
+                npu_graph_samples_ms.append(sum(item["graphinfer_wall_ms"] for item in repeat_timings))
+                npu_end_to_end_samples_ms.append(
+                    sum(
+                        item["pack_ms"]
+                        + item["upload_ms"]
+                        + item["graphinfer_wall_ms"]
+                        + item["download_ms"]
+                        + item["unpack_ms"]
+                        for item in repeat_timings
+                    )
                 )
-                npu_timings.append(batch.timings)
-                for result in batch.results:
-                    npu_ids.append(result.ids)
-                    npu_distances.append(result.distances)
-                    npu_stats.append(result.stats)
-            npu_submission_wall_ms = (perf_counter() - submission_started) * 1000.0
+            npu_submission_wall_ms = float(np.mean(npu_wall_samples_ms))
         npu_ids_array = np.stack(npu_ids)
         if not np.array_equal(npu_ids_array, host_ids_array):
             raise RuntimeError("NPU and host HNSW neighbor IDs differ")
@@ -218,7 +246,7 @@ def main() -> int:
 
     index_bytes = index_path.read_bytes()
     report = {
-        "schema": "npunlock.contrib.hnsw.v2",
+        "schema": "npunlock.contrib.hnsw.v3",
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -259,44 +287,40 @@ def main() -> int:
             "total_upper_layer_hops": int(sum(stats.upper_hops for stats in host_stats)),
             "queries_terminated_by_bound": int(sum(stats.terminated_by_bound for stats in host_stats)),
             "timing_warmup_submissions": args.warmup,
+            "timing_repeats": args.timing_repeats,
             "queries_per_submission": args.batch_size,
-            "npu_submission_count": None if args.cpu_only else len(npu_timings),
+            "carrier_query_capacity": None if args.cpu_only else batch_capacity,
+            "npu_submissions_per_repeat": (
+                None if args.cpu_only else (args.query_count + args.batch_size - 1) // args.batch_size
+            ),
         },
         "timings_ms": {
             "host_index_build": host_build_ms,
             "host_hnsw_all_queries": host_search_ms,
             "hnswlib_index_build": hnswlib_build_ms,
             "hnswlib_all_queries": hnswlib_search_ms,
+            "hnswlib_all_queries_median": float(np.median(hnswlib_samples_ms)),
+            "hnswlib_all_queries_p95": float(np.percentile(hnswlib_samples_ms, 95)),
             "npu_program_build": npu_build_ms,
             "npu_program_cache_load": npu_cache_load_ms,
             "npu_static_input_upload": npu_static_input_upload_ms,
             "npu_submission_loop_wall": npu_submission_wall_ms,
-            "npu_graphinfer_all_queries": (
-                None if args.cpu_only else sum(item["graphinfer_wall_ms"] for item in npu_timings)
-            ),
-            "npu_end_to_end_all_queries": (
-                None
-                if args.cpu_only
-                else sum(
-                    item["pack_ms"]
-                    + item["upload_ms"]
-                    + item["graphinfer_wall_ms"]
-                    + item["download_ms"]
-                    + item["unpack_ms"]
-                    for item in npu_timings
-                )
-            ),
+            "npu_submission_loop_wall_median": (None if args.cpu_only else float(np.median(npu_wall_samples_ms))),
+            "npu_submission_loop_wall_p95": (None if args.cpu_only else float(np.percentile(npu_wall_samples_ms, 95))),
+            "npu_graphinfer_all_queries": (None if args.cpu_only else float(np.mean(npu_graph_samples_ms))),
+            "npu_end_to_end_all_queries": (None if args.cpu_only else float(np.mean(npu_end_to_end_samples_ms))),
             "npu_graphinfer_per_query_amortized": (
-                None if args.cpu_only else sum(item["graphinfer_wall_ms"] for item in npu_timings) / args.query_count
+                None if args.cpu_only else float(np.mean(npu_graph_samples_ms)) / args.query_count
             ),
-            "npu_graphinfer_per_submission_median": (
-                None if args.cpu_only else float(np.median([item["graphinfer_wall_ms"] for item in npu_timings]))
+            "npu_graphinfer_all_queries_median": (None if args.cpu_only else float(np.median(npu_graph_samples_ms))),
+            "npu_graphinfer_all_queries_p95": (
+                None if args.cpu_only else float(np.percentile(npu_graph_samples_ms, 95))
             ),
-            "npu_graphinfer_per_submission_min": (
-                None if args.cpu_only else min(item["graphinfer_wall_ms"] for item in npu_timings)
+            "npu_end_to_end_all_queries_median": (
+                None if args.cpu_only else float(np.median(npu_end_to_end_samples_ms))
             ),
-            "npu_graphinfer_per_submission_max": (
-                None if args.cpu_only else max(item["graphinfer_wall_ms"] for item in npu_timings)
+            "npu_end_to_end_all_queries_p95": (
+                None if args.cpu_only else float(np.percentile(npu_end_to_end_samples_ms, 95))
             ),
         },
         "kernel": {
@@ -352,6 +376,15 @@ def main() -> int:
         print(
             f"NPU matched all {args.query_count} host traversals; "
             f"upper-layer hops={report['search']['total_upper_layer_hops']}"
+        )
+        npu_graph_ms = report["timings_ms"]["npu_graphinfer_all_queries"]
+        npu_api_ms = report["timings_ms"]["npu_submission_loop_wall"]
+        cpu_ms = report["timings_ms"]["hnswlib_all_queries"]
+        print(
+            f"steady-state mean: NPU graph={npu_graph_ms:.3f} ms "
+            f"({args.query_count * 1000.0 / npu_graph_ms:.0f} query/s), "
+            f"NPU API={npu_api_ms:.3f} ms ({args.query_count * 1000.0 / npu_api_ms:.0f} query/s), "
+            f"hnswlib={cpu_ms:.3f} ms ({args.query_count * 1000.0 / cpu_ms:.0f} query/s)"
         )
     return 0
 

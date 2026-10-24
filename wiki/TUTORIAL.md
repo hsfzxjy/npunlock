@@ -700,10 +700,13 @@ different graph structure, not that the C expression itself is invalid.
   separately uploaded input and is not written to that cache.
 - [HNSW contribution](../contrib/hnsw/README.md) runs hierarchical greedy
   descent and dynamic best-first base-layer traversal entirely inside an
-  ACT-SHAVE kernel. It uses the four validated 1,024-element carrier
-  invocations for up to four independent queries per submission while
-  duplicating the bounded 48-node index into each invocation-local span; it
-  does not assume graph-global reads or cross-invocation communication. Its
+  ACT-SHAVE kernel. Its throughput carrier uses four execution-tested
+  6,144-element FP32 invocation spans, subdivides each into six independent
+  1,024-element query/index chunks, and therefore runs up to 24 queries per
+  submission. This exact 24 KiB local span is validated only for the documented
+  FP32 `Subtract` shape on NPU3720/compiler 8.3. The bounded 48-node index is
+  duplicated into every chunk; the implementation does not assume graph-global
+  reads or cross-invocation communication. Its
   persistent program cache validates kernel, runtime, driver/compiler,
   MoviTools, bundle, tensor, and patch provenance before reuse. The real-data
   digits/PCA demo checks node IDs, raw FP32 distances, and traversal counters
