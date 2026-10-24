@@ -25,6 +25,8 @@
 #define HNSW_STATUS_BAD_SEARCH 3u
 #define HNSW_STATUS_INTERNAL_BOUND 4u
 
+typedef float hnsw_float4 __attribute__((ext_vector_type(4)));
+
 static int hnsw_better(float left_distance, unsigned left_node, float right_distance,
                        unsigned right_node) {
   return left_distance < right_distance ||
@@ -36,31 +38,36 @@ static float hnsw_distance(const float *query, const float *vectors, unsigned di
   float total = 0.0f;
   const float *candidate = vectors + node * dimensions;
   unsigned index;
-#define HNSW_ACCUMULATE(INDEX)                                                                     \
-  do {                                                                                             \
-    float delta = query[INDEX] - candidate[INDEX];                                                 \
-    total += delta * delta;                                                                        \
-  } while (0)
   if (dimensions == 16u) {
-    HNSW_ACCUMULATE(0u);
-    HNSW_ACCUMULATE(1u);
-    HNSW_ACCUMULATE(2u);
-    HNSW_ACCUMULATE(3u);
-    HNSW_ACCUMULATE(4u);
-    HNSW_ACCUMULATE(5u);
-    HNSW_ACCUMULATE(6u);
-    HNSW_ACCUMULATE(7u);
-    HNSW_ACCUMULATE(8u);
-    HNSW_ACCUMULATE(9u);
-    HNSW_ACCUMULATE(10u);
-    HNSW_ACCUMULATE(11u);
-    HNSW_ACCUMULATE(12u);
-    HNSW_ACCUMULATE(13u);
-    HNSW_ACCUMULATE(14u);
-    HNSW_ACCUMULATE(15u);
+    /* Vectorize arithmetic but reduce in source order to preserve FP32 results. */
+    const hnsw_float4 *query4 = (const hnsw_float4 *)query;
+    const hnsw_float4 *candidate4 = (const hnsw_float4 *)candidate;
+    hnsw_float4 delta0 = query4[0] - candidate4[0];
+    hnsw_float4 delta1 = query4[1] - candidate4[1];
+    hnsw_float4 delta2 = query4[2] - candidate4[2];
+    hnsw_float4 delta3 = query4[3] - candidate4[3];
+    hnsw_float4 squared0 = delta0 * delta0;
+    hnsw_float4 squared1 = delta1 * delta1;
+    hnsw_float4 squared2 = delta2 * delta2;
+    hnsw_float4 squared3 = delta3 * delta3;
+    total += squared0[0];
+    total += squared0[1];
+    total += squared0[2];
+    total += squared0[3];
+    total += squared1[0];
+    total += squared1[1];
+    total += squared1[2];
+    total += squared1[3];
+    total += squared2[0];
+    total += squared2[1];
+    total += squared2[2];
+    total += squared2[3];
+    total += squared3[0];
+    total += squared3[1];
+    total += squared3[2];
+    total += squared3[3];
     return total;
   }
-#undef HNSW_ACCUMULATE
   for (index = 0u; index < dimensions; ++index) {
     float delta = query[index] - candidate[index];
     total += delta * delta;
