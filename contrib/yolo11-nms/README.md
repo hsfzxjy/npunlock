@@ -58,10 +58,12 @@ On the recorded Core Ultra 5 125H system, OpenVINO 2026.3.1, Intel NPU driver
 - the complete hardware-gated suite passed 15 tests.
 
 The NPU TopK already ranks the candidates, so the ACT kernel reuses that order
-instead of searching all 255 records for every selected box. In a retained
-50-run recheck, the separate NMS workload took 0.43 ms median wall time. Full
-OpenVINO-plus-CPU-NMS, two-workload, and single-graph medians were 14.97,
-14.56, and 13.99 ms. These submission-to-fence results are variable system
+instead of searching all 255 records for every selected box. The separate
+carrier also uses two 2,048-word rows, which the reviewed compiler maps to two
+full-span ACT targets instead of four replicas. In a retained 50-run recheck,
+the separate NMS workload took 0.37 ms median wall time. Full
+OpenVINO-plus-CPU-NMS, two-workload, and single-graph medians were 14.82,
+14.27, and 14.61 ms. These submission-to-fence results are variable system
 measurements, not a general speedup claim or kernel-only timing.
 
 ## Public smoke test

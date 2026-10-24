@@ -30,7 +30,9 @@ class NpuNms:
     ):
         source = Path(kernel_path).read_bytes()
         npu.configure(movi_dll_dir=movi_dll_dir)
-        input_tensor = npu.input("nms_input", shape=(1, NMS_LOGICAL_WORDS), dtype="f16")
+        # Compiler 8.3 maps these two rows to two full 2,048-word ACT targets.
+        # The former flat shape exposed four replicated targets for the same data.
+        input_tensor = npu.input("nms_input", shape=(2, NMS_CHUNK_WORDS), dtype="f16")
         output_tensor = npu.custom(
             input_tensor,
             source=source,
@@ -46,6 +48,11 @@ class NpuNms:
         if len(prepared.groups) != 1:
             raise RuntimeError(f"NMS carrier exposed {len(prepared.groups)} ACT groups, expected one")
         group = prepared.groups[0]
+        if len(group.targets) != 2 or group.element_count != NMS_LOGICAL_WORDS:
+            raise RuntimeError(
+                "NMS carrier partition contract changed: "
+                f"targets={len(group.targets)}, descriptor_elements={group.element_count}"
+            )
         if group.per_invocation_input_element_counts != (NMS_CHUNK_WORDS,):
             raise RuntimeError(
                 "NMS carrier input contract changed: "
@@ -93,7 +100,7 @@ class NpuNms:
             confidence_threshold=confidence_threshold,
             iou_threshold=iou_threshold,
             max_detections=max_detections,
-        )
+        ).reshape(2, NMS_CHUNK_WORDS)
         pack_ms = (perf_counter() - started) * 1000.0
         if shared:
             started = perf_counter()
