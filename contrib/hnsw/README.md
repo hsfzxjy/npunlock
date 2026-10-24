@@ -76,6 +76,8 @@ $env:PYTHONPATH = (Resolve-Path contrib\hnsw)
 - One graph submission accepts up to 24 independent queries.
 - The tested carrier is FP32 and keeps every query/index chunk within one ACT
   invocation; there is no cross-invocation communication.
+- The 16-dimensional fast path uses a fixed four-lane FP32 reduction tree; the
+  host oracle reproduces that order instead of assuming scalar accumulation.
 - Construction stays on the CPU. There are no deletions, filters, cosine or
   inner-product modes, dynamic shapes, or general large-index paging.
 - The carrier and patch contract are specific to NPU3720 and graph compiler

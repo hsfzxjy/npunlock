@@ -712,6 +712,9 @@ different graph structure, not that the C expression itself is invalid.
   digits/PCA demo checks node IDs, raw FP32 distances, and traversal counters
   against a host oracle and compares recall with hnswlib. The backend uploads
   the repeated graph/vector payload once, then updates only per-query slices in
-  shared Level Zero memory for subsequent submissions.
+  shared Level Zero memory for subsequent submissions. Its 16-dimensional
+  fast path and host oracle use the same fixed four-lane FP32 reduction tree;
+  this is a validated narrow arithmetic contract, not reassociation-invariant
+  distance arithmetic.
 
 [Back to documentation index](README.md)

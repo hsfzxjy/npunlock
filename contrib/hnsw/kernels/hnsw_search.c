@@ -50,23 +50,8 @@ static float hnsw_distance(const float *query, const float *vectors, unsigned di
     hnsw_float4 squared1 = delta1 * delta1;
     hnsw_float4 squared2 = delta2 * delta2;
     hnsw_float4 squared3 = delta3 * delta3;
-    total += squared0[0];
-    total += squared0[1];
-    total += squared0[2];
-    total += squared0[3];
-    total += squared1[0];
-    total += squared1[1];
-    total += squared1[2];
-    total += squared1[3];
-    total += squared2[0];
-    total += squared2[1];
-    total += squared2[2];
-    total += squared2[3];
-    total += squared3[0];
-    total += squared3[1];
-    total += squared3[2];
-    total += squared3[3];
-    return total;
+    hnsw_float4 sums = (squared0 + squared1) + (squared2 + squared3);
+    return (sums[0] + sums[1]) + (sums[2] + sums[3]);
   }
   for (index = 0u; index < dimensions; ++index) {
     float delta = query[index] - candidate[index];

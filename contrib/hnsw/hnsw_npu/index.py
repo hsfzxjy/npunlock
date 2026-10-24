@@ -66,6 +66,21 @@ def _distance(a: np.ndarray, b: np.ndarray) -> np.float32:
     return total
 
 
+def _search_distance(a: np.ndarray, b: np.ndarray) -> np.float32:
+    if a.size == 16:
+        delta = np.subtract(a, b, dtype=np.float32)
+        squared = np.multiply(delta, delta, dtype=np.float32)
+        sums = np.add(
+            np.add(squared[0:4], squared[4:8], dtype=np.float32),
+            np.add(squared[8:12], squared[12:16], dtype=np.float32),
+            dtype=np.float32,
+        )
+        return np.float32(
+            np.float32(sums[0] + sums[1]) + np.float32(sums[2] + sums[3])
+        )
+    return _distance(a, b)
+
+
 def _ordered(distance: np.float32, node: int) -> tuple[float, int]:
     return float(distance), node
 
@@ -218,13 +233,13 @@ def search_index(
     distance_count = 1
     upper_hops = 0
     current = index.entry_point
-    current_distance = _distance(vector, index.vectors[current])
+    current_distance = _search_distance(vector, index.vectors[current])
     for layer in range(index.max_level, 0, -1):
         for _ in range(index.vectors.shape[0]):
             best = current
             best_distance = current_distance
             for candidate in index.neighbors[current][layer]:
-                distance = _distance(vector, index.vectors[candidate])
+                distance = _search_distance(vector, index.vectors[candidate])
                 distance_count += 1
                 if _ordered(distance, candidate) < _ordered(best_distance, best):
                     best = candidate
@@ -256,7 +271,7 @@ def search_index(
             if neighbor in visited:
                 continue
             visited.add(neighbor)
-            distance = _distance(vector, index.vectors[neighbor])
+            distance = _search_distance(vector, index.vectors[neighbor])
             distance_count += 1
             worst_distance, worst_node = max(top, key=lambda item: _ordered(item[0], item[1]))
             if len(top) < ef_search or _ordered(distance, neighbor) < _ordered(worst_distance, worst_node):
