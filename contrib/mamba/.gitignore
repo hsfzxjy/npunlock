@@ -1,0 +1,4 @@
+artifacts/
+outputs/
+*.npuprogram
+__pycache__/
