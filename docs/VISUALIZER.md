@@ -40,6 +40,30 @@ session.close()
 internet request, edit endpoint, or JavaScript toolchain requirement at
 runtime.
 
+## Command line
+
+The installed package exposes identical module and executable entry points:
+
+```powershell
+python -m npunlock.viz graph.blob
+npunlock-viz graph.blob
+```
+
+Pass a standalone SHAVE ELF second to add its structure and any exact
+executable-byte relationship to the same workspace:
+
+```powershell
+python -m npunlock.viz graph.blob kernel.elf
+npunlock-viz graph.blob kernel.elf
+```
+
+The first path is the primary artifact and the optional second path is the
+standalone kernel. Inputs are validated by ELF contents, not filename
+extensions. Both forms open the default browser, print the loopback URL, and
+block until Ctrl+C. `--no-browser` leaves opening the printed URL to the user;
+`--port` selects a stable loopback port, and `--title` overrides the workspace
+title. Use `--help` for the complete contract.
+
 ## Model
 
 The serialization envelope is `npunlock.artifact-graph`, version 1.

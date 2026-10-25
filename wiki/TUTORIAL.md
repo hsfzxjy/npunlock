@@ -614,6 +614,20 @@ A later process can use `npu.CompiledKernel("affine.elf")`. If every custom
 node uses a compiled ELF, patching no longer needs MoviTools, though graph
 compilation still uses the Intel driver.
 
+Inspect the standalone ELF by itself, or save the final native graph and open
+both artifacts in one read-only semantic hex workspace:
+
+```powershell
+python -m npunlock.viz affine.elf
+
+# After program.save("affine.blob") in Python:
+npunlock-viz affine.blob affine.elf
+```
+
+Both commands accept the same `--title`, `--port`, and `--no-browser` options,
+print their loopback URL, and run until Ctrl+C. The visualizer is offline and
+does not access the NPU or MoviTools.
+
 Export the final executable program when deployment should need neither C
 source nor MoviTools:
 

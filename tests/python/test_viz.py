@@ -11,7 +11,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import redirect_stderr, redirect_stdout
 from importlib.resources import files
+from io import StringIO
 from pathlib import Path
 
 
@@ -20,6 +22,7 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from npunlock.viz import Address, ArtifactGraph, Category, Field, Span, build_npunlock_graph, show  # noqa: E402
 from npunlock.viz._schema import decode_record_fields, load_schema, validate_schema  # noqa: E402
+from npunlock.viz.cli import main as viz_main  # noqa: E402
 
 
 def expect_error(error_type: type[BaseException], function, *args, **kwargs) -> None:
@@ -184,6 +187,125 @@ def test_windows_ctrl_c_stops_blocking_viewer() -> None:
     try:
         assert process.stdout is not None
         assert process.stdout.readline().strip() == "READY"
+        time.sleep(0.3)
+        os.kill(process.pid, signal.CTRL_C_EVENT)
+        assert process.wait(timeout=5) == 0
+        assert process.stderr is not None
+        assert "Traceback" not in process.stderr.read()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_cli_entry_points() -> None:
+    primary = ROOT / "tests/fixtures/npu3720/add1-shared-1x16.blob"
+    kernel = ROOT / "tests/fixtures/npu3720/add1-fp16.elf"
+
+    class FakeSession:
+        url = "http://127.0.0.1:1234/token/"
+
+        def __init__(self) -> None:
+            self.waited = False
+            self.closed = False
+
+        def wait(self) -> None:
+            self.waited = True
+
+        def close(self) -> None:
+            self.closed = True
+
+    calls: list[tuple[ArtifactGraph, dict[str, object], FakeSession]] = []
+
+    def fake_show(graph: ArtifactGraph, **options: object) -> FakeSession:
+        session = FakeSession()
+        calls.append((graph, options, session))
+        return session
+
+    output = StringIO()
+    with redirect_stdout(output):
+        assert viz_main([str(primary), str(kernel), "--no-browser", "--port", "1234"], _show=fake_show) == 0
+    graph, options, session = calls.pop()
+    assert output.getvalue().strip() == session.url
+    assert graph.title == f"{primary.name} · {kernel.name}"
+    assert [(artifact.id, artifact.name) for artifact in graph.artifacts.values()] == [
+        ("native", primary.name),
+        ("kernel", kernel.name),
+    ]
+    assert options == {"block": False, "open_browser": False, "port": 1234}
+    assert session.waited and session.closed
+
+    with redirect_stdout(StringIO()):
+        assert viz_main([str(kernel), "--title", "Standalone kernel"], _show=fake_show) == 0
+    graph, options, session = calls.pop()
+    assert graph.title == "Standalone kernel"
+    assert graph.artifacts["native"].name == kernel.name
+    assert options["open_browser"] is True
+    assert session.waited and session.closed
+
+    help_result = subprocess.run(
+        [sys.executable, "-m", "npunlock.viz", "--help"],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT / "python")},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert help_result.returncode == 0
+    assert "usage: npunlock-viz" in help_result.stdout
+    assert "--no-browser" in help_result.stdout
+    assert help_result.stderr == ""
+
+    error_output = StringIO()
+    try:
+        with redirect_stderr(error_output):
+            viz_main([str(kernel), str(kernel), str(kernel)], _show=fake_show)
+    except SystemExit as error:
+        assert error.code == 2
+    else:
+        raise AssertionError("CLI accepted more than two ELF inputs")
+    assert "at most one standalone SHAVE kernel ELF" in error_output.getvalue()
+    assert not calls
+
+    error_output = StringIO()
+    try:
+        with redirect_stderr(error_output):
+            viz_main([str(ROOT / "README.md")], _show=fake_show)
+    except SystemExit as error:
+        assert error.code == 2
+    else:
+        raise AssertionError("CLI accepted a non-ELF input")
+    assert "not a little-endian ELF file" in error_output.getvalue()
+    assert not calls
+
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'npunlock-viz = "npunlock.viz.cli:main"' in project
+
+
+def test_windows_ctrl_c_stops_cli() -> None:
+    if sys.platform != "win32":
+        return
+    fixture = ROOT / "tests/fixtures/npu3720/add1-fp16.elf"
+    code = (
+        "import ctypes, runpy, sys; "
+        "ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False); "
+        f"sys.path.insert(0, {str(ROOT / 'python')!r}); "
+        f"sys.argv = ['npunlock-viz', {str(fixture)!r}, '--no-browser']; "
+        "runpy.run_module('npunlock.viz', run_name='__main__')"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().startswith("http://127.0.0.1:")
         time.sleep(0.3)
         os.kill(process.pid, signal.CTRL_C_EVENT)
         assert process.wait(timeout=5) == 0
@@ -399,6 +521,8 @@ def main() -> None:
     test_model_and_serialization()
     test_server_ranges_and_lifecycle()
     test_windows_ctrl_c_stops_blocking_viewer()
+    test_cli_entry_points()
+    test_windows_ctrl_c_stops_cli()
     test_npunlock_fixture_annotations()
     test_bundled_semantic_schemas()
     test_dense_model()
