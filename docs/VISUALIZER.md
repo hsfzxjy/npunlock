@@ -60,7 +60,10 @@ The serialization envelope is `npunlock.artifact-graph`, version 1.
   exact spans explicitly show that their size is unknown. Descriptor-backed
   fields use properties to carry evidence confidence and the scope in which a
   meaning was established; the inspector shows those qualifications beside
-  the explanation.
+  the explanation. A field or node may also set `relevance` to `relevant`,
+  `context`, or `irrelevant`. Marking something irrelevant is an affirmative
+  semantic claim and must not be inferred merely because its meaning is
+  unknown.
 - `contain(parent, child)` defines the single-parent hierarchy. `link(source,
   target, kind)` adds arbitrary typed relationships independently of that
   hierarchy. Links may cross artifacts.
@@ -78,6 +81,15 @@ before serving.
 
 Categories use one restrained color each and are configurable by passing
 `Category` values to `ArtifactGraph`.
+
+The `dim irrelevant` toolbar option reduces the saturation of bytes, field
+marks, and region marks explicitly carrying `relevance: "irrelevant"`. It is
+enabled by default and never changes selection coloring or hides bytes. The
+toggle, structure/inspector visibility, and user-adjusted panel widths are
+stored in `localStorage`; malformed or unavailable storage falls back safely
+to defaults. Browser storage is scoped by origin, including the port, so use a
+stable explicit `show(graph, port=...)` value when preferences should carry
+between separate viewer processes. Random-port sessions remain isolated.
 
 ## Format descriptors
 
@@ -153,6 +165,9 @@ byte tooltip. Wording leaves undecoded carrier-specific fields qualified rather
 than guessing. The ELF root spans the complete artifact and states the parsed
 class, byte order, object type, machine, section count, and file size, so the
 file-level interpretation remains reachable from any byte.
+Reserved ELF identification padding is explicitly marked as confirmed
+irrelevant because the standard assigns it no supported meaning. Raw or
+unexplained carrier fields are not dimmed: uncertainty is not irrelevance.
 
 The optional `target_groups=` argument accepts the existing
 `NativeLibraries.discover_patch_targets()` or `discover_patch_targets_v2()`

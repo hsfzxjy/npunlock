@@ -54,7 +54,7 @@
         { "id": "ident_version", "offset": 6, "size": 1, "encoding": "u8", "description": "ELF identification version.", "confidence": "confirmed" },
         { "id": "os_abi", "offset": 7, "size": 1, "encoding": "u8", "description": "ELF operating-system ABI identifier.", "confidence": "confirmed" },
         { "id": "abi_version", "offset": 8, "size": 1, "encoding": "u8", "description": "Version of the selected operating-system ABI.", "confidence": "confirmed" },
-        { "id": "ident_padding", "offset": 9, "size": 7, "encoding": "bytes-hex", "description": "Reserved ELF identification bytes.", "confidence": "confirmed" },
+        { "id": "ident_padding", "offset": 9, "size": 7, "encoding": "bytes-hex", "description": "Reserved ELF identification bytes. They carry no meaning for the supported interpretation.", "confidence": "confirmed", "relevance": "irrelevant" },
         {
           "id": "type",
           "offset": 16,
@@ -131,7 +131,7 @@
         { "id": "ident_version", "offset": 6, "size": 1, "encoding": "u8", "description": "ELF identification version.", "confidence": "confirmed" },
         { "id": "os_abi", "offset": 7, "size": 1, "encoding": "u8", "description": "ELF operating-system ABI identifier.", "confidence": "confirmed" },
         { "id": "abi_version", "offset": 8, "size": 1, "encoding": "u8", "description": "Version of the selected operating-system ABI.", "confidence": "confirmed" },
-        { "id": "ident_padding", "offset": 9, "size": 7, "encoding": "bytes-hex", "description": "Reserved ELF identification bytes.", "confidence": "confirmed" },
+        { "id": "ident_padding", "offset": 9, "size": 7, "encoding": "bytes-hex", "description": "Reserved ELF identification bytes. They carry no meaning for the supported interpretation.", "confidence": "confirmed", "relevance": "irrelevant" },
         {
           "id": "type",
           "offset": 16,

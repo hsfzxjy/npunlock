@@ -45,7 +45,7 @@ def test_model_and_serialization() -> None:
                 32,
                 [Span(first, 4, 8)],
                 description="Encoded record size in bytes.",
-                properties={"confidence": "confirmed", "scope": "test fixture"},
+                properties={"confidence": "confirmed", "scope": "test fixture", "relevance": "context"},
             )
         },
     )
@@ -78,6 +78,7 @@ def test_model_and_serialization() -> None:
     assert graph.to_dict()["nodes"][0]["fields"]["size"]["properties"] == {
         "confidence": "confirmed",
         "scope": "test fixture",
+        "relevance": "context",
     }
 
     portable = graph.dumps(include_data=True)
@@ -299,6 +300,7 @@ def test_bundled_semantic_schemas() -> None:
     assert fields["entry"].spans[0].size == 4
     assert fields["entry"].display == hex(fields["entry"].value)
     assert fields["entry"].properties["confidence"] == "confirmed"
+    assert fields["ident_padding"].properties["relevance"] == "irrelevant"
 
     truncated = ArtifactGraph("Truncated")
     tiny = truncated.artifact("tiny", data=b"\x00" * 8)
@@ -311,6 +313,10 @@ def test_bundled_semantic_schemas() -> None:
     outside_record = json.loads(json.dumps(elf_schema))
     outside_record["records"]["elf32_header"]["fields"][0]["offset"] = 52
     expect_error(ValueError, validate_schema, outside_record)
+
+    unknown_relevance = json.loads(json.dumps(elf_schema))
+    unknown_relevance["records"]["elf32_header"]["fields"][0]["relevance"] = "probably-unused"
+    expect_error(ValueError, validate_schema, unknown_relevance)
 
 
 def test_dense_model() -> None:
@@ -347,12 +353,15 @@ def test_bundled_frontend() -> None:
     assert "field-highlight" in javascript
     assert "artifact-knowledge" in javascript
     assert "field-evidence" in javascript
+    assert "npunlock.viz.options.v1" in javascript
+    assert "dimIrrelevant: true" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
     index = static.joinpath("index.html").read_text(encoding="utf-8")
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index
+    assert 'id="toggle-dim-irrelevant"' in index
     schemas = files("npunlock.viz").joinpath("schemas")
     for name in ("descriptor.schema.json", "elf.json", "npu3720-act-compiler-8.3.json"):
         assert schemas.joinpath(name).read_bytes()

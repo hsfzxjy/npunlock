@@ -41,12 +41,27 @@ interface ArtifactKnowledge {
   mappedBytes: number;
   decodedFieldBytes: number;
 }
+interface ViewerOptions {
+  dimIrrelevant: boolean;
+  treeVisible: boolean;
+  inspectorVisible: boolean;
+  treeWidth: number | null;
+  inspectorWidth: number | null;
+}
 
 const ROW_BYTES = 16;
 const ROW_HEIGHT = 21;
 const PAGE_BYTES = 16 * 1024;
 const MAX_SCROLL_HEIGHT = 16_000_000;
 const OVERSCAN = 8;
+const OPTIONS_KEY = "npunlock.viz.options.v1";
+const DEFAULT_OPTIONS: ViewerOptions = {
+  dimIrrelevant: true,
+  treeVisible: true,
+  inspectorVisible: true,
+  treeWidth: null,
+  inspectorWidth: null,
+};
 
 function required<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -111,6 +126,7 @@ function unionLength(spans: SpanData[], size: number): number {
 function evidenceText(field: FieldData): string | undefined {
   const confidence = field.properties?.confidence;
   const scope = field.properties?.scope;
+  const relevance = field.properties?.relevance;
   const labels: Record<string, string> = {
     confirmed: "confirmed",
     "strong-inference": "strong inference",
@@ -119,8 +135,34 @@ function evidenceText(field: FieldData): string | undefined {
   };
   const parts: string[] = [];
   if (typeof confidence === "string") parts.push(labels[confidence] ?? confidence);
+  if (relevance === "irrelevant") parts.push("irrelevant to supported interpretation");
+  else if (relevance === "context") parts.push("context only");
   if (typeof scope === "string") parts.push(scope);
   return parts.length ? parts.join(" · ") : undefined;
+}
+
+function loadOptions(): ViewerOptions {
+  try {
+    const value = JSON.parse(localStorage.getItem(OPTIONS_KEY) ?? "null") as Partial<ViewerOptions> | null;
+    if (!value || typeof value !== "object") return { ...DEFAULT_OPTIONS };
+    return {
+      dimIrrelevant: typeof value.dimIrrelevant === "boolean" ? value.dimIrrelevant : true,
+      treeVisible: typeof value.treeVisible === "boolean" ? value.treeVisible : true,
+      inspectorVisible: typeof value.inspectorVisible === "boolean" ? value.inspectorVisible : true,
+      treeWidth: typeof value.treeWidth === "number" && Number.isFinite(value.treeWidth) ? value.treeWidth : null,
+      inspectorWidth: typeof value.inspectorWidth === "number" && Number.isFinite(value.inspectorWidth) ? value.inspectorWidth : null,
+    };
+  } catch {
+    return { ...DEFAULT_OPTIONS };
+  }
+}
+
+function saveOptions(value: ViewerOptions): void {
+  try {
+    localStorage.setItem(OPTIONS_KEY, JSON.stringify(value));
+  } catch {
+    // The viewer remains usable when browser policy disables local storage.
+  }
 }
 
 class ByteCache {
@@ -191,6 +233,7 @@ class Viewer {
   private hoveredNode?: string;
   private treeFocusId?: string;
   private renderToken = 0;
+  private options = loadOptions();
 
   constructor(private graph: GraphData) {
     for (const artifact of graph.artifacts) {
@@ -228,6 +271,7 @@ class Viewer {
     const first = graph.artifacts[0];
     if (!first) throw new Error("artifact graph contains no artifacts");
     this.current = { artifactId: first.id, offset: 0, end: Math.min(1, first.size) };
+    this.applyOptions();
     this.bind();
     this.renderTabs();
     this.renderTree();
@@ -287,19 +331,43 @@ class Viewer {
     required<HTMLButtonElement>("forward").addEventListener("click", () => this.moveHistory(1));
     required<HTMLButtonElement>("toggle-tree").addEventListener("click", event => this.togglePanel("tree", event));
     required<HTMLButtonElement>("toggle-inspector").addEventListener("click", event => this.togglePanel("inspector", event));
-    this.bindSplitter(required<HTMLElement>("left-splitter"), "--tree-width", true, 150, 520);
-    this.bindSplitter(required<HTMLElement>("right-splitter"), "--inspector-width", false, 210, 620);
+    required<HTMLButtonElement>("toggle-dim-irrelevant").addEventListener("click", () => this.toggleDimIrrelevant());
+    this.bindSplitter(required<HTMLElement>("left-splitter"), "--tree-width", "treeWidth", true, 150, 520);
+    this.bindSplitter(required<HTMLElement>("right-splitter"), "--inspector-width", "inspectorWidth", false, 210, 620);
     window.addEventListener("keydown", event => {
       if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); this.moveHistory(-1); }
       if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); this.moveHistory(1); }
     });
   }
 
-  private bindSplitter(splitter: HTMLElement, variable: string, fromLeft: boolean, minimum: number, maximum: number): void {
-    const setValue = (value: number) => {
+  private applyOptions(): void {
+    this.workspace.classList.toggle("tree-hidden", !this.options.treeVisible);
+    this.workspace.classList.toggle("inspector-hidden", !this.options.inspectorVisible);
+    required<HTMLButtonElement>("toggle-tree").setAttribute("aria-pressed", String(this.options.treeVisible));
+    required<HTMLButtonElement>("toggle-inspector").setAttribute("aria-pressed", String(this.options.inspectorVisible));
+    required<HTMLButtonElement>("toggle-dim-irrelevant").setAttribute("aria-pressed", String(this.options.dimIrrelevant));
+    if (this.options.treeWidth !== null) {
+      document.documentElement.style.setProperty("--tree-width", `${Math.max(150, Math.min(520, this.options.treeWidth))}px`);
+    }
+    if (this.options.inspectorWidth !== null) {
+      document.documentElement.style.setProperty("--inspector-width", `${Math.max(210, Math.min(620, this.options.inspectorWidth))}px`);
+    }
+  }
+
+  private bindSplitter(
+    splitter: HTMLElement,
+    variable: string,
+    option: "treeWidth" | "inspectorWidth",
+    fromLeft: boolean,
+    minimum: number,
+    maximum: number,
+  ): void {
+    const setValue = (value: number, persist = true) => {
       const bounded = Math.max(minimum, Math.min(maximum, value));
       document.documentElement.style.setProperty(variable, `${bounded}px`);
       splitter.setAttribute("aria-valuenow", String(Math.round(bounded)));
+      this.options[option] = bounded;
+      if (persist) saveOptions(this.options);
       this.renderHex();
     };
     const currentValue = () => {
@@ -318,11 +386,12 @@ class Viewer {
       if (!splitter.hasPointerCapture(event.pointerId)) return;
       const bounds = this.workspace.getBoundingClientRect();
       const value = fromLeft ? event.clientX - bounds.left : bounds.right - event.clientX;
-      setValue(value);
+      setValue(value, false);
     });
     const finish = (event: PointerEvent) => {
       if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
       splitter.classList.remove("dragging");
+      saveOptions(this.options);
     };
     splitter.addEventListener("pointerup", finish);
     splitter.addEventListener("pointercancel", finish);
@@ -343,6 +412,19 @@ class Viewer {
     const className = `${panel}-hidden`;
     const hidden = this.workspace.classList.toggle(className);
     button.setAttribute("aria-pressed", String(!hidden));
+    if (panel === "tree") this.options.treeVisible = !hidden;
+    else this.options.inspectorVisible = !hidden;
+    saveOptions(this.options);
+    this.renderHex();
+  }
+
+  private toggleDimIrrelevant(): void {
+    this.options.dimIrrelevant = !this.options.dimIrrelevant;
+    required<HTMLButtonElement>("toggle-dim-irrelevant")
+      .setAttribute("aria-pressed", String(this.options.dimIrrelevant));
+    saveOptions(this.options);
+    this.renderTree();
+    this.renderInspector();
     this.renderHex();
   }
 
@@ -390,6 +472,7 @@ class Viewer {
     const appendNode = (node: NodeData, depth: number) => {
       const row = document.createElement("div");
       row.className = `tree-row${this.current.nodeId === node.id ? " selected" : ""}`;
+      if (this.options.dimIrrelevant && this.isIrrelevant(node)) row.classList.add("irrelevant");
       row.role = "treeitem";
       row.dataset.nodeId = node.id;
       row.tabIndex = (this.treeFocusId ?? this.current.nodeId ?? this.roots[0]?.id) === node.id ? 0 : -1;
@@ -411,7 +494,7 @@ class Viewer {
       });
       const mark = document.createElement("span");
       mark.className = "tree-mark";
-      mark.style.background = this.categoryColor(node.category);
+      mark.style.background = this.displayColor(this.categoryColor(node.category), this.isIrrelevant(node));
       const label = document.createElement("span");
       label.className = "tree-label";
       label.textContent = node.label;
@@ -633,9 +716,13 @@ class Viewer {
       : undefined;
     if (primary) {
       cell.classList.add("annotated");
-      const semanticColor = selectedField?.fieldName
+      const semanticSpan = selectedField ?? primary;
+      const baseColor = selectedField?.fieldName
         ? this.fieldColor(selectedField.node, selectedField.fieldName)
         : this.categoryColor(primary.node.category);
+      const irrelevant = this.isIrrelevant(semanticSpan.node, semanticSpan.fieldName);
+      const semanticColor = this.displayColor(baseColor, irrelevant);
+      if (this.options.dimIrrelevant && irrelevant) cell.classList.add("irrelevant");
       cell.style.setProperty("--semantic-color", semanticColor);
       if (selectedField) cell.classList.add("field-highlight");
       if (this.hoveredNode && annotations.some(span => span.node.id === this.hoveredNode)) cell.classList.add("hovered");
@@ -675,6 +762,16 @@ class Viewer {
     const index = Math.max(0, Object.keys(node.fields).indexOf(fieldName));
     const hue = Math.round((index * 137.508 + 8) % 360);
     return `hsl(${hue} 48% 42%)`;
+  }
+
+  private isIrrelevant(node: NodeData, fieldName?: string): boolean {
+    if (fieldName && node.fields[fieldName]?.properties?.relevance === "irrelevant") return true;
+    return node.properties.relevance === "irrelevant";
+  }
+
+  private displayColor(color: string, irrelevant: boolean): string {
+    if (!this.options.dimIrrelevant || !irrelevant) return color;
+    return `color-mix(in srgb, ${color} 24%, var(--text-faint))`;
   }
 
   private covering(artifactId: string, offset: number): NodeData[] {
@@ -721,10 +818,12 @@ class Viewer {
             element.title = "Navigate to field bytes";
             element.addEventListener("click", () => this.navigateSpan(spans[0]!, node.id));
           }
+          const irrelevant = this.isIrrelevant(node, name);
           element.className = `field-row${spans.length ? " jump" : ""}`;
+          if (this.options.dimIrrelevant && irrelevant) element.classList.add("irrelevant");
           const mark = document.createElement("span");
           mark.className = "field-mark";
-          mark.style.background = this.fieldColor(node, name);
+          mark.style.background = this.displayColor(this.fieldColor(node, name), irrelevant);
           const label = document.createElement("span");
           label.className = "field-name";
           label.textContent = name;
@@ -747,6 +846,7 @@ class Viewer {
             const evidenceElement = document.createElement("span");
             evidenceElement.className = "field-evidence";
             evidenceElement.textContent = evidence;
+            evidenceElement.title = "Confirmed meanings come from a standard or validated contract. Inferences are qualified by their evidence. Irrelevant means the bytes are understood but carry no meaning for the supported interpretation.";
             element.append(evidenceElement);
           }
           section.append(element);

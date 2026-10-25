@@ -50,7 +50,8 @@
                 "confidence": {
                   "enum": ["confirmed", "strong-inference", "execution-tested-inference", "raw"]
                 },
-                "scope": { "type": "string", "minLength": 1 }
+                "scope": { "type": "string", "minLength": 1 },
+                "relevance": { "enum": ["relevant", "context", "irrelevant"] }
               }
             }
           }

@@ -24,6 +24,7 @@ _ENCODING_SIZES = {
 _VARIABLE_SIZE_ENCODINGS = {"bytes-hex"}
 _DISPLAYS = {None, "hex", "hex-nonnegative"}
 _CONFIDENCE = {"confirmed", "strong-inference", "execution-tested-inference", "raw"}
+_RELEVANCE = {"relevant", "context", "irrelevant"}
 _ROOT_KEYS = {"format", "version", "id", "nodes", "records", "lookups", "rules"}
 
 
@@ -83,6 +84,7 @@ def validate_schema(value: Any) -> dict[str, Any]:
                 "value_map",
                 "confidence",
                 "scope",
+                "relevance",
             }
             extra = set(field) - allowed
             if extra:
@@ -93,6 +95,9 @@ def validate_schema(value: Any) -> dict[str, Any]:
                 raise ValueError(f"field {record_id}.{field_id} has unsupported confidence {confidence!r}")
             if "scope" in field:
                 _text(field["scope"], f"field {record_id}.{field_id} scope")
+            relevance = field.get("relevance")
+            if relevance is not None and relevance not in _RELEVANCE:
+                raise ValueError(f"field {record_id}.{field_id} has unsupported relevance {relevance!r}")
             computed = field.get("computed", False)
             if not isinstance(computed, bool):
                 raise ValueError(f"field {record_id}.{field_id} computed must be boolean")
@@ -210,7 +215,7 @@ def decode_record_fields(
     result: dict[str, Field] = {}
     for descriptor in record["fields"]:
         field_id = descriptor["id"]
-        properties = {key: descriptor[key] for key in ("confidence", "scope") if key in descriptor}
+        properties = {key: descriptor[key] for key in ("confidence", "scope", "relevance") if key in descriptor}
         if descriptor.get("computed", False):
             if field_id not in computed:
                 raise ValueError(f"computed field {record_id}.{field_id} was not supplied")

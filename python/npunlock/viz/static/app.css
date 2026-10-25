@@ -155,6 +155,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 }
 .tree-expander.empty { visibility: hidden; }
 .tree-mark { width: 7px; height: 7px; margin: 0 7px 0 2px; background: var(--unknown); }
+.tree-row.irrelevant .tree-mark, .field-row.irrelevant .field-mark { opacity: .58; }
 .tree-label { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-kind { margin-left: 7px; color: var(--text-faint); font-size: 11px; }
 
@@ -227,6 +228,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .byte.range-selected:not(.selected) { background: rgba(47, 112, 159, .16); box-shadow: inset 0 1px var(--select-line), inset 0 -1px var(--select-line); }
 .byte.field-highlight { background: color-mix(in srgb, var(--semantic-color) 25%, transparent); border-bottom-color: var(--semantic-color); }
 .byte.field-highlight.range-selected:not(.selected) { background: color-mix(in srgb, var(--semantic-color) 25%, transparent); }
+.byte.irrelevant:not(.selected) { color: var(--text-dim); }
 .byte.empty { color: transparent; pointer-events: none; }
 
 .status {
@@ -306,7 +308,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 
 @media (max-width: 900px) {
   :root { --tree-width: 210px; --inspector-width: 250px; }
-  #toggle-tree, #toggle-inspector { padding-inline: 4px; }
+  #toggle-tree, #toggle-inspector, #toggle-dim-irrelevant { padding-inline: 4px; }
   .toolbar { gap: 0; }
 }
 
