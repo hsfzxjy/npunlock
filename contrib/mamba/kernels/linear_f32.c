@@ -89,6 +89,127 @@ static void linear_dot_pair(const float *left0, const float *left1, const float 
   *total1 = sum1;
 }
 
+static void linear_dot_rows_pair(const float *left, const float *right0, const float *right1,
+                                 unsigned count, float *total0, float *total1) {
+  float sum0 = 0.0f;
+  float sum1 = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)left | (unsigned)right0 | (unsigned)right1) & 15u) == 0u) {
+    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *left4 = (const linear_float4 *)left;
+    const linear_float4 *right04 = (const linear_float4 *)right0;
+    const linear_float4 *right14 = (const linear_float4 *)right1;
+    for (; index + 4u <= count; index += 4u) {
+      linear_float4 value = left4[index / 4u];
+      sums0 += value * right04[index / 4u];
+      sums1 += value * right14[index / 4u];
+    }
+    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
+    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
+  }
+  for (; index < count; ++index) {
+    float value = left[index];
+    sum0 += value * right0[index];
+    sum1 += value * right1[index];
+  }
+  *total0 = sum0;
+  *total1 = sum1;
+}
+
+static void linear_dot_rows_quad(const float *left, const float *right0, const float *right1,
+                                 const float *right2, const float *right3, unsigned count,
+                                 float *total0, float *total1, float *total2, float *total3) {
+  float sum0 = 0.0f;
+  float sum1 = 0.0f;
+  float sum2 = 0.0f;
+  float sum3 = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)left | (unsigned)right0 | (unsigned)right1 | (unsigned)right2 |
+        (unsigned)right3) &
+       15u) == 0u) {
+    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums2 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums3 = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *left4 = (const linear_float4 *)left;
+    const linear_float4 *right04 = (const linear_float4 *)right0;
+    const linear_float4 *right14 = (const linear_float4 *)right1;
+    const linear_float4 *right24 = (const linear_float4 *)right2;
+    const linear_float4 *right34 = (const linear_float4 *)right3;
+    for (; index + 4u <= count; index += 4u) {
+      linear_float4 value = left4[index / 4u];
+      sums0 += value * right04[index / 4u];
+      sums1 += value * right14[index / 4u];
+      sums2 += value * right24[index / 4u];
+      sums3 += value * right34[index / 4u];
+    }
+    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
+    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
+    sum2 = (sums2[0] + sums2[1]) + (sums2[2] + sums2[3]);
+    sum3 = (sums3[0] + sums3[1]) + (sums3[2] + sums3[3]);
+  }
+  for (; index < count; ++index) {
+    float value = left[index];
+    sum0 += value * right0[index];
+    sum1 += value * right1[index];
+    sum2 += value * right2[index];
+    sum3 += value * right3[index];
+  }
+  *total0 = sum0;
+  *total1 = sum1;
+  *total2 = sum2;
+  *total3 = sum3;
+}
+
+static void linear_dot_2x2(const float *left0, const float *left1, const float *right0,
+                           const float *right1, unsigned count, float *total00, float *total10,
+                           float *total01, float *total11) {
+  float sum00 = 0.0f;
+  float sum10 = 0.0f;
+  float sum01 = 0.0f;
+  float sum11 = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)left0 | (unsigned)left1 | (unsigned)right0 | (unsigned)right1) & 15u) == 0u) {
+    linear_float4 sums00 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums10 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums01 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums11 = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *left04 = (const linear_float4 *)left0;
+    const linear_float4 *left14 = (const linear_float4 *)left1;
+    const linear_float4 *right04 = (const linear_float4 *)right0;
+    const linear_float4 *right14 = (const linear_float4 *)right1;
+    for (; index + 4u <= count; index += 4u) {
+      linear_float4 value0 = left04[index / 4u];
+      linear_float4 value1 = left14[index / 4u];
+      linear_float4 weight0 = right04[index / 4u];
+      linear_float4 weight1 = right14[index / 4u];
+      sums00 += value0 * weight0;
+      sums10 += value1 * weight0;
+      sums01 += value0 * weight1;
+      sums11 += value1 * weight1;
+    }
+    sum00 = (sums00[0] + sums00[1]) + (sums00[2] + sums00[3]);
+    sum10 = (sums10[0] + sums10[1]) + (sums10[2] + sums10[3]);
+    sum01 = (sums01[0] + sums01[1]) + (sums01[2] + sums01[3]);
+    sum11 = (sums11[0] + sums11[1]) + (sums11[2] + sums11[3]);
+  }
+  for (; index < count; ++index) {
+    float value0 = left0[index];
+    float value1 = left1[index];
+    float weight0 = right0[index];
+    float weight1 = right1[index];
+    sum00 += value0 * weight0;
+    sum10 += value1 * weight0;
+    sum01 += value0 * weight1;
+    sum11 += value1 * weight1;
+  }
+  *total00 = sum00;
+  *total10 = sum10;
+  *total01 = sum01;
+  *total11 = sum11;
+}
+
 static float linear_rms_dot(const float *values, const float *norm_weights, const float *row,
                             unsigned count, float rms_scale) {
   float total = 0.0f;
@@ -143,6 +264,138 @@ static void linear_rms_dot_pair(const float *values0, const float *values1,
   }
   *total0 = sum0;
   *total1 = sum1;
+}
+
+static void linear_rms_dot_rows_pair(const float *values, const float *norm_weights,
+                                     const float *row0, const float *row1, unsigned count,
+                                     float rms_scale, float *total0, float *total1) {
+  float sum0 = 0.0f;
+  float sum1 = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)values | (unsigned)norm_weights | (unsigned)row0 | (unsigned)row1) & 15u) ==
+      0u) {
+    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *values4 = (const linear_float4 *)values;
+    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
+    const linear_float4 *row04 = (const linear_float4 *)row0;
+    const linear_float4 *row14 = (const linear_float4 *)row1;
+    for (; index + 4u <= count; index += 4u) {
+      linear_float4 value = values4[index / 4u] * (norm_weights4[index / 4u] * rms_scale);
+      sums0 += value * row04[index / 4u];
+      sums1 += value * row14[index / 4u];
+    }
+    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
+    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
+  }
+  for (; index < count; ++index) {
+    float value = values[index] * (norm_weights[index] * rms_scale);
+    sum0 += value * row0[index];
+    sum1 += value * row1[index];
+  }
+  *total0 = sum0;
+  *total1 = sum1;
+}
+
+static void linear_rms_dot_rows_quad(const float *values, const float *norm_weights,
+                                     const float *row0, const float *row1, const float *row2,
+                                     const float *row3, unsigned count, float rms_scale,
+                                     float *total0, float *total1, float *total2, float *total3) {
+  float sum0 = 0.0f;
+  float sum1 = 0.0f;
+  float sum2 = 0.0f;
+  float sum3 = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)values | (unsigned)norm_weights | (unsigned)row0 | (unsigned)row1 |
+        (unsigned)row2 | (unsigned)row3) &
+       15u) == 0u) {
+    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums2 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums3 = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *values4 = (const linear_float4 *)values;
+    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
+    const linear_float4 *row04 = (const linear_float4 *)row0;
+    const linear_float4 *row14 = (const linear_float4 *)row1;
+    const linear_float4 *row24 = (const linear_float4 *)row2;
+    const linear_float4 *row34 = (const linear_float4 *)row3;
+    for (; index + 4u <= count; index += 4u) {
+      linear_float4 value = values4[index / 4u] * (norm_weights4[index / 4u] * rms_scale);
+      sums0 += value * row04[index / 4u];
+      sums1 += value * row14[index / 4u];
+      sums2 += value * row24[index / 4u];
+      sums3 += value * row34[index / 4u];
+    }
+    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
+    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
+    sum2 = (sums2[0] + sums2[1]) + (sums2[2] + sums2[3]);
+    sum3 = (sums3[0] + sums3[1]) + (sums3[2] + sums3[3]);
+  }
+  for (; index < count; ++index) {
+    float value = values[index] * (norm_weights[index] * rms_scale);
+    sum0 += value * row0[index];
+    sum1 += value * row1[index];
+    sum2 += value * row2[index];
+    sum3 += value * row3[index];
+  }
+  *total0 = sum0;
+  *total1 = sum1;
+  *total2 = sum2;
+  *total3 = sum3;
+}
+
+static void linear_rms_dot_2x2(const float *values0, const float *values1,
+                               const float *norm_weights, const float *row0, const float *row1,
+                               unsigned count, float rms_scale0, float rms_scale1, float *total00,
+                               float *total10, float *total01, float *total11) {
+  float sum00 = 0.0f;
+  float sum10 = 0.0f;
+  float sum01 = 0.0f;
+  float sum11 = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)values0 | (unsigned)values1 | (unsigned)norm_weights | (unsigned)row0 |
+        (unsigned)row1) &
+       15u) == 0u) {
+    linear_float4 sums00 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums10 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums01 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums11 = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *values04 = (const linear_float4 *)values0;
+    const linear_float4 *values14 = (const linear_float4 *)values1;
+    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
+    const linear_float4 *row04 = (const linear_float4 *)row0;
+    const linear_float4 *row14 = (const linear_float4 *)row1;
+    for (; index + 4u <= count; index += 4u) {
+      linear_float4 norm_weight = norm_weights4[index / 4u];
+      linear_float4 value0 = values04[index / 4u] * (norm_weight * rms_scale0);
+      linear_float4 value1 = values14[index / 4u] * (norm_weight * rms_scale1);
+      linear_float4 weight0 = row04[index / 4u];
+      linear_float4 weight1 = row14[index / 4u];
+      sums00 += value0 * weight0;
+      sums10 += value1 * weight0;
+      sums01 += value0 * weight1;
+      sums11 += value1 * weight1;
+    }
+    sum00 = (sums00[0] + sums00[1]) + (sums00[2] + sums00[3]);
+    sum10 = (sums10[0] + sums10[1]) + (sums10[2] + sums10[3]);
+    sum01 = (sums01[0] + sums01[1]) + (sums01[2] + sums01[3]);
+    sum11 = (sums11[0] + sums11[1]) + (sums11[2] + sums11[3]);
+  }
+  for (; index < count; ++index) {
+    float norm_weight = norm_weights[index];
+    float value0 = values0[index] * (norm_weight * rms_scale0);
+    float value1 = values1[index] * (norm_weight * rms_scale1);
+    float weight0 = row0[index];
+    float weight1 = row1[index];
+    sum00 += value0 * weight0;
+    sum10 += value1 * weight0;
+    sum01 += value0 * weight1;
+    sum11 += value1 * weight1;
+  }
+  *total00 = sum00;
+  *total10 = sum10;
+  *total01 = sum01;
+  *total11 = sum11;
 }
 
 static float mamba_softplus(float value) {
@@ -363,7 +616,157 @@ void controlled_act(unsigned layerParams) {
       new_state[3u] = state3;
     }
   }
-  for (output_index = 0u; output_index < output_count; ++output_index) {
+  if (sequence_length == 1u) {
+    const float *values =
+        (flags & LINEAR_FLAG_CONVOLUTION) != 0u ? output + LINEAR_CONV_OUTPUT_OFFSET
+                                                : activation + LINEAR_HEADER;
+    for (output_index = 0u; output_index + 3u < output_count; output_index += 4u) {
+      const float *row0 =
+          output_index < weight_input_rows
+              ? weights + LINEAR_HEADER + output_index * input_count
+              : activation + auxiliary_offset + (output_index - weight_input_rows) * input_count;
+      const float *row1 =
+          output_index + 1u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 1u) * input_count
+              : activation + auxiliary_offset + (output_index + 1u - weight_input_rows) * input_count;
+      const float *row2 =
+          output_index + 2u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 2u) * input_count
+              : activation + auxiliary_offset + (output_index + 2u - weight_input_rows) * input_count;
+      const float *row3 =
+          output_index + 3u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 3u) * input_count
+              : activation + auxiliary_offset + (output_index + 3u - weight_input_rows) * input_count;
+      float total0;
+      float total1;
+      float total2;
+      float total3;
+      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
+        linear_rms_dot_rows_quad(values, activation + rms_weight_offset, row0, row1, row2, row3,
+                                 input_count, rms_scales[0u], &total0, &total1, &total2, &total3);
+      } else {
+        linear_dot_rows_quad(values, row0, row1, row2, row3, input_count, &total0, &total1,
+                             &total2, &total3);
+      }
+      if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
+        total0 += activation[residual_offset + output_index];
+        total1 += activation[residual_offset + output_index + 1u];
+        total2 += activation[residual_offset + output_index + 2u];
+        total3 += activation[residual_offset + output_index + 3u];
+      }
+      output[LINEAR_HEADER + output_index] = total0;
+      output[LINEAR_HEADER + output_index + 1u] = total1;
+      output[LINEAR_HEADER + output_index + 2u] = total2;
+      output[LINEAR_HEADER + output_index + 3u] = total3;
+    }
+    for (; output_index + 1u < output_count; output_index += 2u) {
+      const float *row0 =
+          output_index < weight_input_rows
+              ? weights + LINEAR_HEADER + output_index * input_count
+              : activation + auxiliary_offset + (output_index - weight_input_rows) * input_count;
+      const float *row1 =
+          output_index + 1u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 1u) * input_count
+              : activation + auxiliary_offset + (output_index + 1u - weight_input_rows) * input_count;
+      float total0;
+      float total1;
+      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
+        linear_rms_dot_rows_pair(values, activation + rms_weight_offset, row0, row1, input_count,
+                                 rms_scales[0u], &total0, &total1);
+      } else {
+        linear_dot_rows_pair(values, row0, row1, input_count, &total0, &total1);
+      }
+      if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
+        total0 += activation[residual_offset + output_index];
+        total1 += activation[residual_offset + output_index + 1u];
+      }
+      output[LINEAR_HEADER + output_index] = total0;
+      output[LINEAR_HEADER + output_index + 1u] = total1;
+    }
+    if (output_index < output_count) {
+      const float *row =
+          output_index < weight_input_rows
+              ? weights + LINEAR_HEADER + output_index * input_count
+              : activation + auxiliary_offset + (output_index - weight_input_rows) * input_count;
+      float total = (flags & LINEAR_FLAG_RMS_NORM) != 0u
+                        ? linear_rms_dot(values, activation + rms_weight_offset, row, input_count,
+                                         rms_scales[0u])
+                        : linear_dot(values, row, input_count);
+      if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
+        total += activation[residual_offset + output_index];
+      }
+      output[LINEAR_HEADER + output_index] = total;
+    }
+    return;
+  }
+  for (output_index = 0u; output_index + 1u < output_count; output_index += 2u) {
+    const float *row0 =
+        output_index < weight_input_rows
+            ? weights + LINEAR_HEADER + output_index * input_count
+            : activation + auxiliary_offset + (output_index - weight_input_rows) * input_count;
+    const float *row1 =
+        output_index + 1u < weight_input_rows
+            ? weights + LINEAR_HEADER + (output_index + 1u) * input_count
+            : activation + auxiliary_offset + (output_index + 1u - weight_input_rows) * input_count;
+    unsigned time_index;
+    for (time_index = 0u; time_index + 1u < sequence_length; time_index += 2u) {
+      const float *values0 =
+          (flags & LINEAR_FLAG_CONVOLUTION) != 0u
+              ? output + LINEAR_CONV_OUTPUT_OFFSET + time_index * input_count
+              : activation + LINEAR_HEADER + time_index * input_count;
+      const float *values1 =
+          (flags & LINEAR_FLAG_CONVOLUTION) != 0u
+              ? output + LINEAR_CONV_OUTPUT_OFFSET + (time_index + 1u) * input_count
+              : activation + LINEAR_HEADER + (time_index + 1u) * input_count;
+      float total00;
+      float total10;
+      float total01;
+      float total11;
+      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
+        linear_rms_dot_2x2(values0, values1, activation + rms_weight_offset, row0, row1,
+                           input_count, rms_scales[time_index], rms_scales[time_index + 1u],
+                           &total00, &total10, &total01, &total11);
+      } else {
+        linear_dot_2x2(values0, values1, row0, row1, input_count, &total00, &total10, &total01,
+                       &total11);
+      }
+      if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
+        total00 += activation[residual_offset + time_index * output_count + output_index];
+        total10 += activation[residual_offset + (time_index + 1u) * output_count + output_index];
+        total01 += activation[residual_offset + time_index * output_count + output_index + 1u];
+        total11 +=
+            activation[residual_offset + (time_index + 1u) * output_count + output_index + 1u];
+      }
+      output[LINEAR_HEADER + time_index * output_count + output_index] = total00;
+      output[LINEAR_HEADER + (time_index + 1u) * output_count + output_index] = total10;
+      output[LINEAR_HEADER + time_index * output_count + output_index + 1u] = total01;
+      output[LINEAR_HEADER + (time_index + 1u) * output_count + output_index + 1u] = total11;
+    }
+    if (time_index < sequence_length) {
+      const float *values =
+          (flags & LINEAR_FLAG_CONVOLUTION) != 0u
+              ? output + LINEAR_CONV_OUTPUT_OFFSET + time_index * input_count
+              : activation + LINEAR_HEADER + time_index * input_count;
+      float total0;
+      float total1;
+      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
+        linear_rms_dot_rows_pair(values, activation + rms_weight_offset, row0, row1, input_count,
+                                 rms_scales[time_index], &total0, &total1);
+      } else {
+        linear_dot_rows_pair(values, row0, row1, input_count, &total0, &total1);
+      }
+      if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
+        total0 += activation[residual_offset + time_index * output_count + output_index];
+        total1 += activation[residual_offset + time_index * output_count + output_index + 1u];
+      }
+      output[LINEAR_HEADER + time_index * output_count + output_index] = total0;
+      output[LINEAR_HEADER + time_index * output_count + output_index + 1u] = total1;
+    }
+  }
+  if (output_index == output_count) {
+    return;
+  }
+  for (; output_index < output_count; ++output_index) {
     const float *row =
         output_index < weight_input_rows
             ? weights + LINEAR_HEADER + output_index * input_count
