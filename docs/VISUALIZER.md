@@ -95,6 +95,12 @@ storage is scoped by origin, including the port, so use a stable explicit
 `show(graph, port=...)` value when preferences should carry between separate
 viewer processes. Random-port sessions remain isolated.
 
+Selecting a node whose kind is `section` adds a compact bracket rail just to
+the right of the ASCII column. The rail follows every visible row intersected
+by the section and uses start/end caps for each physical span, so a section
+header and a noncontiguous payload remain visibly separate. Byte highlighting
+continues to carry exact within-row boundaries.
+
 ## Format descriptors
 
 Fixed visualization metadata is bundled under `npunlock.viz/schemas/` rather

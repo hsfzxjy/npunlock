@@ -661,6 +661,10 @@ class Viewer {
                 || Number(Boolean(b.fieldName)) - Number(Boolean(a.fieldName))
                 || (this.depths.get(b.node.id) ?? 0) - (this.depths.get(a.node.id) ?? 0));
         }
+        const focusedSection = this.current.nodeId ? this.nodes.get(this.current.nodeId) : undefined;
+        const focusedSpans = focusedSection?.kind === "section"
+            ? focusedSection.spans.filter(span => span.artifact === artifact.id)
+            : [];
         const fragment = document.createDocumentFragment();
         for (let rowIndex = first; rowIndex < last; rowIndex += 1) {
             const row = document.createElement("div");
@@ -681,10 +685,28 @@ class Viewer {
                 hexCells.append(this.byteElement(offset, value, annotations, false));
                 asciiCells.append(this.byteElement(offset, value, annotations, true));
             }
-            row.append(offsetElement, hexCells, asciiCells);
+            row.append(offsetElement, hexCells, asciiCells, this.sectionRangeGuide(rowOffset, focusedSpans));
             fragment.append(row);
         }
         this.hexRows.replaceChildren(fragment);
+    }
+    sectionRangeGuide(rowOffset, spans) {
+        const guide = document.createElement("span");
+        guide.className = "range-guide";
+        guide.setAttribute("aria-hidden", "true");
+        const rowEnd = rowOffset + ROW_BYTES;
+        for (const span of spans) {
+            if (span.start >= rowEnd || span.end <= rowOffset)
+                continue;
+            const segment = document.createElement("span");
+            segment.className = "range-guide-segment";
+            if (span.start >= rowOffset)
+                segment.classList.add("range-start");
+            if (span.end <= rowEnd)
+                segment.classList.add("range-end");
+            guide.append(segment);
+        }
+        return guide;
     }
     byteElement(offset, value, annotations, ascii) {
         const cell = document.createElement("button");

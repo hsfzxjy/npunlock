@@ -27,6 +27,7 @@
   --tree-width: 260px;
   --inspector-width: 310px;
   --irrelevant-opacity: .3;
+  --range-rail-width: 10px;
 }
 
 * { box-sizing: border-box; }
@@ -171,7 +172,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 
 .hex-head, .hex-row {
   display: grid;
-  grid-template-columns: 11ch max-content 16ch;
+  grid-template-columns: 11ch max-content 16ch var(--range-rail-width);
   column-gap: 2ch;
   align-items: center;
   padding-left: 9px;
@@ -188,7 +189,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 }
 .hex-head {
   height: 100%;
-  min-width: 78ch;
+  min-width: 82ch;
 }
 .offset-head { text-align: right; }
 .hex-labels, .ascii-labels { display: flex; height: 18px; align-items: stretch; }
@@ -198,8 +199,8 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .ascii-labels span { width: 1ch; min-width: 1ch; text-align: center; }
 
 .hex-scroll { position: relative; overflow: auto; min-width: 0; scrollbar-color: var(--border-strong) transparent; font-family: var(--mono); }
-.hex-space { width: 78ch; min-width: 100%; }
-.hex-rows { position: absolute; inset: 0 auto auto 0; min-width: 78ch; width: 100%; pointer-events: none; }
+.hex-space { width: 82ch; min-width: 100%; }
+.hex-rows { position: absolute; inset: 0 auto auto 0; min-width: 82ch; width: 100%; pointer-events: none; }
 .hex-row { position: absolute; left: 0; right: 0; height: var(--row-height); pointer-events: auto; }
 .hex-row:hover { background: rgba(28, 45, 61, .025); }
 .row-offset { color: var(--text-faint); text-align: right; }
@@ -220,6 +221,25 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 }
 .hex-cells .byte { width: 2ch; min-width: 2ch; }
 .ascii-cells .byte { width: 1ch; min-width: 1ch; }
+.range-head, .range-guide { width: var(--range-rail-width); }
+.range-guide { position: relative; height: 18px; pointer-events: none; }
+.range-guide-segment {
+  position: absolute;
+  inset: 0 auto 0 1px;
+  width: 8px;
+  border-left: 2px solid var(--select-line);
+  opacity: .85;
+}
+.range-guide-segment.range-start::before,
+.range-guide-segment.range-end::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 7px;
+  border-top: 2px solid var(--select-line);
+}
+.range-guide-segment.range-start::before { top: 0; }
+.range-guide-segment.range-end::after { bottom: 0; }
 .byte.annotated {
   background: color-mix(in srgb, var(--semantic-color) 24%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--semantic-color) 68%, transparent);
