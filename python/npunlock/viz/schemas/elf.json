@@ -22,12 +22,25 @@
       "kind": "section",
       "category": "unknown",
       "description": "An ELF section header and, when present, its file-backed payload. No additional format meaning is inferred."
+    },
+    "symbol": {
+      "kind": "ELF symbol",
+      "category": "reference",
+      "description": "One ELF symbol-table entry. Relocations use its table index to identify a section or named target."
     }
   },
   "records": {
     "elf32_header": {
       "size": 52,
       "fields": [
+        {
+          "id": "magic",
+          "offset": 0,
+          "size": 4,
+          "encoding": "bytes-hex",
+          "description": "ELF identification bytes 0x7f, E, L, F.",
+          "confidence": "confirmed"
+        },
         {
           "id": "class",
           "offset": 4,
@@ -37,6 +50,11 @@
           "description": "ELF word size: 32-bit for standalone SHAVE kernels or 64-bit for native graphs.",
           "confidence": "confirmed"
         },
+        { "id": "data_encoding", "offset": 5, "size": 1, "encoding": "u8", "value_map": { "1": "little-endian", "2": "big-endian" }, "description": "Byte order used by multibyte ELF fields.", "confidence": "confirmed" },
+        { "id": "ident_version", "offset": 6, "size": 1, "encoding": "u8", "description": "ELF identification version.", "confidence": "confirmed" },
+        { "id": "os_abi", "offset": 7, "size": 1, "encoding": "u8", "description": "ELF operating-system ABI identifier.", "confidence": "confirmed" },
+        { "id": "abi_version", "offset": 8, "size": 1, "encoding": "u8", "description": "Version of the selected operating-system ABI.", "confidence": "confirmed" },
+        { "id": "ident_padding", "offset": 9, "size": 7, "encoding": "bytes-hex", "description": "Reserved ELF identification bytes.", "confidence": "confirmed" },
         {
           "id": "type",
           "offset": 16,
@@ -45,6 +63,7 @@
           "description": "Standard ELF object-file type.",
           "confidence": "confirmed"
         },
+        { "id": "version", "offset": 20, "size": 4, "encoding": "u32le", "description": "ELF file-format version.", "confidence": "confirmed" },
         {
           "id": "machine",
           "offset": 18,
@@ -53,6 +72,7 @@
           "description": "Standard ELF target-machine identifier.",
           "confidence": "confirmed"
         },
+        { "id": "program_table", "offset": 28, "size": 4, "encoding": "u32le", "display": "hex", "description": "File offset of the program-header table; zero for a section-only image.", "confidence": "confirmed" },
         {
           "id": "entry",
           "offset": 24,
@@ -62,6 +82,11 @@
           "description": "Virtual entry address recorded by the ELF header.",
           "confidence": "confirmed"
         },
+        { "id": "flags", "offset": 36, "size": 4, "encoding": "u32le", "display": "hex", "description": "Processor-specific ELF flags.", "confidence": "confirmed" },
+        { "id": "header_size", "offset": 40, "size": 2, "encoding": "u16le", "description": "Size of this ELF header in bytes.", "confidence": "confirmed" },
+        { "id": "program_entry_size", "offset": 42, "size": 2, "encoding": "u16le", "description": "Size of one program-header entry in bytes.", "confidence": "confirmed" },
+        { "id": "program_count", "offset": 44, "size": 2, "encoding": "u16le", "description": "Number of program-header entries.", "confidence": "confirmed" },
+        { "id": "section_entry_size", "offset": 46, "size": 2, "encoding": "u16le", "description": "Size of one section-header entry in bytes.", "confidence": "confirmed" },
         {
           "id": "section_table",
           "offset": 32,
@@ -78,12 +103,21 @@
           "encoding": "u16le",
           "description": "Number of entries in the ELF section-header table.",
           "confidence": "confirmed"
-        }
+        },
+        { "id": "section_name_index", "offset": 50, "size": 2, "encoding": "u16le", "description": "Section index of the section-name string table.", "confidence": "confirmed" }
       ]
     },
     "elf64_header": {
       "size": 64,
       "fields": [
+        {
+          "id": "magic",
+          "offset": 0,
+          "size": 4,
+          "encoding": "bytes-hex",
+          "description": "ELF identification bytes 0x7f, E, L, F.",
+          "confidence": "confirmed"
+        },
         {
           "id": "class",
           "offset": 4,
@@ -93,6 +127,11 @@
           "description": "ELF word size: 32-bit for standalone SHAVE kernels or 64-bit for native graphs.",
           "confidence": "confirmed"
         },
+        { "id": "data_encoding", "offset": 5, "size": 1, "encoding": "u8", "value_map": { "1": "little-endian", "2": "big-endian" }, "description": "Byte order used by multibyte ELF fields.", "confidence": "confirmed" },
+        { "id": "ident_version", "offset": 6, "size": 1, "encoding": "u8", "description": "ELF identification version.", "confidence": "confirmed" },
+        { "id": "os_abi", "offset": 7, "size": 1, "encoding": "u8", "description": "ELF operating-system ABI identifier.", "confidence": "confirmed" },
+        { "id": "abi_version", "offset": 8, "size": 1, "encoding": "u8", "description": "Version of the selected operating-system ABI.", "confidence": "confirmed" },
+        { "id": "ident_padding", "offset": 9, "size": 7, "encoding": "bytes-hex", "description": "Reserved ELF identification bytes.", "confidence": "confirmed" },
         {
           "id": "type",
           "offset": 16,
@@ -101,6 +140,7 @@
           "description": "Standard ELF object-file type.",
           "confidence": "confirmed"
         },
+        { "id": "version", "offset": 20, "size": 4, "encoding": "u32le", "description": "ELF file-format version.", "confidence": "confirmed" },
         {
           "id": "machine",
           "offset": 18,
@@ -109,6 +149,7 @@
           "description": "Standard ELF target-machine identifier.",
           "confidence": "confirmed"
         },
+        { "id": "program_table", "offset": 32, "size": 8, "encoding": "u64le", "display": "hex", "description": "File offset of the program-header table; zero for a section-only image.", "confidence": "confirmed" },
         {
           "id": "entry",
           "offset": 24,
@@ -118,6 +159,11 @@
           "description": "Virtual entry address recorded by the ELF header.",
           "confidence": "confirmed"
         },
+        { "id": "flags", "offset": 48, "size": 4, "encoding": "u32le", "display": "hex", "description": "Processor-specific ELF flags.", "confidence": "confirmed" },
+        { "id": "header_size", "offset": 52, "size": 2, "encoding": "u16le", "description": "Size of this ELF header in bytes.", "confidence": "confirmed" },
+        { "id": "program_entry_size", "offset": 54, "size": 2, "encoding": "u16le", "description": "Size of one program-header entry in bytes.", "confidence": "confirmed" },
+        { "id": "program_count", "offset": 56, "size": 2, "encoding": "u16le", "description": "Number of program-header entries.", "confidence": "confirmed" },
+        { "id": "section_entry_size", "offset": 58, "size": 2, "encoding": "u16le", "description": "Size of one section-header entry in bytes.", "confidence": "confirmed" },
         {
           "id": "section_table",
           "offset": 40,
@@ -134,31 +180,62 @@
           "encoding": "u16le",
           "description": "Number of entries in the ELF section-header table.",
           "confidence": "confirmed"
-        }
+        },
+        { "id": "section_name_index", "offset": 62, "size": 2, "encoding": "u16le", "description": "Section index of the section-name string table.", "confidence": "confirmed" }
       ]
     },
     "elf32_section_header": {
       "size": 40,
       "fields": [
         { "id": "index", "computed": true, "description": "Zero-based position in the section-header table.", "confidence": "confirmed" },
+        { "id": "name_offset", "offset": 0, "size": 4, "encoding": "u32le", "display": "hex", "description": "Byte offset of this section's name in the section-name string table.", "confidence": "confirmed" },
         { "id": "type", "offset": 4, "size": 4, "encoding": "u32le", "description": "Standard ELF section type.", "confidence": "confirmed" },
+        { "id": "flags", "offset": 8, "size": 4, "encoding": "u32le", "display": "hex", "description": "ELF section attribute flags.", "confidence": "confirmed" },
+        { "id": "virtual_address", "offset": 12, "size": 4, "encoding": "u32le", "display": "hex", "description": "Virtual address assigned to the section, or zero when it is not mapped.", "confidence": "confirmed" },
         { "id": "file_offset", "offset": 16, "size": 4, "encoding": "u32le", "display": "hex", "description": "File-relative start of the section payload.", "confidence": "confirmed" },
         { "id": "size", "offset": 20, "size": 4, "encoding": "u32le", "display": "hex", "description": "Section payload size in bytes, or logical size for NOBITS sections.", "confidence": "confirmed" },
         { "id": "link", "offset": 24, "size": 4, "encoding": "u32le", "description": "Section index whose standard ELF role depends on this section type.", "confidence": "confirmed" },
         { "id": "info", "offset": 28, "size": 4, "encoding": "u32le", "description": "Additional standard ELF metadata whose role depends on this section type.", "confidence": "confirmed" },
-        { "id": "alignment", "offset": 32, "size": 4, "encoding": "u32le", "display": "hex", "description": "Required section alignment in bytes.", "confidence": "confirmed" }
+        { "id": "alignment", "offset": 32, "size": 4, "encoding": "u32le", "display": "hex", "description": "Required section alignment in bytes.", "confidence": "confirmed" },
+        { "id": "entry_size", "offset": 36, "size": 4, "encoding": "u32le", "display": "hex", "description": "Size of each fixed-size entry in this section, or zero when not applicable.", "confidence": "confirmed" }
       ]
     },
     "elf64_section_header": {
       "size": 64,
       "fields": [
         { "id": "index", "computed": true, "description": "Zero-based position in the section-header table.", "confidence": "confirmed" },
+        { "id": "name_offset", "offset": 0, "size": 4, "encoding": "u32le", "display": "hex", "description": "Byte offset of this section's name in the section-name string table.", "confidence": "confirmed" },
         { "id": "type", "offset": 4, "size": 4, "encoding": "u32le", "description": "Standard ELF section type.", "confidence": "confirmed" },
+        { "id": "flags", "offset": 8, "size": 8, "encoding": "u64le", "display": "hex", "description": "ELF section attribute flags.", "confidence": "confirmed" },
+        { "id": "virtual_address", "offset": 16, "size": 8, "encoding": "u64le", "display": "hex", "description": "Virtual address assigned to the section, or zero when it is not mapped.", "confidence": "confirmed" },
         { "id": "file_offset", "offset": 24, "size": 8, "encoding": "u64le", "display": "hex", "description": "File-relative start of the section payload.", "confidence": "confirmed" },
         { "id": "size", "offset": 32, "size": 8, "encoding": "u64le", "display": "hex", "description": "Section payload size in bytes, or logical size for NOBITS sections.", "confidence": "confirmed" },
         { "id": "link", "offset": 40, "size": 4, "encoding": "u32le", "description": "Section index whose standard ELF role depends on this section type.", "confidence": "confirmed" },
         { "id": "info", "offset": 44, "size": 4, "encoding": "u32le", "description": "Additional standard ELF metadata whose role depends on this section type.", "confidence": "confirmed" },
-        { "id": "alignment", "offset": 48, "size": 8, "encoding": "u64le", "display": "hex", "description": "Required section alignment in bytes.", "confidence": "confirmed" }
+        { "id": "alignment", "offset": 48, "size": 8, "encoding": "u64le", "display": "hex", "description": "Required section alignment in bytes.", "confidence": "confirmed" },
+        { "id": "entry_size", "offset": 56, "size": 8, "encoding": "u64le", "display": "hex", "description": "Size of each fixed-size entry in this section, or zero when not applicable.", "confidence": "confirmed" }
+      ]
+    },
+    "elf32_symbol": {
+      "size": 16,
+      "fields": [
+        { "id": "name_offset", "offset": 0, "size": 4, "encoding": "u32le", "display": "hex", "description": "Byte offset of the symbol name in the linked string table.", "confidence": "confirmed" },
+        { "id": "value", "offset": 4, "size": 4, "encoding": "u32le", "display": "hex", "description": "Symbol value, interpreted according to its section and ELF type.", "confidence": "confirmed" },
+        { "id": "size", "offset": 8, "size": 4, "encoding": "u32le", "display": "hex", "description": "Extent associated with the symbol in bytes.", "confidence": "confirmed" },
+        { "id": "info", "offset": 12, "size": 1, "encoding": "u8", "display": "hex", "description": "Packed ELF symbol binding and type.", "confidence": "confirmed" },
+        { "id": "other", "offset": 13, "size": 1, "encoding": "u8", "display": "hex", "description": "ELF symbol visibility and reserved bits.", "confidence": "confirmed" },
+        { "id": "section_index", "offset": 14, "size": 2, "encoding": "u16le", "description": "Section index associated with the symbol.", "confidence": "confirmed" }
+      ]
+    },
+    "elf64_symbol": {
+      "size": 24,
+      "fields": [
+        { "id": "name_offset", "offset": 0, "size": 4, "encoding": "u32le", "display": "hex", "description": "Byte offset of the symbol name in the linked string table.", "confidence": "confirmed" },
+        { "id": "info", "offset": 4, "size": 1, "encoding": "u8", "display": "hex", "description": "Packed ELF symbol binding and type.", "confidence": "confirmed" },
+        { "id": "other", "offset": 5, "size": 1, "encoding": "u8", "display": "hex", "description": "ELF symbol visibility and reserved bits.", "confidence": "confirmed" },
+        { "id": "section_index", "offset": 6, "size": 2, "encoding": "u16le", "description": "Section index associated with the symbol.", "confidence": "confirmed" },
+        { "id": "value", "offset": 8, "size": 8, "encoding": "u64le", "display": "hex", "description": "Symbol value, interpreted according to its section and ELF type.", "confidence": "confirmed" },
+        { "id": "size", "offset": 16, "size": 8, "encoding": "u64le", "display": "hex", "description": "Extent associated with the symbol in bytes.", "confidence": "confirmed" }
       ]
     }
   },

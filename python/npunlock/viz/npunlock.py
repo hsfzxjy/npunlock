@@ -6,7 +6,7 @@ from os import PathLike
 from typing import Any, Sequence
 
 from ._schema import decode_record_fields, load_schema, lookup, match_rule, node_metadata
-from .model import Address, Artifact, ArtifactGraph, Node, Span
+from .model import Address, Artifact, ArtifactGraph, Field, Node, Span
 
 
 _ELF_SCHEMA = load_schema("elf.json")
@@ -210,6 +210,34 @@ def _symbols(data: bytes, elf: _Elf) -> dict[tuple[int, int], tuple[str, int, in
     return result
 
 
+def _annotate_symbols(
+    graph: ArtifactGraph,
+    artifact: Artifact,
+    data: bytes,
+    elf: _Elf,
+    section_nodes: dict[int, Node],
+    prefix: str,
+) -> dict[tuple[int, int], Node]:
+    symbols = _symbols(data, elf)
+    result: dict[tuple[int, int], Node] = {}
+    for (table_index, symbol_index), (name, section_index, value) in symbols.items():
+        table = elf.sections[table_index]
+        offset = table.offset + symbol_index * table.entry_size
+        node = graph.node(
+            f"{prefix}.symbol.{table_index}.{symbol_index}",
+            label=name or f"symbol {symbol_index} (null)",
+            spans=[Span(artifact, offset, offset + table.entry_size)],
+            fields=decode_record_fields(_ELF_SCHEMA, f"elf{elf.elf_class * 32}_symbol", artifact, data, offset),
+            addresses={"symbol value": Address("virtual", value)} if value else {},
+            parent=section_nodes[table_index],
+            **node_metadata(_ELF_SCHEMA, "symbol"),
+        )
+        result[(table_index, symbol_index)] = node
+        if section_index != 0 and section_index in section_nodes:
+            graph.link(node, section_nodes[section_index], "defined_in_section")
+    return result
+
+
 def _relocations(data: bytes, elf: _Elf, section: _Section) -> list[tuple[int, int, int, int, int]]:
     if elf.elf_class != 2 or section.section_type != 4 or section.entry_size != 24:
         return []
@@ -217,6 +245,42 @@ def _relocations(data: bytes, elf: _Elf, section: _Section) -> list[tuple[int, i
     for index in range(section.size // 24):
         offset, info, addend = struct.unpack_from("<QQq", data, section.offset + index * 24)
         result.append((index, offset, info >> 32, info & 0xFFFFFFFF, addend))
+    return result
+
+
+def _annotate_relocations(
+    graph: ArtifactGraph,
+    artifact: Artifact,
+    data: bytes,
+    elf: _Elf,
+    section_nodes: dict[int, Node],
+    symbol_nodes: dict[tuple[int, int], Node],
+    prefix: str,
+) -> dict[tuple[int, int], Node]:
+    symbols = _symbols(data, elf)
+    result: dict[tuple[int, int], Node] = {}
+    for section in elf.sections:
+        for index, _, symbol_index, _, _ in _relocations(data, elf, section):
+            entry_offset = section.offset + index * 24
+            symbol = symbols.get((section.link, symbol_index))
+            symbol_name = symbol[0] if symbol else f"symbol {symbol_index}"
+            node = graph.node(
+                f"{prefix}.relocation.{section.index}.{index}",
+                label=f"{section.name}[{index}] · {symbol_name}",
+                spans=[Span(artifact, entry_offset, entry_offset + 24)],
+                fields=decode_record_fields(_NPU3720_ACT_SCHEMA, "elf64_rela", artifact, data, entry_offset),
+                properties={"symbol": symbol_name},
+                parent=section_nodes[section.index],
+                **node_metadata(_NPU3720_ACT_SCHEMA, "rela"),
+            )
+            result[(section.index, index)] = node
+            if section.info in section_nodes:
+                graph.link(node, section_nodes[section.info], "patches_section")
+            symbol_node = symbol_nodes.get((section.link, symbol_index))
+            if symbol_node is not None:
+                graph.link(node, symbol_node, "uses_symbol")
+            if symbol and symbol[1] != 0 and symbol[1] in section_nodes:
+                graph.link(node, section_nodes[symbol[1]], "references_section")
     return result
 
 
@@ -253,12 +317,325 @@ def _target_contracts(target_groups: Sequence[Sequence[Any]] | None) -> dict[int
     return result
 
 
+def _annotate_native_metadata(
+    graph: ArtifactGraph,
+    artifact: Artifact,
+    data: bytes,
+    elf: _Elf,
+    section_nodes: dict[int, Node],
+    prefix: str,
+) -> None:
+    compatibility = _find(elf, "compatibility_string")
+    if compatibility and compatibility.size:
+        payload = data[compatibility.offset : compatibility.offset + compatibility.size]
+        content_size = len(payload) - 1 if payload.endswith(b"\0") else len(payload)
+        fields: dict[str, Field] = {}
+        cursor = 0
+        while cursor < content_size:
+            separator = payload.find(b";", cursor, content_size)
+            end = content_size if separator < 0 else separator
+            token = payload[cursor:end].decode("utf-8", errors="replace")
+            key, delimiter, value = token.partition("=")
+            field_id = key if delimiter and key not in fields else f"token_{len(fields)}"
+            description = lookup(
+                _NPU3720_ACT_SCHEMA,
+                "compatibility_fields",
+                key,
+                "Unrecognized compatibility token preserved without interpretation.",
+            )
+            fields[field_id] = Field(
+                value if delimiter else token,
+                [Span(artifact, compatibility.offset + cursor, compatibility.offset + end)],
+                description=description,
+            )
+            cursor = content_size if separator < 0 else separator + 1
+        graph.node(
+            f"{prefix}.compatibility",
+            label="native compatibility",
+            spans=[Span(artifact, compatibility.offset, compatibility.offset + compatibility.size)],
+            fields=fields,
+            parent=section_nodes[compatibility.index],
+            **node_metadata(_NPU3720_ACT_SCHEMA, "compatibility"),
+        )
+
+    for section_name, label in (
+        (".note.LoaderABIVersion", "loader ABI version"),
+        (".note.MappedInferenceVersion", "mapped-inference version"),
+    ):
+        section = _find(elf, section_name)
+        if section and section.size == 32:
+            graph.node(
+                f"{prefix}.version-note.{section.index}",
+                label=label,
+                spans=[Span(artifact, section.offset, section.offset + section.size)],
+                fields=decode_record_fields(_NPU3720_ACT_SCHEMA, "version_note", artifact, data, section.offset),
+                parent=section_nodes[section.index],
+                **node_metadata(_NPU3720_ACT_SCHEMA, "version_note"),
+            )
+
+    platform = _find(elf, ".meta.PlatformInfo")
+    if platform and platform.size == 40:
+        graph.node(
+            f"{prefix}.platform-info",
+            label="NPU platform contract",
+            spans=[Span(artifact, platform.offset, platform.offset + platform.size)],
+            fields=decode_record_fields(_NPU3720_ACT_SCHEMA, "platform_info", artifact, data, platform.offset),
+            parent=section_nodes[platform.index],
+            **node_metadata(_NPU3720_ACT_SCHEMA, "platform_info"),
+        )
+
+
+def _annotate_parameter_records(
+    graph: ArtifactGraph,
+    artifact: Artifact,
+    data: bytes,
+    elf: _Elf,
+    section_nodes: dict[int, Node],
+    relocation_nodes: dict[tuple[int, int], Node],
+    invocation_nodes: Sequence[Node],
+    prefix: str,
+) -> None:
+    params = _find(elf, ".text.KernelParams")
+    invocations = _find(elf, ".text.ActKernelInvocations")
+    if not params or not invocations or not params.size:
+        return
+
+    symbols = _symbols(data, elf)
+    params_relocations: dict[int, list[tuple[int, int, int, int]]] = {}
+    invocation_relocations: dict[int, list[tuple[int, int, int]]] = {}
+    for section in elf.sections:
+        entries = _relocations(data, elf, section)
+        if section.info == params.index:
+            for index, target, symbol_index, relocation_type, addend in entries:
+                if relocation_type == 4:
+                    params_relocations.setdefault(target, []).append((section.index, index, symbol_index, addend))
+        elif section.info == invocations.index:
+            for index, target, symbol_index, relocation_type, addend in entries:
+                symbol = symbols.get((section.link, symbol_index))
+                if relocation_type == 4 and symbol and symbol[1] == params.index:
+                    invocation_relocations.setdefault(target, []).append((section.index, index, addend))
+
+    bases: dict[int, tuple[int, int, int]] = {}
+    for invocation_index in range(len(invocation_nodes)):
+        matches = invocation_relocations.get(invocation_index * 0x40 + 4, [])
+        if len(matches) == 1 and 0 <= matches[0][2] < params.size:
+            bases[invocation_index] = matches[0]
+    sorted_bases = sorted({match[2] for match in bases.values()})
+    array_nodes: dict[tuple[str, int, int], Node] = {}
+
+    for invocation_index, (base_section, base_relocation, base) in bases.items():
+        limit = next((candidate for candidate in sorted_bases if candidate > base), params.size)
+        record_relocations: list[tuple[int, int, int, int]] = []
+        record_index = 0
+        while True:
+            matches = params_relocations.get(base + record_index * 0x28, [])
+            special = [match for match in matches if elf.sections[match[0]].link == 0xFF20]
+            if len(special) != 1:
+                break
+            record_relocations.append(special[0])
+            record_index += 1
+        if not record_relocations or base + len(record_relocations) * 0x28 > limit:
+            continue
+
+        block = graph.node(
+            f"{prefix}.parameters.{invocation_index}",
+            label=f"invocation {invocation_index} parameters · {len(record_relocations)} tensors",
+            spans=[Span(artifact, params.offset + base, params.offset + limit)],
+            properties={
+                "parameter_base": base,
+                "parameter_limit": limit,
+                "tensor_count": len(record_relocations),
+                "role_rule": "inputs followed by one output",
+            },
+            parent=section_nodes[params.index],
+            **node_metadata(_NPU3720_ACT_SCHEMA, "parameter_block"),
+        )
+        graph.link(invocation_nodes[invocation_index], block, "uses_parameters")
+        graph.link(relocation_nodes[(base_section, base_relocation)], block, "selects_parameter_block")
+
+        for tensor_index, (data_section, data_relocation, data_symbol, data_addend) in enumerate(record_relocations):
+            relative = base + tensor_index * 0x28
+            offset = params.offset + relative
+            fields = decode_record_fields(_NPU3720_ACT_SCHEMA, "memref_data", artifact, data, offset)
+            role = "output" if tensor_index + 1 == len(record_relocations) else "input"
+            properties: dict[str, Any] = {
+                "role": role,
+                "record_index": tensor_index,
+                "data_symbol": data_symbol,
+                "data_addend": data_addend,
+            }
+            addresses = {"tensor data": Address("NNCXM slice offset", data_addend)} if data_addend >= 0 else {}
+            rank = fields["rank"].value
+            resolved_arrays: list[tuple[str, Node, int, int]] = []
+            array_values: dict[str, list[int]] = {}
+            for kind, pointer_offset, record_name, node_name, item_size in (
+                ("dimensions", 0x10, "dimension_entry", "dimension_array", 4),
+                ("strides", 0x14, "stride_entry", "stride_array", 8),
+            ):
+                matches = params_relocations.get(relative + pointer_offset, [])
+                normal = []
+                for match in matches:
+                    symbol = symbols.get((elf.sections[match[0]].link, match[2]))
+                    if symbol and symbol[1] == params.index:
+                        normal.append(match)
+                if not isinstance(rank, int) or not 1 <= rank <= 15 or len(normal) != 1:
+                    continue
+                pointer_section, pointer_relocation, _, addend = normal[0]
+                extent = rank * item_size
+                if addend < 0 or addend > params.size or extent > params.size - addend:
+                    continue
+                key = (kind, addend, rank)
+                array = array_nodes.get(key)
+                if array is None:
+                    array_fields: dict[str, Field] = {}
+                    for axis in range(rank):
+                        decoded = decode_record_fields(
+                            _NPU3720_ACT_SCHEMA,
+                            record_name,
+                            artifact,
+                            data,
+                            params.offset + addend + axis * item_size,
+                        )["value"]
+                        array_fields[f"axis_{axis}"] = decoded
+                    array = graph.node(
+                        f"{prefix}.parameters.{kind}.{addend:x}.{rank}",
+                        label=f"{kind} · rank {rank}",
+                        spans=[Span(artifact, params.offset + addend, params.offset + addend + extent)],
+                        fields=array_fields,
+                        properties={"parameter_offset": addend, "rank": rank},
+                        parent=section_nodes[params.index],
+                        **node_metadata(_NPU3720_ACT_SCHEMA, node_name),
+                    )
+                    array_nodes[key] = array
+                array_values[kind] = [int(field.value) for field in array.fields.values()]
+                resolved_arrays.append((kind, array, pointer_section, pointer_relocation))
+
+            dimensions = array_values.get("dimensions")
+            strides = array_values.get("strides")
+            dtype = int.from_bytes(data[offset + 0x18 : offset + 0x1C], "little")
+            element_sizes = {1: 4, 2: 2, 5: 4, 6: 2, 7: 1, 9: 4, 10: 2, 11: 1}
+            element_bits = {kind: size * 8 for kind, size in element_sizes.items()}
+            if dimensions and strides and len(dimensions) == len(strides) and dtype in element_sizes:
+                element_count = 1
+                valid = True
+                for dimension in dimensions:
+                    if dimension <= 0:
+                        valid = False
+                        break
+                    element_count *= dimension
+                dense = valid
+                expected_stride = element_bits[dtype]
+                for axis in sorted(
+                    (axis for axis, dimension in enumerate(dimensions) if dimension > 1),
+                    key=lambda axis: strides[axis],
+                ):
+                    if strides[axis] != expected_stride:
+                        dense = False
+                        break
+                    expected_stride *= dimensions[axis]
+                properties.update(
+                    {
+                        "dimensions": dimensions,
+                        "strides_bits": strides,
+                        "element_count": element_count if valid else None,
+                        "span_bytes": element_count * element_sizes[dtype] if valid else None,
+                        "dense_layout": dense,
+                    }
+                )
+
+            tensor = graph.node(
+                f"{prefix}.parameters.{invocation_index}.tensor.{tensor_index}",
+                label=f"{role} tensor {tensor_index if role == 'input' else 0}",
+                spans=[Span(artifact, offset, offset + 0x28)],
+                fields=fields,
+                properties=properties,
+                addresses=addresses,
+                parent=block,
+                **node_metadata(_NPU3720_ACT_SCHEMA, "memref"),
+            )
+            graph.link(relocation_nodes[(data_section, data_relocation)], tensor, "resolves_tensor_data")
+            for kind, array, pointer_section, pointer_relocation in resolved_arrays:
+                graph.link(tensor, array, f"uses_{kind}")
+                graph.link(
+                    relocation_nodes[(pointer_section, pointer_relocation)],
+                    array,
+                    f"resolves_{kind}",
+                )
+
+
+def _annotate_routing_records(
+    graph: ArtifactGraph,
+    artifact: Artifact,
+    data: bytes,
+    elf: _Elf,
+    section_nodes: dict[int, Node],
+    relocation_nodes: dict[tuple[int, int], Node],
+    prefix: str,
+) -> None:
+    record_nodes: dict[tuple[int, int], Node] = {}
+    for section in elf.sections:
+        suffix = section.name.removeprefix(".text.dmaTasks")
+        if section.name.startswith(".text.dmaTasks") and suffix.isdecimal() and section.size % 0x80 == 0:
+            for index in range(section.size // 0x80):
+                offset = section.offset + index * 0x80
+                fields = decode_record_fields(_NPU3720_ACT_SCHEMA, "dma_task", artifact, data, offset)
+                config = fields["config"].value
+                planes_and_id = fields["planes_and_task_id"].value
+                node = graph.node(
+                    f"{prefix}.dma.{section.index}.{index}",
+                    label=f"DMA engine {suffix} · task {index}",
+                    spans=[Span(artifact, offset, offset + 0x80)],
+                    fields=fields,
+                    properties={
+                        "engine_index": int(suffix),
+                        "task_index": index,
+                        "transfer_type": config & 3,
+                        "plane_count": planes_and_id & 0xFF,
+                        "task_id": planes_and_id >> 8,
+                    },
+                    parent=section_nodes[section.index],
+                    **node_metadata(_NPU3720_ACT_SCHEMA, "dma_task"),
+                )
+                record_nodes[(section.index, index)] = node
+
+    invariants = _find(elf, ".text.DPUInvariants")
+    if invariants and invariants.size % 0x130 == 0:
+        for index in range(invariants.size // 0x130):
+            offset = invariants.offset + index * 0x130
+            node = graph.node(
+                f"{prefix}.dpu-invariant.{index}",
+                label=f"DPU invariant {index}",
+                spans=[Span(artifact, offset, offset + 0x130)],
+                fields=decode_record_fields(_NPU3720_ACT_SCHEMA, "dpu_invariant", artifact, data, offset),
+                properties={"invariant_index": index},
+                parent=section_nodes[invariants.index],
+                **node_metadata(_NPU3720_ACT_SCHEMA, "dpu_invariant"),
+            )
+            record_nodes[(invariants.index, index)] = node
+
+    for section in elf.sections:
+        for index, target_offset, _, _, _ in _relocations(data, elf, section):
+            target = elf.sections[section.info] if section.info < len(elf.sections) else None
+            if target is None:
+                continue
+            stride = (
+                0x80
+                if target.name.startswith(".text.dmaTasks")
+                else 0x130 if invariants is not None and target.index == invariants.index else 0
+            )
+            if stride and target_offset < target.size:
+                target_node = record_nodes.get((target.index, target_offset // stride))
+                if target_node is not None:
+                    graph.link(relocation_nodes[(section.index, index)], target_node, "patches_field")
+
+
 def _annotate_native_records(
     graph: ArtifactGraph,
     artifact: Artifact,
     data: bytes,
     elf: _Elf,
     section_nodes: dict[int, Node],
+    relocation_nodes: dict[tuple[int, int], Node],
     *,
     prefix: str,
     target_groups: Sequence[Sequence[Any]] | None,
@@ -341,26 +718,22 @@ def _annotate_native_records(
             )
     for relocation_section in ([range_relocations] if range_relocations else []) + invocation_relocations:
         assert relocation_section is not None
-        parent = section_nodes[relocation_section.index]
-        for index, target_offset, symbol_index, relocation_type, addend in _relocations(data, elf, relocation_section):
-            entry_offset = relocation_section.offset + index * 24
-            symbol = symbols.get((relocation_section.link, symbol_index))
-            symbol_name = symbol[0] if symbol else f"symbol {symbol_index}"
-            relocation = graph.node(
-                f"{prefix}.relocation.{relocation_section.index}.{index}",
-                label=f"{relocation_section.name}[{index}] · {symbol_name}",
-                spans=[Span(artifact, entry_offset, entry_offset + 24)],
-                fields=decode_record_fields(_NPU3720_ACT_SCHEMA, "elf64_rela", artifact, data, entry_offset),
-                properties={"symbol": symbol_name},
-                parent=parent,
-                **node_metadata(_NPU3720_ACT_SCHEMA, "rela"),
-            )
+        for index, target_offset, _, _, _ in _relocations(data, elf, relocation_section):
+            relocation = relocation_nodes[(relocation_section.index, index)]
             if relocation_section.info == ranges.index and target_offset // 0x18 < len(range_nodes):
                 graph.link(relocation, range_nodes[target_offset // 0x18], "patches_field")
             if relocation_section.info == invocations.index and target_offset // 0x40 < len(invocation_nodes):
                 graph.link(relocation, invocation_nodes[target_offset // 0x40], "patches_field")
-            if symbol and symbol[1] in section_nodes:
-                graph.link(relocation, section_nodes[symbol[1]], "references_section")
+    _annotate_parameter_records(
+        graph,
+        artifact,
+        data,
+        elf,
+        section_nodes,
+        relocation_nodes,
+        invocation_nodes,
+        prefix,
+    )
     return range_nodes, list(code_nodes.values())
 
 
@@ -384,12 +757,33 @@ def build_npunlock_graph(
     native_artifact = graph.artifact("native", data=native, name=native_name)
     native_data = native_artifact.read()
     native_elf, native_sections = _add_elf_nodes(graph, native_artifact, native_data, "native")
+    native_symbols = _annotate_symbols(graph, native_artifact, native_data, native_elf, native_sections, "native")
+    native_relocations = _annotate_relocations(
+        graph,
+        native_artifact,
+        native_data,
+        native_elf,
+        native_sections,
+        native_symbols,
+        "native",
+    )
+    _annotate_native_metadata(graph, native_artifact, native_data, native_elf, native_sections, "native")
+    _annotate_routing_records(
+        graph,
+        native_artifact,
+        native_data,
+        native_elf,
+        native_sections,
+        native_relocations,
+        "native",
+    )
     _, code_nodes = _annotate_native_records(
         graph,
         native_artifact,
         native_data,
         native_elf,
         native_sections,
+        native_relocations,
         prefix="native",
         target_groups=target_groups,
     )
@@ -397,6 +791,16 @@ def build_npunlock_graph(
         kernel_artifact = graph.artifact("kernel", data=kernel, name=kernel_name)
         kernel_data = kernel_artifact.read()
         kernel_elf, kernel_sections = _add_elf_nodes(graph, kernel_artifact, kernel_data, "kernel")
+        kernel_symbols = _annotate_symbols(graph, kernel_artifact, kernel_data, kernel_elf, kernel_sections, "kernel")
+        _annotate_relocations(
+            graph,
+            kernel_artifact,
+            kernel_data,
+            kernel_elf,
+            kernel_sections,
+            kernel_symbols,
+            "kernel",
+        )
         text = _find(kernel_elf, ".text")
         if text and text.size:
             text_node = kernel_sections[text.index]

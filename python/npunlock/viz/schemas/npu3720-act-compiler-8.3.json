@@ -22,12 +22,67 @@
       "kind": "ELF64 Rela",
       "category": "reference",
       "description": "Standard ELF64 Rela entry connecting a field in the target section to a symbol plus an addend."
+    },
+    "parameter_block": {
+      "kind": "ACT parameter block",
+      "category": "data",
+      "description": "KernelParams slice selected by an ACT invocation relocation. It contains consecutive tensor descriptors followed by their shape and stride data."
+    },
+    "memref": {
+      "kind": "MemRefData",
+      "category": "data",
+      "description": "Observed 0x28-byte tensor descriptor used by npunlock to validate address space, static shape, element type, dense strides, and input/output separation."
+    },
+    "dimension_array": {
+      "kind": "tensor dimensions",
+      "category": "data",
+      "description": "Signed 32-bit dimension extents referenced by a MemRefData descriptor."
+    },
+    "stride_array": {
+      "kind": "tensor strides",
+      "category": "data",
+      "description": "Signed 64-bit tensor strides in bits, referenced by a MemRefData descriptor."
+    },
+    "compatibility": {
+      "kind": "compatibility contract",
+      "category": "metadata",
+      "description": "Semicolon-delimited native-graph compatibility requirements checked before npunlock accepts the carrier."
+    },
+    "version_note": {
+      "kind": "ELF version note",
+      "category": "metadata",
+      "description": "Fixed ELF note whose owner, type, and four-component version gate the supported loader or mapped-inference contract."
+    },
+    "platform_info": {
+      "kind": "NPU platform contract",
+      "category": "metadata",
+      "description": "Five-word platform record whose exact supported values are validated for the NPU3720 carrier family."
+    },
+    "dma_task": {
+      "kind": "DMA task",
+      "category": "data",
+      "description": "Observed 0x80-byte NPU3720 DMA task. npunlock uses its endpoints, byte extent, geometry, and barrier fields to prove graph input/output and intermediate routing."
+    },
+    "dpu_invariant": {
+      "kind": "DPU invariant",
+      "category": "data",
+      "description": "Observed 0x130-byte DPU invariant. npunlock decodes selected tensor-shape, type, address-relocation, and scheduling fields for ACT/DPU routing checks."
     }
   },
   "records": {
     "act_kernel_range": {
       "size": 24,
       "fields": [
+        {
+          "id": "raw_word_00",
+          "offset": 0,
+          "size": 4,
+          "encoding": "u32le",
+          "display": "hex",
+          "description": "Raw range word at +0x00; npunlock preserves it and does not claim a general meaning.",
+          "confidence": "raw",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
         {
           "id": "code_virtual_address",
           "offset": 4,
@@ -55,6 +110,26 @@
           "display": "hex",
           "description": "Observed executable extent at record +0x0c; its bounding role is an execution-tested inference.",
           "confidence": "execution-tested-inference",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "raw_word_10",
+          "offset": 16,
+          "size": 4,
+          "encoding": "u32le",
+          "display": "hex",
+          "description": "Raw range word at +0x10; preserved but not interpreted by npunlock.",
+          "confidence": "raw",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "raw_word_14",
+          "offset": 20,
+          "size": 4,
+          "encoding": "u32le",
+          "display": "hex",
+          "description": "Raw range word at +0x14; preserved but not interpreted by npunlock.",
+          "confidence": "raw",
           "scope": "NPU3720 compiler-8.3 carrier family"
         }
       ]
@@ -89,6 +164,15 @@
           "confidence": "raw",
           "scope": "NPU3720 compiler-8.3 carrier family"
         },
+        { "id": "group_identity_word_0c", "offset": 12, "size": 4, "encoding": "u32le", "display": "hex", "description": "First raw word in an invariant byte slice used, with other fields, to group compiler-8.3 invocation replicas. It has no standalone public ABI meaning.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "wait_mask", "offset": 16, "size": 8, "encoding": "u64le", "display": "hex", "description": "Raw barrier wait mask used by npunlock's routing analysis to connect scheduled producers and consumers.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "post_mask", "offset": 24, "size": 8, "encoding": "u64le", "display": "hex", "description": "Raw barrier post mask used by npunlock's routing analysis to connect this invocation to later work.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "barrier_group", "offset": 32, "size": 1, "encoding": "u8", "display": "hex", "description": "Raw barrier-group byte retained by routing inspection.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "barrier_mask", "offset": 33, "size": 1, "encoding": "u8", "display": "hex", "description": "Raw barrier-mask byte retained by routing inspection.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "scheduler_word_22", "offset": 34, "size": 2, "encoding": "u16le", "display": "hex", "description": "Raw scheduler bytes inside the invocation identity slice; preserved without a standalone semantic claim.", "confidence": "raw", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "scheduler_word_24", "offset": 36, "size": 4, "encoding": "u32le", "display": "hex", "description": "Raw scheduler word inside the invocation identity slice; preserved without a standalone semantic claim.", "confidence": "raw", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "start_after", "offset": 40, "size": 4, "encoding": "u32le", "description": "Raw scheduling value exposed as start-after by npunlock routing inspection.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "clean_after", "offset": 44, "size": 4, "encoding": "u32le", "description": "Raw scheduling value exposed as clean-after by npunlock routing inspection.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
         {
           "id": "invocation_index",
           "offset": 48,
@@ -115,7 +199,100 @@
           "description": "Raw record word at +0x38 exposed for diagnosis; no general semantic contract is claimed.",
           "confidence": "raw",
           "scope": "NPU3720 compiler-8.3 carrier family"
-        }
+        },
+        { "id": "group_identity_word_3c", "offset": 60, "size": 4, "encoding": "u32le", "display": "hex", "description": "Final raw word used with the invariant +0x0c..+0x2f slice to group compiler-generated invocation replicas.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" }
+      ]
+    },
+    "memref_data": {
+      "size": 40,
+      "fields": [
+        { "id": "data_reference", "offset": 0, "size": 4, "encoding": "u32le", "display": "hex", "description": "Relocation-backed 32-bit tensor data address. npunlock resolves its CMX symbol and addend rather than trusting the stored placeholder.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "data_reference_high", "offset": 4, "size": 4, "encoding": "u32le", "display": "hex", "description": "Upper or companion data-address word. The public kernel helper uses the low 32-bit relocated address; npunlock preserves this word.", "confidence": "raw", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "static_shape_marker", "offset": 8, "size": 4, "encoding": "u32le", "description": "Must equal 1 for the static tensor contract accepted by npunlock.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "rank", "offset": 12, "size": 4, "encoding": "u32le", "description": "Number of dimension and stride entries. npunlock accepts ranks 1 through 15.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "dimensions_reference", "offset": 16, "size": 4, "encoding": "u32le", "display": "hex", "description": "Relocation-backed pointer to signed 32-bit dimension extents in KernelParams.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "strides_reference", "offset": 20, "size": 4, "encoding": "u32le", "display": "hex", "description": "Relocation-backed pointer to signed 64-bit strides, measured in bits, in KernelParams.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "element_type", "offset": 24, "size": 4, "encoding": "u32le", "value_map": { "1": "FP32 (1)", "2": "FP16 (2)", "5": "U32 (5)", "6": "U16 (6)", "7": "U8 (7)", "9": "I32 (9)", "10": "I16 (10)", "11": "I8 (11)" }, "description": "Observed element-type code used to derive element width and validate the custom-kernel contract.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "raw_word_1c", "offset": 28, "size": 4, "encoding": "u32le", "display": "hex", "description": "Carrier-specific tensor word at +0x1c; preserved without a general meaning.", "confidence": "raw", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "raw_word_20", "offset": 32, "size": 4, "encoding": "u32le", "display": "hex", "description": "Carrier-specific tensor word at +0x20; preserved without a general meaning.", "confidence": "raw", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "memory_kind", "offset": 36, "size": 4, "encoding": "u32le", "value_map": { "2": "CMX (2)" }, "description": "Memory-kind code; npunlock requires the observed CMX value 2 for patchable tensors.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" }
+      ]
+    },
+    "dimension_entry": {
+      "size": 4,
+      "fields": [
+        { "id": "value", "offset": 0, "size": 4, "encoding": "i32le", "description": "Positive tensor dimension extent.", "confidence": "confirmed" }
+      ]
+    },
+    "stride_entry": {
+      "size": 8,
+      "fields": [
+        { "id": "value", "offset": 0, "size": 8, "encoding": "i64le", "description": "Tensor stride in bits; dense validation orders non-singleton dimensions by this value.", "confidence": "confirmed" }
+      ]
+    },
+    "version_note": {
+      "size": 32,
+      "fields": [
+        { "id": "owner_size", "offset": 0, "size": 4, "encoding": "u32le", "description": "ELF note owner-name size; the supported contract uses four bytes.", "confidence": "confirmed" },
+        { "id": "description_size", "offset": 4, "size": 4, "encoding": "u32le", "description": "ELF note description size; four 32-bit version components occupy 16 bytes.", "confidence": "confirmed" },
+        { "id": "type", "offset": 8, "size": 4, "encoding": "u32le", "display": "hex", "description": "Vendor note type checked for the named compatibility section.", "confidence": "confirmed" },
+        { "id": "owner", "offset": 12, "size": 4, "encoding": "bytes-hex", "description": "Four-byte ELF note owner identifier.", "confidence": "confirmed" },
+        { "id": "version_major", "offset": 16, "size": 4, "encoding": "u32le", "description": "Major version component.", "confidence": "confirmed" },
+        { "id": "version_minor", "offset": 20, "size": 4, "encoding": "u32le", "description": "Minor version component.", "confidence": "confirmed" },
+        { "id": "version_patch", "offset": 24, "size": 4, "encoding": "u32le", "description": "Patch version component.", "confidence": "confirmed" },
+        { "id": "version_build", "offset": 28, "size": 4, "encoding": "u32le", "description": "Build or fourth version component.", "confidence": "confirmed" }
+      ]
+    },
+    "platform_info": {
+      "size": 40,
+      "fields": [
+        { "id": "word_0", "offset": 0, "size": 8, "encoding": "u64le", "display": "hex", "description": "Supported platform-contract word 0; npunlock currently requires 0x20 but does not expose a broader semantic claim.", "confidence": "raw" },
+        { "id": "word_1", "offset": 8, "size": 8, "encoding": "u64le", "display": "hex", "description": "Supported platform-contract word 1; npunlock currently requires zero.", "confidence": "raw" },
+        { "id": "word_2", "offset": 16, "size": 8, "encoding": "u64le", "display": "hex", "description": "Supported platform-contract word 2; npunlock currently requires one.", "confidence": "raw" },
+        { "id": "word_3", "offset": 24, "size": 8, "encoding": "u64le", "display": "hex", "description": "Supported platform-contract word 3; npunlock currently requires eight.", "confidence": "raw" },
+        { "id": "word_4", "offset": 32, "size": 8, "encoding": "u64le", "display": "hex", "description": "Supported platform-contract word 4; npunlock currently requires three.", "confidence": "raw" }
+      ]
+    },
+    "dma_task": {
+      "size": 128,
+      "fields": [
+        { "id": "config", "offset": 8, "size": 8, "encoding": "u64le", "display": "hex", "description": "Raw DMA configuration word; its low two bits select the supported transfer form.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "source_value", "offset": 16, "size": 8, "encoding": "u64le", "display": "hex", "description": "Relocation-backed DMA source value. npunlock resolves its endpoint kind, symbol, and addend.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "destination_value", "offset": 24, "size": 8, "encoding": "u64le", "display": "hex", "description": "Relocation-backed DMA destination value. npunlock resolves its endpoint kind, symbol, and addend.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "length_bytes", "offset": 32, "size": 4, "encoding": "u32le", "description": "Transfer extent in bytes; zero-length tasks are rejected.", "confidence": "confirmed", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "planes_and_task_id", "offset": 36, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed plane count in the low byte and task identifier in the upper 24 bits.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "source_plane_stride", "offset": 40, "size": 4, "encoding": "i32le", "description": "Raw signed source plane stride used by routing validation.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "destination_plane_stride", "offset": 44, "size": 4, "encoding": "i32le", "description": "Raw signed destination plane stride used by routing validation.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type0_post_or_type1_source_width", "offset": 48, "size": 8, "encoding": "u64le", "display": "hex", "description": "For transfer type 0 this is the post mask; type 1 instead packs source width and signed source stride here.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type0_wait_or_type1_destination_width", "offset": 56, "size": 8, "encoding": "u64le", "display": "hex", "description": "For transfer type 0 this is the wait mask; type 1 instead packs destination width and signed destination stride here.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type1_source_width", "offset": 48, "size": 4, "encoding": "u32le", "description": "Source row width for transfer type 1; overlaps the type-0 post-mask storage.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type1_source_stride", "offset": 52, "size": 4, "encoding": "i32le", "description": "Signed source row stride for transfer type 1; overlaps the type-0 post-mask storage.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type1_destination_width", "offset": 56, "size": 4, "encoding": "u32le", "description": "Destination row width for transfer type 1; overlaps the type-0 wait-mask storage.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type1_destination_stride", "offset": 60, "size": 4, "encoding": "i32le", "description": "Signed destination row stride for transfer type 1; overlaps the type-0 wait-mask storage.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type1_post_mask", "offset": 64, "size": 8, "encoding": "u64le", "display": "hex", "description": "Barrier post mask for transfer type 1; not interpreted for type 0.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "type1_wait_mask", "offset": 72, "size": 8, "encoding": "u64le", "display": "hex", "description": "Barrier wait mask for transfer type 1; not interpreted for type 0.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "start_after", "offset": 80, "size": 4, "encoding": "u32le", "description": "Raw start-after scheduling value.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "clean_after", "offset": 84, "size": 4, "encoding": "u32le", "description": "Raw clean-after scheduling value.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" }
+      ]
+    },
+    "dpu_invariant": {
+      "size": 304,
+      "fields": [
+        { "id": "kernel_padding_config", "offset": 48, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed kernel/padding configuration; bit 15 is used to require dense input storage.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "input_dimensions_xy", "offset": 64, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed input X and Y extents used to derive the dense input span.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "input_dimension_z", "offset": 68, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed input Z extent used to derive the dense input span.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "input_tensor_mode", "offset": 76, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed input tensor mode; bits 4..7 select the input element type used by routing validation.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "output_config", "offset": 120, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed output type, density, and sparsity configuration used to validate a byte-addressable output.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "output_dimensions_yz", "offset": 136, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed output Y and Z extents, stored minus one.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "output_dimension_x", "offset": 140, "size": 4, "encoding": "u32le", "display": "hex", "description": "Packed output X extent, stored minus one.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "wait_mask", "offset": 264, "size": 8, "encoding": "u64le", "display": "hex", "description": "Raw barrier wait mask used by ACT/DPU routing analysis.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "post_mask", "offset": 272, "size": 8, "encoding": "u64le", "display": "hex", "description": "Raw barrier post mask used by ACT/DPU routing analysis.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "barrier_group", "offset": 280, "size": 1, "encoding": "u8", "display": "hex", "description": "Raw barrier-group byte.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "barrier_mask", "offset": 281, "size": 1, "encoding": "u8", "display": "hex", "description": "Raw barrier-mask byte.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "start_after", "offset": 288, "size": 4, "encoding": "u32le", "description": "Raw start-after scheduling value.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "clean_after", "offset": 292, "size": 4, "encoding": "u32le", "description": "Raw clean-after scheduling value.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "variant_count", "offset": 296, "size": 2, "encoding": "u16le", "description": "Number of associated DPU variants; zero is rejected.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" },
+        { "id": "cluster", "offset": 298, "size": 1, "encoding": "u8", "description": "NPU tile or cluster index; it must be below the compatibility tile count.", "confidence": "strong-inference", "scope": "NPU3720 compiler-8.3 carrier family" }
       ]
     },
     "elf64_rela": {
@@ -162,9 +339,29 @@
     "section_descriptions": {
       ".text.KernelText": "Executable SHAVE code storage. ACT range relocations select byte slices within this section.",
       ".text.KernelData": "Kernel-associated data storage; this viewer does not infer an ABI for its contents.",
-      ".text.KernelParams": "ACT kernel parameter records referenced by invocation relocations; detailed layouts remain carrier-specific.",
+      ".text.KernelParams": "Relocation-selected ACT tensor descriptors plus referenced dimension and stride arrays. Decoding is limited to the validated compiler-8.3 MemRefData contract.",
       ".text.ActKernelRanges": "Observed 0x18-byte ACT range records that reference executable slices in KernelText.",
-      ".text.ActKernelInvocations": "Observed 0x40-byte ACT invocation records that connect scheduled work to ranges and parameters."
+      ".text.ActKernelInvocations": "Observed 0x40-byte ACT invocation records that connect scheduled work to ranges and parameters.",
+      ".text.actKernelRtConfigSec": "ACT runtime configuration storage referenced by the mapped-inference schedule; its remaining carrier-specific layout is not required for code substitution.",
+      ".text.dmaTasks0": "Observed 0x80-byte DMA tasks for engine 0. npunlock inspects their endpoints, extents, geometry, and barriers when proving routing.",
+      ".text.BarrierConfigs": "Barrier configuration records used by the native schedule; relocations and scheduling masks connect task ordering.",
+      ".text.MappedInference": "Mapped-inference schedule data that references DMA, DPU, ACT, and barrier tasks.",
+      ".text.DPUInvariants": "Observed 0x130-byte DPU invariant records used to derive dense input/output extents and ACT/DPU relationships.",
+      ".text.DPUVariants": "DPU variant records associated with DPU invariants; npunlock preserves them and inspects their schedule relationships.",
+      ".metadata": "Compiler-emitted native graph metadata. It remains opaque to the patch operation and is preserved byte-for-byte.",
+      ".perf.metrics": "Compiler-emitted performance metric records preserved by npunlock; they are not used to authorize patching.",
+      ".data.ConstIO": "File-backed constant and graph-I/O data storage referenced through ELF symbols and DMA relocations.",
+      ".note.LoaderABIVersion": "Version note for the native loader ABI accepted by npunlock's supported carrier contract.",
+      ".note.MappedInferenceVersion": "Version note for the mapped-inference ABI accepted by npunlock's supported carrier contract.",
+      ".meta.PlatformInfo": "Fixed NPU platform-contract record checked before patching.",
+      "compatibility_string": "Compiler, NPU, tile-count, loader, and mapped-inference compatibility tokens checked before patching."
+    },
+    "compatibility_fields": {
+      "compiler": "Native graph compiler version. npunlock's current carrier parser requires compiler 8.3.",
+      "npu": "NPU architecture identifier. The current supported target is NPU3720.",
+      "t": "Compiler-selected tile count. It bounds every ACT invocation's tile index.",
+      "elf": "Native loader ELF ABI version required by the carrier.",
+      "mi": "Mapped-inference ABI version required by the carrier."
     }
   },
   "rules": {
@@ -172,7 +369,7 @@
       { "value": "code", "contains": ["kerneltext"] },
       { "value": "reference", "prefixes": [".rlt", ".rela", ".rel"] },
       { "value": "reference", "contains": ["symtab"] },
-      { "value": "data", "contains": ["params", "data", "buffer", "constio"] },
+      { "value": "data", "contains": ["params", "data", "buffer", "constio", "dmatasks", "dpu"] },
       { "value": "metadata", "contains": ["meta", "config", "range", "invocation"] }
     ]
   }

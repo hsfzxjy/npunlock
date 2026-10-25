@@ -201,6 +201,64 @@ def test_npunlock_fixture_annotations() -> None:
     assert graph.nodes[exact[0].source].spans[1].artifact.id == "kernel"
     assert graph.nodes[exact[0].target].spans[0].artifact.id == "native"
 
+    def covered_bytes(node_id: str) -> set[int]:
+        return {
+            offset
+            for field in graph.nodes[node_id].fields.values()
+            for span in field.spans
+            for offset in range(span.start, span.end)
+        }
+
+    for node_id in (
+        "native.header",
+        "kernel.header",
+        "native.range.0",
+        "native.invocation.0",
+        "native.parameters.0.tensor.0",
+    ):
+        node = graph.nodes[node_id]
+        primary = node.spans[0]
+        assert covered_bytes(node_id) == set(range(primary.start, primary.end))
+
+    assert sum(node.kind == "ELF64 Rela" for node in graph.nodes.values()) == 67
+    assert sum(node.kind == "ELF symbol" for node in graph.nodes.values()) == 21
+    assert sum(node.kind == "MemRefData" for node in graph.nodes.values()) == 4
+    assert sum(node.kind == "DMA task" for node in graph.nodes.values()) == 3
+    assert sum(node.kind == "DPU invariant" for node in graph.nodes.values()) == 1
+
+    compatibility = graph.nodes["native.compatibility"]
+    assert {name: field.value for name, field in compatibility.fields.items()} == {
+        "compiler": "8.3",
+        "npu": "3720",
+        "t": "1",
+        "elf": "1.2.0",
+        "mi": "7.0.4",
+    }
+    tensor = graph.nodes["native.parameters.0.tensor.0"]
+    assert tensor.fields["element_type"].value == "FP16 (2)"
+    assert tensor.fields["memory_kind"].value == "CMX (2)"
+    assert tensor.properties["dimensions"] == [8, 1, 1, 1]
+    assert tensor.properties["strides_bits"] == [16, 256, 256, 256]
+    assert tensor.properties["element_count"] == 8
+    assert tensor.properties["span_bytes"] == 16
+    assert tensor.properties["dense_layout"] is True
+    assert tensor.addresses["tensor data"].value == 832
+    assert any(link.source == "native.invocation.0" and link.kind == "uses_parameters" for link in graph.links)
+    assert any(
+        link.source == tensor.id and link.target.startswith("native.parameters.dimensions.") for link in graph.links
+    )
+
+    invocation_fields = graph.nodes["native.invocation.0"].fields
+    for name in ("wait_mask", "post_mask", "barrier_group", "start_after", "clean_after", "tile_index"):
+        assert invocation_fields[name].description
+    dma = graph.nodes["native.dma.5.0"]
+    assert dma.properties["transfer_type"] == 1
+    assert dma.fields["length_bytes"].value == 32
+    assert dma.fields["type1_source_width"].description
+    dpu = graph.nodes["native.dpu-invariant.0"]
+    assert dpu.fields["variant_count"].value == 1
+    assert dpu.fields["cluster"].value == 0
+
 
 def test_bundled_semantic_schemas() -> None:
     schemas = files("npunlock.viz").joinpath("schemas")
@@ -217,6 +275,7 @@ def test_bundled_semantic_schemas() -> None:
     graph = ArtifactGraph("Schema decoding")
     artifact = graph.artifact("elf", data=data)
     fields = decode_record_fields(elf_schema, "elf32_header", artifact, data, 0)
+    assert fields["magic"].value == "7f 45 4c 46"
     assert fields["class"].value == "ELF32"
     assert fields["entry"].spans[0].start == 24
     assert fields["entry"].spans[0].size == 4

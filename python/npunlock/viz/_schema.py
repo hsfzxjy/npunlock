@@ -15,11 +15,13 @@ _ENCODING_SIZES = {
     "u8": 1,
     "u16le": 2,
     "u32le": 4,
+    "i32le": 4,
     "u64le": 8,
     "i64le": 8,
     "u64le-hi32": 8,
     "u64le-lo32": 8,
 }
+_VARIABLE_SIZE_ENCODINGS = {"bytes-hex"}
 _DISPLAYS = {None, "hex", "hex-nonnegative"}
 _CONFIDENCE = {"confirmed", "strong-inference", "execution-tested-inference", "raw"}
 _ROOT_KEYS = {"format", "version", "id", "nodes", "records", "lookups", "rules"}
@@ -107,7 +109,9 @@ def validate_schema(value: Any) -> dict[str, Any]:
                 raise ValueError(f"field {record_id}.{field_id} offset and size must be integers")
             if offset < 0 or size <= 0 or offset > record_size or size > record_size - offset:
                 raise ValueError(f"field {record_id}.{field_id} is outside its record")
-            if encoding not in _ENCODING_SIZES or _ENCODING_SIZES[encoding] != size:
+            if encoding not in _ENCODING_SIZES and encoding not in _VARIABLE_SIZE_ENCODINGS:
+                raise ValueError(f"field {record_id}.{field_id} uses an unknown encoding")
+            if encoding in _ENCODING_SIZES and _ENCODING_SIZES[encoding] != size:
                 raise ValueError(f"field {record_id}.{field_id} encoding does not match its size")
             if field.get("display") not in _DISPLAYS:
                 raise ValueError(f"field {record_id}.{field_id} has unsupported display")
@@ -215,8 +219,10 @@ def decode_record_fields(
         end = start + descriptor["size"]
         raw = data[start:end]
         encoding = descriptor["encoding"]
-        if encoding == "i64le":
-            value: Any = int.from_bytes(raw, "little", signed=True)
+        if encoding == "bytes-hex":
+            value: Any = raw.hex(" ")
+        elif encoding in {"i32le", "i64le"}:
+            value = int.from_bytes(raw, "little", signed=True)
         else:
             value = int.from_bytes(raw, "little", signed=False)
             if encoding == "u64le-hi32":

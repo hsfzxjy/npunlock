@@ -42,7 +42,7 @@
                 "offset": { "type": "integer", "minimum": 0 },
                 "size": { "type": "integer", "minimum": 1 },
                 "encoding": {
-                  "enum": ["u8", "u16le", "u32le", "u64le", "i64le", "u64le-hi32", "u64le-lo32"]
+                  "enum": ["u8", "u16le", "u32le", "i32le", "u64le", "i64le", "u64le-hi32", "u64le-lo32", "bytes-hex"]
                 },
                 "display": { "enum": ["hex", "hex-nonnegative"] },
                 "description": { "type": "string", "minLength": 1 },

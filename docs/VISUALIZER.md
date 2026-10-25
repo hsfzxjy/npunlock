@@ -111,6 +111,30 @@ range-selected `KernelText` images. When a standalone kernel `.text` is exactly
 byte-identical to a selected native code image, it adds that cross-artifact
 relationship; it does not infer one from names or sizes.
 
+For the supported NPU3720/compiler-8.3 carrier family, the adapter also exposes
+the bytes that npunlock actually uses to accept and patch a graph:
+
+- complete ELF headers and section headers, symbol entries, and every ELF64
+  Rela entry;
+- compiler/NPU/tile/loader compatibility tokens, loader and mapped-inference
+  version notes, and the fixed platform-contract words;
+- every byte of ACT range and invocation records, including code selection,
+  parameter and kernel-data references, barrier masks, scheduling values, tile
+  selection, and explicitly raw identity words;
+- relocation-selected `KernelParams` blocks, their 0x28-byte `MemRefData`
+  records, CMX addends, element types, ranks, dimension arrays, bit strides,
+  derived element counts and spans, and dense-layout result;
+- the DMA fields and DPU-invariant fields used by npunlock's routing analysis,
+  with relocations linked back to the exact records they patch.
+
+Field spans are exact file-relative byte intervals, so selecting an inspector
+field highlights the bytes that encode it. Derived values such as a resolved
+CMX addend, tensor element count, or transfer type are properties or addresses,
+not invented file spans. Carrier bytes that npunlock preserves but does not
+understand are labeled as raw instead of receiving guessed names. Large opaque
+compiler metadata, runtime configuration, and unconsumed task fields remain
+region-annotated rather than being presented as a supported ABI.
+
 The adapter supplies concise explanations for standard ELF regions and for
 documented ACT fields. Wording explicitly distinguishes confirmed meanings
 from execution-tested inferences and leaves undecoded carrier-specific fields
