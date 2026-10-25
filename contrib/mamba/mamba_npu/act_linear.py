@@ -54,17 +54,23 @@ class NpuActLinear:
         rms_weight: object | None = None,
         rms_epsilon: float = 1e-5,
     ) -> tuple[np.ndarray, dict[str, float]]:
-        vector = np.asarray(activation, dtype=np.float32).reshape(-1)
+        values = np.asarray(activation, dtype=np.float32)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        if values.ndim != 2 or not 1 <= values.shape[0] <= 16:
+            raise ValueError("activation must have shape (1..16, input_features)")
         matrix = np.asarray(weight, dtype=np.float32)
-        residual_value = None if residual is None else np.asarray(residual, dtype=np.float32).reshape(-1)
+        residual_value = None if residual is None else np.asarray(residual, dtype=np.float32)
+        if residual_value is not None and residual_value.ndim == 1:
+            residual_value = residual_value.reshape(1, -1)
         norm_weight = None if rms_weight is None else np.asarray(rms_weight, dtype=np.float32).reshape(-1)
-        if norm_weight is not None and (norm_weight.size != vector.size or rms_epsilon <= 0.0):
+        if norm_weight is not None and (norm_weight.size != values.shape[1] or rms_epsilon <= 0.0):
             raise ValueError("RMSNorm weight must match the activation and epsilon must be positive")
         flags = (FLAG_RESIDUAL if residual_value is not None else 0) | (
             FLAG_RMS_NORM if norm_weight is not None else 0
         )
         result, _, _, timing = self._run(
-            vector,
+            values,
             matrix,
             flags=flags,
             residual=residual_value,
@@ -81,17 +87,22 @@ class NpuActLinear:
         projection_weight: object,
         initial_state: object | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
-        vector = np.asarray(activation, dtype=np.float32).reshape(-1)
-        conv_weight = np.asarray(convolution_weight, dtype=np.float32).reshape(vector.size, 4)
+        values = np.asarray(activation, dtype=np.float32)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        if values.ndim != 2 or not 1 <= values.shape[0] <= 16:
+            raise ValueError("activation must have shape (1..16, input_features)")
+        input_count = values.shape[1]
+        conv_weight = np.asarray(convolution_weight, dtype=np.float32).reshape(input_count, 4)
         conv_bias = np.asarray(convolution_bias, dtype=np.float32).reshape(-1)
-        if conv_bias.size != vector.size:
+        if conv_bias.size != input_count:
             raise ValueError("convolution bias must contain one value per input channel")
         if initial_state is None:
-            state = np.zeros((vector.size, 4), dtype=np.float32)
+            state = np.zeros((input_count, 4), dtype=np.float32)
         else:
-            state = np.asarray(initial_state, dtype=np.float32).reshape(vector.size, 4)
+            state = np.asarray(initial_state, dtype=np.float32).reshape(input_count, 4)
         result, convolution_output, final_state, timing = self._run(
-            vector,
+            values,
             np.asarray(projection_weight, dtype=np.float32),
             flags=FLAG_CONVOLUTION,
             convolution_state=state,
@@ -104,7 +115,7 @@ class NpuActLinear:
 
     def _run(
         self,
-        vector: np.ndarray,
+        values: np.ndarray,
         matrix: np.ndarray,
         *,
         flags: int,
@@ -117,32 +128,39 @@ class NpuActLinear:
     ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, dict[str, float]]:
         if (
             matrix.ndim != 2
-            or matrix.shape[0] != vector.size
+            or matrix.shape[0] != values.shape[1]
             or matrix.shape[1] == 0
-            or not 1 <= vector.size <= 1536
+            or not 1 <= values.shape[1] <= 1536
         ):
             raise ValueError("weight must have shape (1..1536 input features, output features)")
-        if residual is not None and residual.size != matrix.shape[1]:
-            raise ValueError("residual must contain one value per output feature")
-        weight_capacity = (INVOCATION_WORDS - HEADER_WORDS) // vector.size
-        fixed_activation_words = HEADER_WORDS + vector.size
+        sequence_length, input_count = values.shape
+        if residual is not None and residual.shape != (sequence_length, matrix.shape[1]):
+            raise ValueError("residual must match activation rows and output features")
+        weight_capacity = (INVOCATION_WORDS - HEADER_WORDS) // input_count
+        fixed_activation_words = HEADER_WORDS + values.size
         if rms_weight is not None:
-            fixed_activation_words += vector.size
+            fixed_activation_words += input_count
         if convolution_state is not None:
-            fixed_activation_words += vector.size * 9
-        capacity = weight_capacity
+            fixed_activation_words += input_count * 9
+        output_limit = STATE_OUTPUT_OFFSET if convolution_state is not None else INVOCATION_WORDS
+        output_capacity = (output_limit - HEADER_WORDS) // sequence_length
+        capacity = min(weight_capacity, output_capacity)
         while True:
             candidate = capacity + 1
+            if candidate > output_capacity:
+                break
             activation_words = fixed_activation_words
             if residual is not None:
-                activation_words += candidate
+                activation_words += candidate * sequence_length
             activation_words = (activation_words + 3) & ~3
-            activation_words += max(0, candidate - weight_capacity) * vector.size
+            activation_words += max(0, candidate - weight_capacity) * input_count
             if activation_words > INVOCATION_WORDS:
                 break
             capacity = candidate
+        if capacity == 0:
+            raise ValueError("linear output cannot fit the validated invocation span")
         per_submission = capacity * REPLICAS
-        result = np.empty(matrix.shape[1], dtype=np.float32)
+        result = np.empty((sequence_length, matrix.shape[1]), dtype=np.float32)
         total_execution = total_upload = total_download = 0.0
         submissions = 0
         final_state = None
@@ -162,44 +180,48 @@ class NpuActLinear:
                 replica_begin = begin + replica * capacity
                 count = max(0, min(capacity, matrix.shape[1] - replica_begin))
                 counts.append(count)
-                awords[replica, :4] = (MAGIC, VERSION, vector.size, count)
+                awords[replica, :4] = (MAGIC, VERSION, input_count, count)
                 awords[replica, 4] = flags
                 activation_pack[replica, 5] = rms_epsilon
                 weight_rows = min(count, weight_capacity)
                 awords[replica, 6] = weight_rows
-                wwords[replica, :4] = (MAGIC, VERSION, vector.size, count)
-                activation_pack[replica, HEADER_WORDS : HEADER_WORDS + vector.size] = vector
-                cursor = HEADER_WORDS + vector.size
+                awords[replica, 7] = sequence_length
+                wwords[replica, :4] = (MAGIC, VERSION, input_count, count)
+                activation_pack[replica, HEADER_WORDS : HEADER_WORDS + values.size] = values.reshape(
+                    -1
+                )
+                cursor = HEADER_WORDS + values.size
                 if residual is not None and count:
-                    activation_pack[replica, cursor : cursor + count] = residual[
-                        replica_begin : replica_begin + count
-                    ]
-                    cursor += count
+                    residual_chunk = residual[:, replica_begin : replica_begin + count]
+                    activation_pack[replica, cursor : cursor + residual_chunk.size] = (
+                        residual_chunk.reshape(-1)
+                    )
+                    cursor += residual_chunk.size
                 if rms_weight is not None:
-                    activation_pack[replica, cursor : cursor + vector.size] = rms_weight
-                    cursor += vector.size
+                    activation_pack[replica, cursor : cursor + input_count] = rms_weight
+                    cursor += input_count
                 if convolution_state is not None:
-                    activation_pack[replica, cursor : cursor + vector.size * 4] = (
+                    activation_pack[replica, cursor : cursor + input_count * 4] = (
                         convolution_state.reshape(-1)
                     )
-                    cursor += vector.size * 4
-                    activation_pack[replica, cursor : cursor + vector.size * 4] = (
+                    cursor += input_count * 4
+                    activation_pack[replica, cursor : cursor + input_count * 4] = (
                         convolution_weight.reshape(-1)
                     )
-                    cursor += vector.size * 4
-                    activation_pack[replica, cursor : cursor + vector.size] = convolution_bias
-                    cursor += vector.size
+                    cursor += input_count * 4
+                    activation_pack[replica, cursor : cursor + input_count] = convolution_bias
+                    cursor += input_count
                 if cursor > INVOCATION_WORDS:
                     raise ValueError("linear auxiliary data exceeds the validated invocation span")
                 cursor = (cursor + 3) & ~3
                 if weight_rows:
                     weight_pack[
-                        replica, HEADER_WORDS : HEADER_WORDS + weight_rows * vector.size
+                        replica, HEADER_WORDS : HEADER_WORDS + weight_rows * input_count
                     ] = matrix[:, replica_begin : replica_begin + weight_rows].T.reshape(-1)
                 activation_rows = count - weight_rows
                 if activation_rows:
                     activation_pack[
-                        replica, cursor : cursor + activation_rows * vector.size
+                        replica, cursor : cursor + activation_rows * input_count
                     ] = matrix[
                         :,
                         replica_begin + weight_rows : replica_begin + count,
@@ -216,20 +238,22 @@ class NpuActLinear:
                     raise RuntimeError("ACT linear output metadata is invalid")
                 if int(words[replica, 3]) != flags:
                     raise RuntimeError("ACT linear output mode is invalid")
+                if int(words[replica, 4]) != sequence_length:
+                    raise RuntimeError("ACT linear output sequence length is invalid")
                 replica_begin = begin + replica * capacity
-                result[replica_begin : replica_begin + count] = chunks[
-                    replica, HEADER_WORDS : HEADER_WORDS + count
-                ]
+                result[:, replica_begin : replica_begin + count] = chunks[
+                    replica, HEADER_WORDS : HEADER_WORDS + sequence_length * count
+                ].reshape(sequence_length, count)
             if convolution_state is not None:
                 final_state = chunks[
-                    0, STATE_OUTPUT_OFFSET : STATE_OUTPUT_OFFSET + vector.size * 4
-                ].copy().reshape(vector.size, 4)
+                    0, STATE_OUTPUT_OFFSET : STATE_OUTPUT_OFFSET + input_count * 4
+                ].copy().reshape(input_count, 4)
                 convolution_output = chunks[
-                    0, CONV_OUTPUT_OFFSET : CONV_OUTPUT_OFFSET + vector.size
-                ].copy().reshape(1, -1)
+                    0, CONV_OUTPUT_OFFSET : CONV_OUTPUT_OFFSET + sequence_length * input_count
+                ].copy().reshape(sequence_length, input_count)
             total_download += (perf_counter() - started) * 1000.0
             submissions += 1
-        return result.reshape(1, -1), convolution_output, final_state, {
+        return result, convolution_output, final_state, {
             "upload_ms": total_upload,
             "execution_wall_ms": total_execution,
             "download_ms": total_download,

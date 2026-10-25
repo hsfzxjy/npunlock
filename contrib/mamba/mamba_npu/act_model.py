@@ -45,7 +45,7 @@ def _add_linear_timings(target: dict[str, float], timing: dict[str, float]) -> N
 
 
 class ActMambaRunner:
-    """One-token Mamba-130m execution with all neural arithmetic on one ACT graph."""
+    """Batched-prefill Mamba-130m execution with neural arithmetic on one ACT graph."""
 
     def __init__(self, model: object, runtime: NpuActLinear):
         self.model = model
@@ -59,6 +59,11 @@ class ActMambaRunner:
         with torch.no_grad():
             token = torch.tensor([[token_id]], dtype=torch.int64)
             hidden = self.model.backbone.embeddings(token).squeeze(1).numpy()
+        return self._forward_hidden(hidden, cache, compute_logits=compute_logits)
+
+    def _forward_hidden(
+        self, hidden: np.ndarray, cache: ActModelCache | None, *, compute_logits: bool
+    ) -> tuple[np.ndarray | None, ActModelCache, dict[str, float]]:
         totals = _empty_timings()
         next_convolution = []
         next_ssm = []
@@ -104,7 +109,7 @@ class ActMambaRunner:
         logits = None
         if compute_logits:
             logits, timing = self.runtime.run(
-                hidden,
+                hidden[-1:],
                 self.model.lm_head.weight.detach().numpy().T,
                 rms_weight=self.model.backbone.norm_f.weight.detach().numpy(),
                 rms_epsilon=self.model.backbone.norm_f.variance_epsilon,
@@ -114,15 +119,21 @@ class ActMambaRunner:
         return logits, ActModelCache(next_convolution, next_ssm), totals
 
     def prefill(self, input_ids: object) -> tuple[np.ndarray, ActModelCache, dict[str, float]]:
+        import torch
+
         ids = np.asarray(input_ids, dtype=np.int64).reshape(-1)
         if ids.size == 0:
             raise ValueError("input_ids cannot be empty")
         cache = None
         totals = _empty_timings()
         logits = None
-        for index, token_id in enumerate(ids):
-            logits, cache, timing = self.step(
-                int(token_id), cache, compute_logits=index + 1 == ids.size
+        for begin in range(0, ids.size, 16):
+            end = min(begin + 16, ids.size)
+            with torch.no_grad():
+                tokens = torch.from_numpy(ids[begin:end].copy()).reshape(1, -1)
+                hidden = self.model.backbone.embeddings(tokens).squeeze(0).numpy()
+            logits, cache, timing = self._forward_hidden(
+                hidden, cache, compute_logits=end == ids.size
             )
             _add_timings(totals, timing)
         if logits is None:
