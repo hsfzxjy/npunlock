@@ -82,9 +82,11 @@ before serving.
 Categories use one restrained color each and are configurable by passing
 `Category` values to `ArtifactGraph`.
 
-The `dim irrelevant` toolbar option reduces the saturation of bytes, field
-marks, and region marks explicitly carrying `relevance: "irrelevant"`. It is
-enabled by default and never changes selection coloring or hides bytes. The
+The `dim irrelevant` toolbar option strongly fades both the foreground and
+semantic fill of hex/ASCII bytes explicitly carrying `relevance:
+"irrelevant"`. It also fades the complete field row in the inspector and the
+complete node or section row in the structure tree. It is enabled by default,
+never hides bytes, and leaves the active byte selection at full contrast. The
 toggle, structure/inspector visibility, and user-adjusted panel widths are
 stored in `localStorage`; malformed or unavailable storage falls back safely
 to defaults. Browser storage is scoped by origin, including the port, so use a

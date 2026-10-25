@@ -358,6 +358,11 @@ def test_bundled_frontend() -> None:
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
+    assert "--irrelevant-opacity: .3" in stylesheet
+    assert ".tree-row.irrelevant > *" in stylesheet
+    assert ".field-row.irrelevant > *" in stylesheet
+    assert ".byte.irrelevant:not(.selected)" in stylesheet
+    assert stylesheet.count("opacity: var(--irrelevant-opacity)") == 3
     index = static.joinpath("index.html").read_text(encoding="utf-8")
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index

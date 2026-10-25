@@ -26,6 +26,7 @@
   --status-height: 23px;
   --tree-width: 260px;
   --inspector-width: 310px;
+  --irrelevant-opacity: .3;
 }
 
 * { box-sizing: border-box; }
@@ -155,7 +156,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 }
 .tree-expander.empty { visibility: hidden; }
 .tree-mark { width: 7px; height: 7px; margin: 0 7px 0 2px; background: var(--unknown); }
-.tree-row.irrelevant .tree-mark, .field-row.irrelevant .field-mark { opacity: .58; }
+.tree-row.irrelevant > * { opacity: var(--irrelevant-opacity); }
 .tree-label { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-kind { margin-left: 7px; color: var(--text-faint); font-size: 11px; }
 
@@ -228,7 +229,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .byte.range-selected:not(.selected) { background: rgba(47, 112, 159, .16); box-shadow: inset 0 1px var(--select-line), inset 0 -1px var(--select-line); }
 .byte.field-highlight { background: color-mix(in srgb, var(--semantic-color) 25%, transparent); border-bottom-color: var(--semantic-color); }
 .byte.field-highlight.range-selected:not(.selected) { background: color-mix(in srgb, var(--semantic-color) 25%, transparent); }
-.byte.irrelevant:not(.selected) { color: var(--text-dim); }
+.byte.irrelevant:not(.selected) { opacity: var(--irrelevant-opacity); }
 .byte.empty { color: transparent; pointer-events: none; }
 
 .status {
@@ -290,6 +291,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   color: var(--text-faint);
   font: 11px/1.3 var(--ui-font);
 }
+.field-row.irrelevant > * { opacity: var(--irrelevant-opacity); }
 .jump {
   display: block;
   width: 100%;
