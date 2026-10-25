@@ -1,0 +1,188 @@
+{
+  "format": "npunlock.viz-schema",
+  "version": 1,
+  "id": "elf-little-endian-v1",
+  "nodes": {
+    "elf_image": {
+      "kind": "ELF image",
+      "category": "unknown",
+      "description": "Complete little-endian ELF container. Child regions explain its header, sections, and known relationships."
+    },
+    "elf_header": {
+      "kind": "header",
+      "category": "metadata",
+      "description": "Standard ELF identification and table-location fields for this binary artifact."
+    },
+    "section_table": {
+      "kind": "table",
+      "category": "metadata",
+      "description": "Contiguous standard ELF section headers. Each child also links its file-backed payload when present."
+    },
+    "section": {
+      "kind": "section",
+      "category": "unknown",
+      "description": "An ELF section header and, when present, its file-backed payload. No additional format meaning is inferred."
+    }
+  },
+  "records": {
+    "elf32_header": {
+      "size": 52,
+      "fields": [
+        {
+          "id": "class",
+          "offset": 4,
+          "size": 1,
+          "encoding": "u8",
+          "value_map": { "1": "ELF32", "2": "ELF64" },
+          "description": "ELF word size: 32-bit for standalone SHAVE kernels or 64-bit for native graphs.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "type",
+          "offset": 16,
+          "size": 2,
+          "encoding": "u16le",
+          "description": "Standard ELF object-file type.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "machine",
+          "offset": 18,
+          "size": 2,
+          "encoding": "u16le",
+          "description": "Standard ELF target-machine identifier.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "entry",
+          "offset": 24,
+          "size": 4,
+          "encoding": "u32le",
+          "display": "hex",
+          "description": "Virtual entry address recorded by the ELF header.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "section_table",
+          "offset": 32,
+          "size": 4,
+          "encoding": "u32le",
+          "display": "hex",
+          "description": "File offset of the ELF section-header table.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "section_count",
+          "offset": 48,
+          "size": 2,
+          "encoding": "u16le",
+          "description": "Number of entries in the ELF section-header table.",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    "elf64_header": {
+      "size": 64,
+      "fields": [
+        {
+          "id": "class",
+          "offset": 4,
+          "size": 1,
+          "encoding": "u8",
+          "value_map": { "1": "ELF32", "2": "ELF64" },
+          "description": "ELF word size: 32-bit for standalone SHAVE kernels or 64-bit for native graphs.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "type",
+          "offset": 16,
+          "size": 2,
+          "encoding": "u16le",
+          "description": "Standard ELF object-file type.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "machine",
+          "offset": 18,
+          "size": 2,
+          "encoding": "u16le",
+          "description": "Standard ELF target-machine identifier.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "entry",
+          "offset": 24,
+          "size": 8,
+          "encoding": "u64le",
+          "display": "hex",
+          "description": "Virtual entry address recorded by the ELF header.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "section_table",
+          "offset": 40,
+          "size": 8,
+          "encoding": "u64le",
+          "display": "hex",
+          "description": "File offset of the ELF section-header table.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "section_count",
+          "offset": 60,
+          "size": 2,
+          "encoding": "u16le",
+          "description": "Number of entries in the ELF section-header table.",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    "elf32_section_header": {
+      "size": 40,
+      "fields": [
+        { "id": "index", "computed": true, "description": "Zero-based position in the section-header table.", "confidence": "confirmed" },
+        { "id": "type", "offset": 4, "size": 4, "encoding": "u32le", "description": "Standard ELF section type.", "confidence": "confirmed" },
+        { "id": "file_offset", "offset": 16, "size": 4, "encoding": "u32le", "display": "hex", "description": "File-relative start of the section payload.", "confidence": "confirmed" },
+        { "id": "size", "offset": 20, "size": 4, "encoding": "u32le", "display": "hex", "description": "Section payload size in bytes, or logical size for NOBITS sections.", "confidence": "confirmed" },
+        { "id": "link", "offset": 24, "size": 4, "encoding": "u32le", "description": "Section index whose standard ELF role depends on this section type.", "confidence": "confirmed" },
+        { "id": "info", "offset": 28, "size": 4, "encoding": "u32le", "description": "Additional standard ELF metadata whose role depends on this section type.", "confidence": "confirmed" },
+        { "id": "alignment", "offset": 32, "size": 4, "encoding": "u32le", "display": "hex", "description": "Required section alignment in bytes.", "confidence": "confirmed" }
+      ]
+    },
+    "elf64_section_header": {
+      "size": 64,
+      "fields": [
+        { "id": "index", "computed": true, "description": "Zero-based position in the section-header table.", "confidence": "confirmed" },
+        { "id": "type", "offset": 4, "size": 4, "encoding": "u32le", "description": "Standard ELF section type.", "confidence": "confirmed" },
+        { "id": "file_offset", "offset": 24, "size": 8, "encoding": "u64le", "display": "hex", "description": "File-relative start of the section payload.", "confidence": "confirmed" },
+        { "id": "size", "offset": 32, "size": 8, "encoding": "u64le", "display": "hex", "description": "Section payload size in bytes, or logical size for NOBITS sections.", "confidence": "confirmed" },
+        { "id": "link", "offset": 40, "size": 4, "encoding": "u32le", "description": "Section index whose standard ELF role depends on this section type.", "confidence": "confirmed" },
+        { "id": "info", "offset": 44, "size": 4, "encoding": "u32le", "description": "Additional standard ELF metadata whose role depends on this section type.", "confidence": "confirmed" },
+        { "id": "alignment", "offset": 48, "size": 8, "encoding": "u64le", "display": "hex", "description": "Required section alignment in bytes.", "confidence": "confirmed" }
+      ]
+    }
+  },
+  "lookups": {
+    "section_descriptions": {
+      ".text": "Linked executable code in the standalone SHAVE ELF.",
+      ".symtab": "ELF symbol table used to name sections and relocation targets.",
+      ".strtab": "Null-terminated strings used by the ELF symbol table.",
+      ".shstrtab": "Null-terminated names for ELF sections."
+    },
+    "section_type_descriptions": {
+      "4": "ELF64 relocation entries with explicit addends; links identify their target records and sections.",
+      "8": "An ELF NOBITS section: it has a logical size but occupies no payload bytes in the file."
+    },
+    "defaults": {
+      "section_description": "An ELF section header and, when present, its file-backed payload. No additional format meaning is inferred."
+    }
+  },
+  "rules": {
+    "section_categories": [
+      { "value": "code", "equals": [".text"] },
+      { "value": "reference", "prefixes": [".rlt", ".rela", ".rel"] },
+      { "value": "reference", "contains": ["symtab"] },
+      { "value": "metadata", "contains": ["strtab", "note"] }
+    ]
+  }
+}

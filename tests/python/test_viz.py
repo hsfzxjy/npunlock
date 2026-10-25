@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python"))
 
 from npunlock.viz import Address, ArtifactGraph, Category, Field, Span, build_npunlock_graph, show  # noqa: E402
+from npunlock.viz._schema import decode_record_fields, load_schema, validate_schema  # noqa: E402
 
 
 def expect_error(error_type: type[BaseException], function, *args, **kwargs) -> None:
@@ -201,6 +202,39 @@ def test_npunlock_fixture_annotations() -> None:
     assert graph.nodes[exact[0].target].spans[0].artifact.id == "native"
 
 
+def test_bundled_semantic_schemas() -> None:
+    schemas = files("npunlock.viz").joinpath("schemas")
+    descriptor = json.loads(schemas.joinpath("descriptor.schema.json").read_text(encoding="utf-8"))
+    assert descriptor["$id"].endswith("/viz-descriptor-v1.json")
+
+    elf_schema = load_schema("elf.json")
+    act_schema = load_schema("npu3720-act-compiler-8.3.json")
+    assert validate_schema(elf_schema) is elf_schema
+    assert validate_schema(act_schema) is act_schema
+    expect_error(ValueError, load_schema, "outside.json")
+
+    data = (ROOT / "tests/fixtures/npu3720/add1-fp16.elf").read_bytes()
+    graph = ArtifactGraph("Schema decoding")
+    artifact = graph.artifact("elf", data=data)
+    fields = decode_record_fields(elf_schema, "elf32_header", artifact, data, 0)
+    assert fields["class"].value == "ELF32"
+    assert fields["entry"].spans[0].start == 24
+    assert fields["entry"].spans[0].size == 4
+    assert fields["entry"].display == hex(fields["entry"].value)
+
+    truncated = ArtifactGraph("Truncated")
+    tiny = truncated.artifact("tiny", data=b"\x00" * 8)
+    expect_error(ValueError, decode_record_fields, elf_schema, "elf32_header", tiny, tiny.read(), 0)
+
+    unknown_encoding = json.loads(json.dumps(elf_schema))
+    unknown_encoding["records"]["elf32_header"]["fields"][0]["encoding"] = "python-expression"
+    expect_error(ValueError, validate_schema, unknown_encoding)
+
+    outside_record = json.loads(json.dumps(elf_schema))
+    outside_record["records"]["elf32_header"]["fields"][0]["offset"] = 52
+    expect_error(ValueError, validate_schema, outside_record)
+
+
 def test_dense_model() -> None:
     graph = ArtifactGraph("Dense annotations")
     artifact = graph.artifact("dense", data=bytes(range(256)) * 32)
@@ -239,6 +273,9 @@ def test_bundled_frontend() -> None:
     index = static.joinpath("index.html").read_text(encoding="utf-8")
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index
+    schemas = files("npunlock.viz").joinpath("schemas")
+    for name in ("descriptor.schema.json", "elf.json", "npu3720-act-compiler-8.3.json"):
+        assert schemas.joinpath(name).read_bytes()
 
 
 def main() -> None:
@@ -246,6 +283,7 @@ def main() -> None:
     test_server_ranges_and_lifecycle()
     test_windows_ctrl_c_stops_blocking_viewer()
     test_npunlock_fixture_annotations()
+    test_bundled_semantic_schemas()
     test_dense_model()
     test_bundled_frontend()
     print("visualizer tests passed")

@@ -76,6 +76,32 @@ before serving.
 Categories use one restrained color each and are configurable by passing
 `Category` values to `ArtifactGraph`.
 
+## Format descriptors
+
+Fixed visualization metadata is bundled under `npunlock.viz/schemas/` rather
+than embedded in the parser. `elf.json` describes ELF32/ELF64 header and
+section-header fields. `npu3720-act-compiler-8.3.json` describes the observed
+ACT range, invocation, and Rela records for the supported carrier family.
+These files own fixed record sizes, relative field offsets and encodings,
+plain-text explanations, node presentation metadata, and section
+classification rules. `descriptor.schema.json` documents their versioned JSON
+shape.
+
+The boundary is deliberately hybrid. Python still recognizes and bounds-checks
+ELF containers, resolves dynamic section and string tables, validates record
+counts, and creates relationships whose targets depend on parsed values. JSON
+does not contain expressions, Python names, pointer arithmetic, or a query
+language. The loader accepts only a closed set of integer encodings and rejects
+unknown keys, out-of-record fields, inconsistent sizes, and unknown bundled
+descriptor names before decoding bytes. This keeps untrusted artifact bytes and
+untrusted external schemas from becoming executable parser logic.
+
+The bundled descriptors are an internal adapter boundary in version 1, not a
+general plugin API. Adding another reviewed binary format means adding a
+descriptor for its fixed records and a small Python adapter for its structural
+validation and relationships. The generic `ArtifactGraph` serialization stays
+format-agnostic and unchanged.
+
 ## npunlock ELF demonstration
 
 `build_npunlock_graph(native, kernel=None)` adds bounded ELF32/ELF64 structure

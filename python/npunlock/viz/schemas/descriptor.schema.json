@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://npunlock.local/schemas/viz-descriptor-v1.json",
+  "title": "npunlock visualization descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "id", "nodes", "records"],
+  "properties": {
+    "format": { "const": "npunlock.viz-schema" },
+    "version": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "category", "description"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "category": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "records": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["size", "fields"],
+        "properties": {
+          "size": { "type": "integer", "minimum": 1 },
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "description"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "computed": { "type": "boolean" },
+                "offset": { "type": "integer", "minimum": 0 },
+                "size": { "type": "integer", "minimum": 1 },
+                "encoding": {
+                  "enum": ["u8", "u16le", "u32le", "u64le", "i64le", "u64le-hi32", "u64le-lo32"]
+                },
+                "display": { "enum": ["hex", "hex-nonnegative"] },
+                "description": { "type": "string", "minLength": 1 },
+                "value_map": { "type": "object" },
+                "confidence": {
+                  "enum": ["confirmed", "strong-inference", "execution-tested-inference", "raw"]
+                },
+                "scope": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "lookups": { "type": "object" },
+    "rules": { "type": "object" }
+  }
+}

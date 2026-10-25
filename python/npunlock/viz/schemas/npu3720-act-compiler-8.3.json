@@ -1,0 +1,179 @@
+{
+  "format": "npunlock.viz-schema",
+  "version": 1,
+  "id": "npu3720-act-compiler-8.3",
+  "nodes": {
+    "act_range": {
+      "kind": "ActKernelRange",
+      "category": "metadata",
+      "description": "Observed 0x18-byte ACT kernel-range record. Its relocation selects code in KernelText; the +0x0c extent is an execution-tested inference for this supported carrier family."
+    },
+    "act_invocation": {
+      "kind": "ActKernelInvocation",
+      "category": "metadata",
+      "description": "Observed 0x40-byte ACT invocation record. Its +0 word selects a range in the supported compiler family; other decoded words remain carrier-specific where noted."
+    },
+    "code_image": {
+      "kind": "code image",
+      "category": "code",
+      "description": "Exact KernelText byte slice selected by a range relocation addend and the observed range extent."
+    },
+    "rela": {
+      "kind": "ELF64 Rela",
+      "category": "reference",
+      "description": "Standard ELF64 Rela entry connecting a field in the target section to a symbol plus an addend."
+    }
+  },
+  "records": {
+    "act_kernel_range": {
+      "size": 24,
+      "fields": [
+        {
+          "id": "code_virtual_address",
+          "offset": 4,
+          "size": 4,
+          "encoding": "u32le",
+          "display": "hex",
+          "description": "SHAVE virtual address recorded for this range's executable image.",
+          "confidence": "confirmed",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "code_reference",
+          "offset": 8,
+          "size": 4,
+          "encoding": "u32le",
+          "description": "Relocation-backed reference field targeting the KernelText section.",
+          "confidence": "confirmed",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "code_size",
+          "offset": 12,
+          "size": 4,
+          "encoding": "u32le",
+          "display": "hex",
+          "description": "Observed executable extent at record +0x0c; its bounding role is an execution-tested inference.",
+          "confidence": "execution-tested-inference",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        }
+      ]
+    },
+    "act_kernel_invocation": {
+      "size": 64,
+      "fields": [
+        {
+          "id": "selected_range",
+          "offset": 0,
+          "size": 4,
+          "encoding": "u32le",
+          "description": "Zero-based ACT range selector, confirmed for the supported compiler family.",
+          "confidence": "confirmed",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "parameters_reference",
+          "offset": 4,
+          "size": 4,
+          "encoding": "u32le",
+          "description": "Relocation-backed reference to this invocation's KernelParams base.",
+          "confidence": "confirmed",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "kernel_data_reference",
+          "offset": 8,
+          "size": 4,
+          "encoding": "u32le",
+          "description": "Relocation-backed data-reference field; its detailed ABI remains carrier-specific.",
+          "confidence": "raw",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "invocation_index",
+          "offset": 48,
+          "size": 4,
+          "encoding": "u32le",
+          "description": "Raw record word at +0x30 exposed for diagnosis; no general semantic contract is claimed.",
+          "confidence": "raw",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "tile_index",
+          "offset": 52,
+          "size": 4,
+          "encoding": "u32le",
+          "description": "Raw +0x34 value that strongly correlates with tile selection; exact relocation semantics remain open.",
+          "confidence": "strong-inference",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        },
+        {
+          "id": "kernel_range_index",
+          "offset": 56,
+          "size": 4,
+          "encoding": "u32le",
+          "description": "Raw record word at +0x38 exposed for diagnosis; no general semantic contract is claimed.",
+          "confidence": "raw",
+          "scope": "NPU3720 compiler-8.3 carrier family"
+        }
+      ]
+    },
+    "elf64_rela": {
+      "size": 24,
+      "fields": [
+        {
+          "id": "target_offset",
+          "offset": 0,
+          "size": 8,
+          "encoding": "u64le",
+          "display": "hex",
+          "description": "Offset within the relocation section's target section.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "symbol_index",
+          "offset": 8,
+          "size": 8,
+          "encoding": "u64le-hi32",
+          "description": "Symbol-table index encoded in the Rela information word.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "type",
+          "offset": 8,
+          "size": 8,
+          "encoding": "u64le-lo32",
+          "description": "Relocation type encoded in the Rela information word.",
+          "confidence": "confirmed"
+        },
+        {
+          "id": "addend",
+          "offset": 16,
+          "size": 8,
+          "encoding": "i64le",
+          "display": "hex-nonnegative",
+          "description": "Signed constant addend applied by the relocation.",
+          "confidence": "confirmed"
+        }
+      ]
+    }
+  },
+  "lookups": {
+    "section_descriptions": {
+      ".text.KernelText": "Executable SHAVE code storage. ACT range relocations select byte slices within this section.",
+      ".text.KernelData": "Kernel-associated data storage; this viewer does not infer an ABI for its contents.",
+      ".text.KernelParams": "ACT kernel parameter records referenced by invocation relocations; detailed layouts remain carrier-specific.",
+      ".text.ActKernelRanges": "Observed 0x18-byte ACT range records that reference executable slices in KernelText.",
+      ".text.ActKernelInvocations": "Observed 0x40-byte ACT invocation records that connect scheduled work to ranges and parameters."
+    }
+  },
+  "rules": {
+    "section_categories": [
+      { "value": "code", "contains": ["kerneltext"] },
+      { "value": "reference", "prefixes": [".rlt", ".rela", ".rel"] },
+      { "value": "reference", "contains": ["symtab"] },
+      { "value": "data", "contains": ["params", "data", "buffer", "constio"] },
+      { "value": "metadata", "contains": ["meta", "config", "range", "invocation"] }
+    ]
+  }
+}

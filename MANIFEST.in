@@ -6,3 +6,4 @@ recursive-include src *.c *.h *.ld
 recursive-include tools *.ps1
 recursive-include frontend *.json *.ts
 recursive-include python/npunlock/viz/static *.html *.css *.js
+recursive-include python/npunlock/viz/schemas *.json
