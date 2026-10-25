@@ -12,6 +12,7 @@
 #define LINEAR_CONV_WIDTH 4u
 #define LINEAR_STATE_OUTPUT_OFFSET 4096u
 #define LINEAR_CONV_OUTPUT_OFFSET 12288u
+#define LINEAR_RMS_OUTPUT_OFFSET 32768u
 #define MAMBA_MAGIC 0x4d414d31u
 #define MAMBA_PROJECTED_DELTA_MAGIC 0x4d414432u
 #define MAMBA_VERSION 1u
@@ -201,194 +202,6 @@ static void linear_dot_2x2(const float *left0, const float *left1, const float *
     float value1 = left1[index];
     float weight0 = right0[index];
     float weight1 = right1[index];
-    sum00 += value0 * weight0;
-    sum10 += value1 * weight0;
-    sum01 += value0 * weight1;
-    sum11 += value1 * weight1;
-  }
-  *total00 = sum00;
-  *total10 = sum10;
-  *total01 = sum01;
-  *total11 = sum11;
-}
-
-static float linear_rms_dot(const float *values, const float *norm_weights, const float *row,
-                            unsigned count, float rms_scale) {
-  float total = 0.0f;
-  unsigned index = 0u;
-  if ((((unsigned)values | (unsigned)norm_weights | (unsigned)row) & 15u) == 0u) {
-    linear_float4 sums = {0.0f, 0.0f, 0.0f, 0.0f};
-    const linear_float4 *values4 = (const linear_float4 *)values;
-    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
-    const linear_float4 *row4 = (const linear_float4 *)row;
-    for (; index + 4u <= count; index += 4u) {
-      sums += (values4[index / 4u] * (norm_weights4[index / 4u] * rms_scale)) *
-              row4[index / 4u];
-    }
-    total = (sums[0] + sums[1]) + (sums[2] + sums[3]);
-  }
-  for (; index < count; ++index) {
-    float value = values[index];
-    value *= rms_scale * norm_weights[index];
-    total += value * row[index];
-  }
-  return total;
-}
-
-static void linear_rms_dot_pair(const float *values0, const float *values1,
-                                const float *norm_weights, const float *row, unsigned count,
-                                float rms_scale0, float rms_scale1, float *total0,
-                                float *total1) {
-  float sum0 = 0.0f;
-  float sum1 = 0.0f;
-  unsigned index = 0u;
-  if ((((unsigned)values0 | (unsigned)values1 | (unsigned)norm_weights | (unsigned)row) & 15u) ==
-      0u) {
-    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
-    const linear_float4 *values04 = (const linear_float4 *)values0;
-    const linear_float4 *values14 = (const linear_float4 *)values1;
-    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
-    const linear_float4 *row4 = (const linear_float4 *)row;
-    for (; index + 4u <= count; index += 4u) {
-      linear_float4 norm_weight = norm_weights4[index / 4u];
-      linear_float4 weight = row4[index / 4u];
-      sums0 += (values04[index / 4u] * (norm_weight * rms_scale0)) * weight;
-      sums1 += (values14[index / 4u] * (norm_weight * rms_scale1)) * weight;
-    }
-    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
-    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
-  }
-  for (; index < count; ++index) {
-    float weight = row[index];
-    sum0 += (values0[index] * (norm_weights[index] * rms_scale0)) * weight;
-    sum1 += (values1[index] * (norm_weights[index] * rms_scale1)) * weight;
-  }
-  *total0 = sum0;
-  *total1 = sum1;
-}
-
-static void linear_rms_dot_rows_pair(const float *values, const float *norm_weights,
-                                     const float *row0, const float *row1, unsigned count,
-                                     float rms_scale, float *total0, float *total1) {
-  float sum0 = 0.0f;
-  float sum1 = 0.0f;
-  unsigned index = 0u;
-  if ((((unsigned)values | (unsigned)norm_weights | (unsigned)row0 | (unsigned)row1) & 15u) ==
-      0u) {
-    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
-    const linear_float4 *values4 = (const linear_float4 *)values;
-    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
-    const linear_float4 *row04 = (const linear_float4 *)row0;
-    const linear_float4 *row14 = (const linear_float4 *)row1;
-    for (; index + 4u <= count; index += 4u) {
-      linear_float4 value = values4[index / 4u] * (norm_weights4[index / 4u] * rms_scale);
-      sums0 += value * row04[index / 4u];
-      sums1 += value * row14[index / 4u];
-    }
-    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
-    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
-  }
-  for (; index < count; ++index) {
-    float value = values[index] * (norm_weights[index] * rms_scale);
-    sum0 += value * row0[index];
-    sum1 += value * row1[index];
-  }
-  *total0 = sum0;
-  *total1 = sum1;
-}
-
-static void linear_rms_dot_rows_quad(const float *values, const float *norm_weights,
-                                     const float *row0, const float *row1, const float *row2,
-                                     const float *row3, unsigned count, float rms_scale,
-                                     float *total0, float *total1, float *total2, float *total3) {
-  float sum0 = 0.0f;
-  float sum1 = 0.0f;
-  float sum2 = 0.0f;
-  float sum3 = 0.0f;
-  unsigned index = 0u;
-  if ((((unsigned)values | (unsigned)norm_weights | (unsigned)row0 | (unsigned)row1 |
-        (unsigned)row2 | (unsigned)row3) &
-       15u) == 0u) {
-    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums2 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums3 = {0.0f, 0.0f, 0.0f, 0.0f};
-    const linear_float4 *values4 = (const linear_float4 *)values;
-    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
-    const linear_float4 *row04 = (const linear_float4 *)row0;
-    const linear_float4 *row14 = (const linear_float4 *)row1;
-    const linear_float4 *row24 = (const linear_float4 *)row2;
-    const linear_float4 *row34 = (const linear_float4 *)row3;
-    for (; index + 4u <= count; index += 4u) {
-      linear_float4 value = values4[index / 4u] * (norm_weights4[index / 4u] * rms_scale);
-      sums0 += value * row04[index / 4u];
-      sums1 += value * row14[index / 4u];
-      sums2 += value * row24[index / 4u];
-      sums3 += value * row34[index / 4u];
-    }
-    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
-    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
-    sum2 = (sums2[0] + sums2[1]) + (sums2[2] + sums2[3]);
-    sum3 = (sums3[0] + sums3[1]) + (sums3[2] + sums3[3]);
-  }
-  for (; index < count; ++index) {
-    float value = values[index] * (norm_weights[index] * rms_scale);
-    sum0 += value * row0[index];
-    sum1 += value * row1[index];
-    sum2 += value * row2[index];
-    sum3 += value * row3[index];
-  }
-  *total0 = sum0;
-  *total1 = sum1;
-  *total2 = sum2;
-  *total3 = sum3;
-}
-
-static void linear_rms_dot_2x2(const float *values0, const float *values1,
-                               const float *norm_weights, const float *row0, const float *row1,
-                               unsigned count, float rms_scale0, float rms_scale1, float *total00,
-                               float *total10, float *total01, float *total11) {
-  float sum00 = 0.0f;
-  float sum10 = 0.0f;
-  float sum01 = 0.0f;
-  float sum11 = 0.0f;
-  unsigned index = 0u;
-  if ((((unsigned)values0 | (unsigned)values1 | (unsigned)norm_weights | (unsigned)row0 |
-        (unsigned)row1) &
-       15u) == 0u) {
-    linear_float4 sums00 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums10 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums01 = {0.0f, 0.0f, 0.0f, 0.0f};
-    linear_float4 sums11 = {0.0f, 0.0f, 0.0f, 0.0f};
-    const linear_float4 *values04 = (const linear_float4 *)values0;
-    const linear_float4 *values14 = (const linear_float4 *)values1;
-    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
-    const linear_float4 *row04 = (const linear_float4 *)row0;
-    const linear_float4 *row14 = (const linear_float4 *)row1;
-    for (; index + 4u <= count; index += 4u) {
-      linear_float4 norm_weight = norm_weights4[index / 4u];
-      linear_float4 value0 = values04[index / 4u] * (norm_weight * rms_scale0);
-      linear_float4 value1 = values14[index / 4u] * (norm_weight * rms_scale1);
-      linear_float4 weight0 = row04[index / 4u];
-      linear_float4 weight1 = row14[index / 4u];
-      sums00 += value0 * weight0;
-      sums10 += value1 * weight0;
-      sums01 += value0 * weight1;
-      sums11 += value1 * weight1;
-    }
-    sum00 = (sums00[0] + sums00[1]) + (sums00[2] + sums00[3]);
-    sum10 = (sums10[0] + sums10[1]) + (sums10[2] + sums10[3]);
-    sum01 = (sums01[0] + sums01[1]) + (sums01[2] + sums01[3]);
-    sum11 = (sums11[0] + sums11[1]) + (sums11[2] + sums11[3]);
-  }
-  for (; index < count; ++index) {
-    float norm_weight = norm_weights[index];
-    float value0 = values0[index] * (norm_weight * rms_scale0);
-    float value1 = values1[index] * (norm_weight * rms_scale1);
-    float weight0 = row0[index];
-    float weight1 = row1[index];
     sum00 += value0 * weight0;
     sum10 += value1 * weight0;
     sum01 += value0 * weight1;
@@ -653,18 +466,25 @@ void controlled_act(unsigned layerParams) {
     unsigned time_index;
     rms_weight_offset = auxiliary_offset;
     auxiliary_offset += input_count;
-    if (activation[5u] <= 0.0f) {
+    if (activation[5u] <= 0.0f ||
+        input_count > (invocation.element_count - LINEAR_RMS_OUTPUT_OFFSET) / sequence_length ||
+        output_count > (LINEAR_RMS_OUTPUT_OFFSET - LINEAR_HEADER) / sequence_length) {
       return;
     }
     for (time_index = 0u; time_index < sequence_length; ++time_index) {
       float sum_squares = 0.0f;
       unsigned index;
       const float *values = activation + LINEAR_HEADER + time_index * input_count;
+      float *normalized = output + LINEAR_RMS_OUTPUT_OFFSET + time_index * input_count;
       for (index = 0u; index < input_count; ++index) {
         sum_squares += values[index] * values[index];
       }
       rms_scales[time_index] =
           1.0f / sqrtf(sum_squares / (float)input_count + activation[5u]);
+      for (index = 0u; index < input_count; ++index) {
+        normalized[index] =
+            values[index] * (activation[rms_weight_offset + index] * rms_scales[time_index]);
+      }
     }
   }
   if ((flags & LINEAR_FLAG_CONVOLUTION) != 0u) {
@@ -719,9 +539,11 @@ void controlled_act(unsigned layerParams) {
     }
   }
   if (sequence_length == 1u) {
-    const float *values =
-        (flags & LINEAR_FLAG_CONVOLUTION) != 0u ? output + LINEAR_CONV_OUTPUT_OFFSET
-                                                : activation + LINEAR_HEADER;
+    const float *values = (flags & LINEAR_FLAG_RMS_NORM) != 0u
+                              ? output + LINEAR_RMS_OUTPUT_OFFSET
+                          : (flags & LINEAR_FLAG_CONVOLUTION) != 0u
+                              ? output + LINEAR_CONV_OUTPUT_OFFSET
+                              : activation + LINEAR_HEADER;
     for (output_index = 0u; output_index + 3u < output_count; output_index += 4u) {
       const float *row0 =
           output_index < weight_input_rows
@@ -743,13 +565,8 @@ void controlled_act(unsigned layerParams) {
       float total1;
       float total2;
       float total3;
-      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
-        linear_rms_dot_rows_quad(values, activation + rms_weight_offset, row0, row1, row2, row3,
-                                 input_count, rms_scales[0u], &total0, &total1, &total2, &total3);
-      } else {
-        linear_dot_rows_quad(values, row0, row1, row2, row3, input_count, &total0, &total1,
-                             &total2, &total3);
-      }
+      linear_dot_rows_quad(values, row0, row1, row2, row3, input_count, &total0, &total1, &total2,
+                           &total3);
       if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
         total0 += activation[residual_offset + output_index];
         total1 += activation[residual_offset + output_index + 1u];
@@ -772,12 +589,7 @@ void controlled_act(unsigned layerParams) {
               : activation + auxiliary_offset + (output_index + 1u - weight_input_rows) * input_count;
       float total0;
       float total1;
-      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
-        linear_rms_dot_rows_pair(values, activation + rms_weight_offset, row0, row1, input_count,
-                                 rms_scales[0u], &total0, &total1);
-      } else {
-        linear_dot_rows_pair(values, row0, row1, input_count, &total0, &total1);
-      }
+      linear_dot_rows_pair(values, row0, row1, input_count, &total0, &total1);
       if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
         total0 += activation[residual_offset + output_index];
         total1 += activation[residual_offset + output_index + 1u];
@@ -790,10 +602,7 @@ void controlled_act(unsigned layerParams) {
           output_index < weight_input_rows
               ? weights + LINEAR_HEADER + output_index * input_count
               : activation + auxiliary_offset + (output_index - weight_input_rows) * input_count;
-      float total = (flags & LINEAR_FLAG_RMS_NORM) != 0u
-                        ? linear_rms_dot(values, activation + rms_weight_offset, row, input_count,
-                                         rms_scales[0u])
-                        : linear_dot(values, row, input_count);
+      float total = linear_dot(values, row, input_count);
       if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
         total += activation[residual_offset + output_index];
       }
@@ -813,25 +622,23 @@ void controlled_act(unsigned layerParams) {
     unsigned time_index;
     for (time_index = 0u; time_index + 1u < sequence_length; time_index += 2u) {
       const float *values0 =
-          (flags & LINEAR_FLAG_CONVOLUTION) != 0u
+          (flags & LINEAR_FLAG_RMS_NORM) != 0u
+              ? output + LINEAR_RMS_OUTPUT_OFFSET + time_index * input_count
+          : (flags & LINEAR_FLAG_CONVOLUTION) != 0u
               ? output + LINEAR_CONV_OUTPUT_OFFSET + time_index * input_count
               : activation + LINEAR_HEADER + time_index * input_count;
       const float *values1 =
-          (flags & LINEAR_FLAG_CONVOLUTION) != 0u
+          (flags & LINEAR_FLAG_RMS_NORM) != 0u
+              ? output + LINEAR_RMS_OUTPUT_OFFSET + (time_index + 1u) * input_count
+          : (flags & LINEAR_FLAG_CONVOLUTION) != 0u
               ? output + LINEAR_CONV_OUTPUT_OFFSET + (time_index + 1u) * input_count
               : activation + LINEAR_HEADER + (time_index + 1u) * input_count;
       float total00;
       float total10;
       float total01;
       float total11;
-      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
-        linear_rms_dot_2x2(values0, values1, activation + rms_weight_offset, row0, row1,
-                           input_count, rms_scales[time_index], rms_scales[time_index + 1u],
-                           &total00, &total10, &total01, &total11);
-      } else {
-        linear_dot_2x2(values0, values1, row0, row1, input_count, &total00, &total10, &total01,
-                       &total11);
-      }
+      linear_dot_2x2(values0, values1, row0, row1, input_count, &total00, &total10, &total01,
+                     &total11);
       if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
         total00 += activation[residual_offset + time_index * output_count + output_index];
         total10 += activation[residual_offset + (time_index + 1u) * output_count + output_index];
@@ -846,17 +653,14 @@ void controlled_act(unsigned layerParams) {
     }
     if (time_index < sequence_length) {
       const float *values =
-          (flags & LINEAR_FLAG_CONVOLUTION) != 0u
+          (flags & LINEAR_FLAG_RMS_NORM) != 0u
+              ? output + LINEAR_RMS_OUTPUT_OFFSET + time_index * input_count
+          : (flags & LINEAR_FLAG_CONVOLUTION) != 0u
               ? output + LINEAR_CONV_OUTPUT_OFFSET + time_index * input_count
               : activation + LINEAR_HEADER + time_index * input_count;
       float total0;
       float total1;
-      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
-        linear_rms_dot_rows_pair(values, activation + rms_weight_offset, row0, row1, input_count,
-                                 rms_scales[time_index], &total0, &total1);
-      } else {
-        linear_dot_rows_pair(values, row0, row1, input_count, &total0, &total1);
-      }
+      linear_dot_rows_pair(values, row0, row1, input_count, &total0, &total1);
       if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
         total0 += activation[residual_offset + time_index * output_count + output_index];
         total1 += activation[residual_offset + time_index * output_count + output_index + 1u];
@@ -878,10 +682,9 @@ void controlled_act(unsigned layerParams) {
       float total0;
       float total1;
       if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
-        linear_rms_dot_pair(activation + LINEAR_HEADER + time_index * input_count,
-                            activation + LINEAR_HEADER + (time_index + 1u) * input_count,
-                            activation + rms_weight_offset, row, input_count,
-                            rms_scales[time_index], rms_scales[time_index + 1u], &total0, &total1);
+        linear_dot_pair(output + LINEAR_RMS_OUTPUT_OFFSET + time_index * input_count,
+                        output + LINEAR_RMS_OUTPUT_OFFSET + (time_index + 1u) * input_count, row,
+                        input_count, &total0, &total1);
       } else if ((flags & LINEAR_FLAG_CONVOLUTION) != 0u) {
         linear_dot_pair(output + LINEAR_CONV_OUTPUT_OFFSET + time_index * input_count,
                         output + LINEAR_CONV_OUTPUT_OFFSET + (time_index + 1u) * input_count, row,
@@ -901,9 +704,8 @@ void controlled_act(unsigned layerParams) {
     if (time_index < sequence_length) {
       float total;
       if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
-        total = linear_rms_dot(activation + LINEAR_HEADER + time_index * input_count,
-                               activation + rms_weight_offset, row, input_count,
-                               rms_scales[time_index]);
+        total = linear_dot(output + LINEAR_RMS_OUTPUT_OFFSET + time_index * input_count, row,
+                           input_count);
       } else if ((flags & LINEAR_FLAG_CONVOLUTION) != 0u) {
         total = linear_dot(output + LINEAR_CONV_OUTPUT_OFFSET + time_index * input_count, row,
                            input_count);

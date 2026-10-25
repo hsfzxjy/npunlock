@@ -143,7 +143,12 @@ class NpuActLinear:
             fixed_activation_words += input_count
         if convolution_state is not None:
             fixed_activation_words += input_count * 9
-        output_limit = STATE_OUTPUT_OFFSET if convolution_state is not None else INVOCATION_WORDS
+        if convolution_state is not None:
+            output_limit = STATE_OUTPUT_OFFSET
+        elif rms_weight is not None:
+            output_limit = 32768
+        else:
+            output_limit = INVOCATION_WORDS
         output_capacity = (output_limit - HEADER_WORDS) // sequence_length
         capacity = min(weight_capacity, output_capacity)
         while True:
