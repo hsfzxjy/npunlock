@@ -27,6 +27,61 @@ function displayValue(value) {
         return String(value);
     return JSON.stringify(value, null, 2) ?? String(value);
 }
+function byteCount(value) {
+    if (value < 1024)
+        return `${value} B`;
+    const units = ["KiB", "MiB", "GiB"];
+    let scaled = value / 1024;
+    let index = 0;
+    while (scaled >= 1024 && index < units.length - 1) {
+        scaled /= 1024;
+        index += 1;
+    }
+    return `${scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
+}
+function coverage(value, total) {
+    const percent = total > 0 ? value * 100 / total : 0;
+    return `${byteCount(value)} (${percent < 0.1 && value > 0 ? "<0.1" : percent.toFixed(1)}%)`;
+}
+function unionLength(spans, size) {
+    const ordered = spans
+        .map(span => ({ start: Math.max(0, span.start), end: Math.min(size, span.end) }))
+        .filter(span => span.end > span.start)
+        .sort((a, b) => a.start - b.start || a.end - b.end);
+    let total = 0;
+    let start = -1;
+    let end = -1;
+    for (const span of ordered) {
+        if (span.start > end) {
+            if (end > start)
+                total += end - start;
+            start = span.start;
+            end = span.end;
+        }
+        else {
+            end = Math.max(end, span.end);
+        }
+    }
+    if (end > start)
+        total += end - start;
+    return total;
+}
+function evidenceText(field) {
+    const confidence = field.properties?.confidence;
+    const scope = field.properties?.scope;
+    const labels = {
+        confirmed: "confirmed",
+        "strong-inference": "strong inference",
+        "execution-tested-inference": "execution-tested inference",
+        raw: "raw observation",
+    };
+    const parts = [];
+    if (typeof confidence === "string")
+        parts.push(labels[confidence] ?? confidence);
+    if (typeof scope === "string")
+        parts.push(scope);
+    return parts.length ? parts.join(" · ") : undefined;
+}
 class ByteCache {
     artifact;
     pages = new Map();
@@ -91,6 +146,7 @@ class Viewer {
     depths = new Map();
     spans = new Map();
     cache = new Map();
+    knowledge = new Map();
     expanded = new Set();
     current;
     history = [];
@@ -135,6 +191,8 @@ class Viewer {
         for (const root of this.roots) {
             this.assignDepth(root, 0);
         }
+        for (const artifact of graph.artifacts)
+            this.knowledge.set(artifact.id, this.buildKnowledge(artifact));
         const first = graph.artifacts[0];
         if (!first)
             throw new Error("artifact graph contains no artifacts");
@@ -149,6 +207,26 @@ class Viewer {
         this.depths.set(node.id, depth);
         for (const child of this.children.get(node.id) ?? [])
             this.assignDepth(child, depth + 1);
+    }
+    buildKnowledge(artifact) {
+        const touchedNodes = this.graph.nodes.filter(node => node.spans.some(span => span.artifact === artifact.id)
+            || Object.values(node.fields).some(field => (field.spans ?? []).some(span => span.artifact === artifact.id)));
+        const touchedIds = new Set(touchedNodes.map(node => node.id));
+        const fields = touchedNodes.flatMap(node => Object.values(node.fields).filter(field => {
+            const spans = field.spans ?? [];
+            return spans.length === 0 || spans.some(span => span.artifact === artifact.id);
+        }));
+        const mappedSpans = touchedNodes.flatMap(node => node.spans.filter(span => span.artifact === artifact.id
+            && !(node.parent === undefined && span.start === 0 && span.end === artifact.size)));
+        const fieldSpans = fields.flatMap(field => (field.spans ?? []).filter(span => span.artifact === artifact.id));
+        return {
+            entityCount: touchedNodes.length,
+            relationshipCount: this.graph.links.filter(link => touchedIds.has(link.source) || touchedIds.has(link.target)).length,
+            fieldCount: fields.length,
+            explainedFieldCount: fields.filter(field => Boolean(field.description)).length,
+            mappedBytes: unionLength(mappedSpans, artifact.size),
+            decodedFieldBytes: unionLength(fieldSpans, artifact.size),
+        };
     }
     bind() {
         this.hexScroll.addEventListener("scroll", () => {
@@ -566,7 +644,9 @@ class Viewer {
                     return span.node.description ? `${span.node.label} — ${span.node.description}` : span.node.label;
                 const field = span.node.fields[span.fieldName];
                 const label = `${span.node.label} · ${span.fieldName}`;
-                return field?.description ? `${label} — ${field.description}` : label;
+                const explanation = field?.description ? `${label} — ${field.description}` : label;
+                const evidence = field ? evidenceText(field) : undefined;
+                return evidence ? `${explanation} [${evidence}]` : explanation;
             })
                 .filter((value, index, all) => all.indexOf(value) === index)
                 .join("\n");
@@ -611,7 +691,7 @@ class Viewer {
         const subtitle = document.createElement("div");
         subtitle.className = "inspector-subtitle";
         subtitle.textContent = node ? `${node.kind} · ${node.id}` : `${this.current.end - this.current.offset} selected byte${this.current.end - this.current.offset === 1 ? "" : "s"}`;
-        this.inspector.append(title, subtitle);
+        this.inspector.append(title, subtitle, this.knowledgeElement(artifact));
         if (node) {
             if (node.description) {
                 const description = document.createElement("p");
@@ -662,6 +742,13 @@ class Viewer {
                         description.textContent = field.description;
                         element.append(description);
                     }
+                    const evidence = evidenceText(field);
+                    if (evidence) {
+                        const evidenceElement = document.createElement("span");
+                        evidenceElement.className = "field-evidence";
+                        evidenceElement.textContent = evidence;
+                        element.append(evidenceElement);
+                    }
                     section.append(element);
                 }
                 this.inspector.append(section);
@@ -696,6 +783,22 @@ class Viewer {
             }
             this.inspector.append(section);
         }
+    }
+    knowledgeElement(artifact) {
+        const knowledge = this.knowledge.get(artifact.id);
+        const element = document.createElement("div");
+        element.className = "artifact-knowledge";
+        element.title = "Mapped coverage excludes a whole-file root annotation. Decoded coverage is the union of exact field spans; neither percentage claims that opaque bytes are understood.";
+        const coverageLine = document.createElement("div");
+        coverageLine.textContent = `regions mapped ${coverage(knowledge.mappedBytes, artifact.size)} · fields decoded ${coverage(knowledge.decodedFieldBytes, artifact.size)}`;
+        const counts = document.createElement("div");
+        counts.className = "artifact-knowledge-counts";
+        const fieldSummary = knowledge.fieldCount
+            ? `${knowledge.explainedFieldCount}/${knowledge.fieldCount} fields explained`
+            : "no decoded fields";
+        counts.textContent = `${knowledge.entityCount} entities · ${knowledge.relationshipCount} relationships · ${fieldSummary}`;
+        element.append(coverageLine, counts);
+        return element;
     }
     section(label) {
         const section = document.createElement("section");

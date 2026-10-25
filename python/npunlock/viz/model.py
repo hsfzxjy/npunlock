@@ -188,6 +188,7 @@ class Field:
     spans: tuple[Span, ...] = ()
     display: str | None = None
     description: str | None = None
+    properties: Mapping[str, Any] = field(default_factory=dict)
 
     def __init__(
         self,
@@ -195,6 +196,7 @@ class Field:
         spans: Iterable[Span] = (),
         display: str | None = None,
         description: str | None = None,
+        properties: Mapping[str, Any] | None = None,
     ) -> None:
         object.__setattr__(self, "value", _json_value(value, "field value"))
         object.__setattr__(self, "spans", tuple(spans))
@@ -202,6 +204,11 @@ class Field:
             raise TypeError("field display must be a string or None")
         object.__setattr__(self, "display", display)
         object.__setattr__(self, "description", _optional_description(description, "field description"))
+        object.__setattr__(
+            self,
+            "properties",
+            dict(_json_value(dict(properties or {}), "field properties")),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         value = {"value": self.value}
@@ -209,6 +216,8 @@ class Field:
             value["display"] = self.display
         if self.description is not None:
             value["description"] = self.description
+        if self.properties:
+            value["properties"] = dict(self.properties)
         if self.spans:
             value["spans"] = [span.to_dict() for span in self.spans]
         return value
@@ -463,6 +472,7 @@ class ArtifactGraph:
                     field_spans,
                     field_value.get("display"),
                     field_value.get("description"),
+                    field_value.get("properties", {}),
                 )
             addresses = {
                 name: Address(address["space"], address["value"]) for name, address in item.get("addresses", {}).items()

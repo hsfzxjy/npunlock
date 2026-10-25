@@ -40,7 +40,14 @@ def test_model_and_serialization() -> None:
         description="Container record for the nested test entities.",
         kind="record",
         spans=[Span(first, 0, 32)],
-        fields={"size": Field(32, [Span(first, 4, 8)], description="Encoded record size in bytes.")},
+        fields={
+            "size": Field(
+                32,
+                [Span(first, 4, 8)],
+                description="Encoded record size in bytes.",
+                properties={"confidence": "confirmed", "scope": "test fixture"},
+            )
+        },
     )
     inner = graph.node(
         "inner",
@@ -68,6 +75,10 @@ def test_model_and_serialization() -> None:
     assert graph.to_dict()["nodes"][1]["parent"] == "outer"
     assert graph.to_dict()["nodes"][0]["description"].startswith("Container record")
     assert graph.to_dict()["nodes"][0]["fields"]["size"]["description"].startswith("Encoded record")
+    assert graph.to_dict()["nodes"][0]["fields"]["size"]["properties"] == {
+        "confidence": "confirmed",
+        "scope": "test fixture",
+    }
 
     portable = graph.dumps(include_data=True)
     restored = ArtifactGraph.loads(portable)
@@ -79,6 +90,7 @@ def test_model_and_serialization() -> None:
     expect_error(ValueError, Span, first, 4, 4)
     expect_error(ValueError, Category, "bad", "Bad", "#xyz")
     expect_error(ValueError, Field, 1, (), None, " ")
+    expect_error(ValueError, Field, 1, (), None, None, {"bad": float("nan")})
     expect_error(ValueError, graph.node, "bad-description", description="")
     invalid = ArtifactGraph("Invalid")
     artifact = invalid.artifact("tiny", data=b"abc")
@@ -189,12 +201,18 @@ def test_npunlock_fixture_annotations() -> None:
     )
     graph.validate()
     assert len(graph.artifacts) == 2
+    native_root = graph.nodes["native.elf"]
+    assert native_root.spans[0].start == 0
+    assert native_root.spans[0].end == graph.artifacts["native"].size
+    assert native_root.properties["format"] == "ELF64"
+    assert native_root.properties["section_count"] == 41
     assert sum(node.kind == "ActKernelRange" for node in graph.nodes.values()) == 2
     assert sum(node.kind == "ActKernelInvocation" for node in graph.nodes.values()) == 2
     assert sum(link.kind == "selects_range" for link in graph.links) == 2
     assert sum(link.kind == "selects_code" for link in graph.links) == 2
     assert graph.nodes["native.range.0"].description is not None
     assert graph.nodes["native.range.0"].fields["code_size"].description is not None
+    assert graph.nodes["native.range.0"].fields["code_size"].properties["confidence"] == "execution-tested-inference"
     exact = [link for link in graph.links if link.kind == "byte_identical_to"]
     assert len(exact) == 1
     assert exact[0].properties["evidence"] == "exact executable-image byte comparison"
@@ -280,6 +298,7 @@ def test_bundled_semantic_schemas() -> None:
     assert fields["entry"].spans[0].start == 24
     assert fields["entry"].spans[0].size == 4
     assert fields["entry"].display == hex(fields["entry"].value)
+    assert fields["entry"].properties["confidence"] == "confirmed"
 
     truncated = ArtifactGraph("Truncated")
     tiny = truncated.artifact("tiny", data=b"\x00" * 8)
@@ -326,6 +345,8 @@ def test_bundled_frontend() -> None:
     assert "class Viewer" in javascript
     assert "api/artifacts/" in javascript
     assert "field-highlight" in javascript
+    assert "artifact-knowledge" in javascript
+    assert "field-evidence" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet

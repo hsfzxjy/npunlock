@@ -138,7 +138,15 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
     root = graph.node(
         f"{prefix}.elf",
         label=f"{artifact.name} · ELF{elf.elf_class * 32}",
-        properties={"byte_order": "little-endian", "file_size": len(data)},
+        spans=[Span(artifact, 0, len(data))],
+        properties={
+            "format": f"ELF{elf.elf_class * 32}",
+            "byte_order": "little-endian",
+            "file_size": len(data),
+            "object_type": elf.elf_type,
+            "machine": elf.machine,
+            "section_count": len(elf.sections),
+        },
         **node_metadata(_ELF_SCHEMA, "elf_image"),
     )
     graph.node(

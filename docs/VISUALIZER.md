@@ -53,11 +53,14 @@ The serialization envelope is `npunlock.artifact-graph`, version 1.
   properties, an optional plain-text description, zero or more spans, fields,
   and explicitly named non-file `Address` values. Logical nodes need no byte
   span; one node may cover several noncontiguous spans.
-- `Field` optionally identifies its exact byte spans and has an optional
-  plain-text description. The inspector reports the
+- `Field` optionally identifies its exact byte spans and has optional
+  plain-text description and JSON properties. The inspector reports the
   total annotated byte size for each field and uses a stable, distinct field
   color in both the field row and selected entity's hex bytes. Fields without
-  exact spans explicitly show that their size is unknown.
+  exact spans explicitly show that their size is unknown. Descriptor-backed
+  fields use properties to carry evidence confidence and the scope in which a
+  meaning was established; the inspector shows those qualifications beside
+  the explanation.
 - `contain(parent, child)` defines the single-parent hierarchy. `link(source,
   target, kind)` adds arbitrary typed relationships independently of that
   hierarchy. Links may cross artifacts.
@@ -100,7 +103,14 @@ The bundled descriptors are an internal adapter boundary in version 1, not a
 general plugin API. Adding another reviewed binary format means adding a
 descriptor for its fixed records and a small Python adapter for its structural
 validation and relationships. The generic `ArtifactGraph` serialization stays
-format-agnostic and unchanged.
+format-agnostic; optional field properties are an additive version-1 feature.
+
+The inspector also summarizes what the graph knows about the active artifact:
+the union of bytes covered by semantic regions, the union of exact decoded
+field spans, entity and relationship counts, and how many fields have an
+explanation. A whole-file root annotation is excluded from region coverage so
+it cannot manufacture a misleading 100% result. These are annotation-coverage
+figures, not claims that every covered byte has a confirmed ABI meaning.
 
 ## npunlock ELF demonstration
 
@@ -136,9 +146,13 @@ compiler metadata, runtime configuration, and unconsumed task fields remain
 region-annotated rather than being presented as a supported ABI.
 
 The adapter supplies concise explanations for standard ELF regions and for
-documented ACT fields. Wording explicitly distinguishes confirmed meanings
-from execution-tested inferences and leaves undecoded carrier-specific fields
-qualified rather than guessing.
+documented ACT fields. Every descriptor-backed field carries its available
+evidence label (`confirmed`, `strong inference`, `execution-tested inference`,
+or `raw observation`) and any applicable carrier scope into the inspector and
+byte tooltip. Wording leaves undecoded carrier-specific fields qualified rather
+than guessing. The ELF root spans the complete artifact and states the parsed
+class, byte order, object type, machine, section count, and file size, so the
+file-level interpretation remains reachable from any byte.
 
 The optional `target_groups=` argument accepts the existing
 `NativeLibraries.discover_patch_targets()` or `discover_patch_targets_v2()`

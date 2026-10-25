@@ -210,10 +210,15 @@ def decode_record_fields(
     result: dict[str, Field] = {}
     for descriptor in record["fields"]:
         field_id = descriptor["id"]
+        properties = {key: descriptor[key] for key in ("confidence", "scope") if key in descriptor}
         if descriptor.get("computed", False):
             if field_id not in computed:
                 raise ValueError(f"computed field {record_id}.{field_id} was not supplied")
-            result[field_id] = Field(computed[field_id], description=descriptor["description"])
+            result[field_id] = Field(
+                computed[field_id],
+                description=descriptor["description"],
+                properties=properties,
+            )
             continue
         start = base + descriptor["offset"]
         end = start + descriptor["size"]
@@ -238,7 +243,13 @@ def decode_record_fields(
             display = hex(value)
         elif display_kind == "hex-nonnegative":
             display = hex(value) if value >= 0 else str(value)
-        result[field_id] = Field(value, [Span(artifact, start, end)], display, descriptor["description"])
+        result[field_id] = Field(
+            value,
+            [Span(artifact, start, end)],
+            display,
+            descriptor["description"],
+            properties,
+        )
     extra = set(computed) - {field["id"] for field in record["fields"] if field.get("computed", False)}
     if extra:
         raise ValueError(f"unused computed fields for {record_id}: {sorted(extra)!r}")
