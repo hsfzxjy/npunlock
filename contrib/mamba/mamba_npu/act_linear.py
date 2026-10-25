@@ -11,6 +11,7 @@ from .packing import pack_dynamic, pack_model, unpack_output
 
 
 MAGIC = 0x4C494E31
+PROJECTED_DELTA_MAGIC = 0x4D414432
 VERSION = 1
 REPLICAS = 4
 INVOCATION_WORDS = 65536
@@ -292,6 +293,146 @@ class NpuActLinear:
             :, :SCAN_INVOCATION_WORDS
         ].copy()
         sequence, final_state = unpack_output(scan_output, layout)
+        download_ms = (perf_counter() - started) * 1000.0
+        return sequence, final_state, {
+            "upload_ms": upload_ms,
+            "execution_wall_ms": execution_wall_ms,
+            "download_ms": download_ms,
+        }
+
+    def run_scan_projected_delta(
+        self,
+        a: object,
+        d: object,
+        delta_bias: object,
+        delta_weight: object,
+        time_step: object,
+        u: object,
+        b: object,
+        c: object,
+        z: object,
+        initial_state: object | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+        a_value = np.asarray(a, dtype=np.float32)
+        if (
+            a_value.ndim != 2
+            or not 1 <= a_value.shape[0] <= 1536
+            or a_value.shape[1] == 0
+            or a_value.shape[1] > 16
+        ):
+            raise ValueError("a must have shape (channels, 1..16 state dimensions)")
+        channels, state_size = a_value.shape
+        d_value = np.asarray(d, dtype=np.float32).reshape(-1)
+        bias_value = np.asarray(delta_bias, dtype=np.float32).reshape(-1)
+        steps = np.asarray(time_step, dtype=np.float32)
+        u_value = np.asarray(u, dtype=np.float32)
+        z_value = np.asarray(z, dtype=np.float32)
+        b_value = np.asarray(b, dtype=np.float32)
+        c_value = np.asarray(c, dtype=np.float32)
+        if steps.ndim != 2 or not 1 <= steps.shape[0] <= 16 or not 1 <= steps.shape[1] <= 64:
+            raise ValueError("time_step must have shape (1..16 positions, 1..64 rank)")
+        sequence_length, time_rank = steps.shape
+        delta_matrix = np.asarray(delta_weight, dtype=np.float32)
+        if delta_matrix.shape != (time_rank, channels):
+            raise ValueError("delta_weight must have shape (time rank, channels)")
+        if (
+            d_value.size != channels
+            or bias_value.size != channels
+            or u_value.shape != (channels, sequence_length)
+            or z_value.shape != (channels, sequence_length)
+            or b_value.shape != (sequence_length, state_size)
+            or c_value.shape != (sequence_length, state_size)
+        ):
+            raise ValueError("projected selective-scan tensors have incompatible shapes")
+        if initial_state is None:
+            state = np.zeros((channels, state_size), dtype=np.float32)
+        else:
+            state = np.asarray(initial_state, dtype=np.float32)
+            if state.shape != (channels, state_size):
+                raise ValueError("initial_state must have shape (channels, state dimensions)")
+        dynamic_pack = np.asarray(self.inputs["linear_activation"]).reshape(
+            REPLICAS, INVOCATION_WORDS
+        )
+        model_pack = np.asarray(self.inputs["linear_weights"]).reshape(REPLICAS, INVOCATION_WORDS)
+        dynamic_words = dynamic_pack.view(np.uint32)
+        model_words = model_pack.view(np.uint32)
+        base, remainder = divmod(channels, REPLICAS)
+        output_stride = sequence_length + state_size
+        shared_words = sequence_length * time_rank + sequence_length * state_size * 2
+        dynamic_stride = sequence_length * 2 + state_size
+        model_stride = time_rank + state_size + 4
+        channel_slices = []
+        begin = 0
+        started = perf_counter()
+        for replica in range(REPLICAS):
+            count = base + (1 if replica < remainder else 0)
+            end = begin + count
+            if (
+                HEADER_WORDS + shared_words + count * dynamic_stride > INVOCATION_WORDS
+                or HEADER_WORDS + count * model_stride > INVOCATION_WORDS
+                or HEADER_WORDS + count * output_stride > INVOCATION_WORDS
+            ):
+                raise ValueError("projected selective scan exceeds the invocation capacity")
+            channel_slices.append(slice(begin, end))
+            dynamic_words[replica, :7] = (
+                PROJECTED_DELTA_MAGIC,
+                VERSION,
+                count,
+                state_size,
+                sequence_length,
+                time_rank,
+                0,
+            )
+            model_words[replica, :7] = dynamic_words[replica, :7]
+            cursor = HEADER_WORDS
+            dynamic_pack[replica, cursor : cursor + steps.size] = steps.reshape(-1)
+            cursor += steps.size
+            dynamic_pack[replica, cursor : cursor + b_value.size] = b_value.reshape(-1)
+            cursor += b_value.size
+            dynamic_pack[replica, cursor : cursor + c_value.size] = c_value.reshape(-1)
+            cursor += c_value.size
+            dynamic_records = np.concatenate(
+                (u_value[begin:end], z_value[begin:end], state[begin:end]), axis=1
+            )
+            dynamic_pack[replica, cursor : cursor + count * dynamic_stride] = (
+                dynamic_records.reshape(-1)
+            )
+            model_records = np.zeros((count, model_stride), dtype=np.float32)
+            model_records[:, :time_rank] = delta_matrix[:, begin:end].T
+            model_records[:, time_rank : time_rank + state_size] = a_value[begin:end]
+            model_records[:, time_rank + state_size] = d_value[begin:end]
+            model_records[:, time_rank + state_size + 1] = bias_value[begin:end]
+            model_pack[
+                replica, HEADER_WORDS : HEADER_WORDS + count * model_stride
+            ] = model_records.reshape(-1)
+            begin = end
+        upload_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
+        self.program.run(self.inputs, outputs={"linear_output": self.output})
+        execution_wall_ms = (perf_counter() - started) * 1000.0
+        started = perf_counter()
+        chunks = np.asarray(self.output).reshape(REPLICAS, INVOCATION_WORDS)
+        words = chunks.view(np.uint32)
+        sequence = np.empty((channels, sequence_length), dtype=np.float32)
+        final_state = np.empty((channels, state_size), dtype=np.float32)
+        for replica, channel_slice in enumerate(channel_slices):
+            count = channel_slice.stop - channel_slice.start
+            expected = (
+                PROJECTED_DELTA_MAGIC,
+                VERSION,
+                0,
+                count,
+                state_size,
+                sequence_length,
+                time_rank,
+            )
+            if tuple(int(value) for value in words[replica, :7]) != expected:
+                raise RuntimeError("projected selective-scan output metadata is invalid")
+            records = chunks[
+                replica, HEADER_WORDS : HEADER_WORDS + count * output_stride
+            ].reshape(count, output_stride)
+            sequence[channel_slice] = records[:, :sequence_length]
+            final_state[channel_slice] = records[:, sequence_length:]
         download_ms = (perf_counter() - started) * 1000.0
         return sequence, final_state, {
             "upload_ms": upload_ms,

@@ -37,11 +37,17 @@ def _add_timings(target: dict[str, float], source: dict[str, float]) -> None:
         target[name] = target.get(name, 0.0) + value
 
 
-def _add_linear_timings(target: dict[str, float], timing: dict[str, float]) -> None:
+def _add_linear_timings(
+    target: dict[str, float], timing: dict[str, float], category: str | None = None
+) -> None:
     target["linear_submissions"] += timing["submissions"]
     target["linear_upload_ms"] += timing["upload_ms"]
     target["linear_execution_wall_ms"] += timing["execution_wall_ms"]
     target["linear_download_ms"] += timing["download_ms"]
+    if category is not None:
+        for name in ("submissions", "upload_ms", "execution_wall_ms", "download_ms"):
+            key = f"{category}_{name}"
+            target[key] = target.get(key, 0.0) + timing[name]
 
 
 class ActMambaRunner:
@@ -77,7 +83,7 @@ class ActMambaRunner:
                 rms_epsilon=layer.norm.variance_epsilon,
             )
             totals["fused_rms_norm_calls"] += 1.0
-            _add_linear_timings(totals, timing)
+            _add_linear_timings(totals, timing, "in_proj")
             x, z = np.split(projected, 2, axis=-1)
             conv_state = None if cache is None else cache.convolution_states[layer_index]
             parameters, convolution, conv_state, timing = self.runtime.run_convolution(
@@ -89,23 +95,30 @@ class ActMambaRunner:
             )
             next_convolution.append(conv_state)
             totals["fused_convolution_calls"] += 1.0
-            _add_linear_timings(totals, timing)
+            _add_linear_timings(totals, timing, "conv_x_proj")
             time_step = parameters[:, : mixer.time_step_rank]
             b_value = parameters[:, mixer.time_step_rank : mixer.time_step_rank + mixer.ssm_state_size]
             c_value = parameters[:, -mixer.ssm_state_size :]
-            delta, timing = self.runtime.run(time_step, mixer.dt_proj.weight.detach().numpy().T)
-            _add_linear_timings(totals, timing)
             a, d, bias = mixer_parameters(mixer)
             ssm_state = None if cache is None else cache.ssm_states[layer_index]
-            scan, ssm_state, timing = self.runtime.run_scan(
-                a, d, bias, convolution.T, delta.T, b_value, c_value, z.T, ssm_state
+            scan, ssm_state, timing = self.runtime.run_scan_projected_delta(
+                a,
+                d,
+                bias,
+                mixer.dt_proj.weight.detach().numpy().T,
+                time_step,
+                convolution.T,
+                b_value,
+                c_value,
+                z.T,
+                ssm_state,
             )
             next_ssm.append(ssm_state)
             totals["scan_execution_wall_ms"] += timing["execution_wall_ms"]
             hidden, timing = self.runtime.run(
                 scan.T, mixer.out_proj.weight.detach().numpy().T, residual=residual
             )
-            _add_linear_timings(totals, timing)
+            _add_linear_timings(totals, timing, "out_proj")
         logits = None
         if compute_logits:
             logits, timing = self.runtime.run(
@@ -115,7 +128,7 @@ class ActMambaRunner:
                 rms_epsilon=self.model.backbone.norm_f.variance_epsilon,
             )
             totals["fused_rms_norm_calls"] += 1.0
-            _add_linear_timings(totals, timing)
+            _add_linear_timings(totals, timing, "lm_head")
         return logits, ActModelCache(next_convolution, next_ssm), totals
 
     def prefill(self, input_ids: object) -> tuple[np.ndarray, ActModelCache, dict[str, float]]:

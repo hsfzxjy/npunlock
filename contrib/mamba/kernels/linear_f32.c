@@ -13,10 +13,12 @@
 #define LINEAR_STATE_OUTPUT_OFFSET 4096u
 #define LINEAR_CONV_OUTPUT_OFFSET 12288u
 #define MAMBA_MAGIC 0x4d414d31u
+#define MAMBA_PROJECTED_DELTA_MAGIC 0x4d414432u
 #define MAMBA_VERSION 1u
 #define MAMBA_HEADER 16u
 #define MAMBA_MAX_STATE 16u
 #define MAMBA_MAX_SEQUENCE 16u
+#define MAMBA_MAX_TIME_RANK 64u
 
 float expf(float value);
 float logf(float value);
@@ -492,6 +494,102 @@ static void mamba_execute(act_abi_invocation invocation, const float *dynamic_in
   }
 }
 
+static void mamba_projected_delta_fail(float *output, unsigned status) {
+  linear_store_word(output, 0u, MAMBA_PROJECTED_DELTA_MAGIC);
+  linear_store_word(output, 1u, MAMBA_VERSION);
+  linear_store_word(output, 2u, status);
+}
+
+static void mamba_execute_projected_delta(act_abi_invocation invocation,
+                                          const float *dynamic_input, const float *model_input,
+                                          float *output) {
+  unsigned channels = linear_word(dynamic_input, 2u);
+  unsigned state_size = linear_word(dynamic_input, 3u);
+  unsigned sequence_length = linear_word(dynamic_input, 4u);
+  unsigned time_rank = linear_word(dynamic_input, 5u);
+  unsigned shared_words;
+  unsigned dynamic_stride;
+  unsigned model_stride;
+  unsigned output_stride;
+  unsigned channel;
+  const float *time_steps;
+  const float *b_values;
+  const float *c_values;
+  if (linear_word(model_input, 0u) != MAMBA_PROJECTED_DELTA_MAGIC ||
+      linear_word(dynamic_input, 1u) != MAMBA_VERSION ||
+      linear_word(model_input, 1u) != MAMBA_VERSION) {
+    mamba_projected_delta_fail(output, 1u);
+    return;
+  }
+  if (channels != linear_word(model_input, 2u) ||
+      state_size != linear_word(model_input, 3u) || channels == 0u ||
+      channels > LINEAR_MAX_INPUTS || sequence_length != linear_word(model_input, 4u) ||
+      time_rank != linear_word(model_input, 5u) ||
+      state_size == 0u || state_size > MAMBA_MAX_STATE || sequence_length == 0u ||
+      sequence_length > MAMBA_MAX_SEQUENCE || time_rank == 0u ||
+      time_rank > MAMBA_MAX_TIME_RANK) {
+    mamba_projected_delta_fail(output, 2u);
+    return;
+  }
+  shared_words = sequence_length * time_rank + sequence_length * state_size * 2u;
+  dynamic_stride = sequence_length * 2u + state_size;
+  model_stride = time_rank + state_size + 4u;
+  output_stride = sequence_length + state_size;
+  if (MAMBA_HEADER + shared_words + channels * dynamic_stride > invocation.element_count ||
+      MAMBA_HEADER + channels * model_stride > invocation.element_count ||
+      MAMBA_HEADER + channels * output_stride > invocation.element_count) {
+    mamba_projected_delta_fail(output, 3u);
+    return;
+  }
+  linear_store_word(output, 0u, MAMBA_PROJECTED_DELTA_MAGIC);
+  linear_store_word(output, 1u, MAMBA_VERSION);
+  linear_store_word(output, 2u, 0u);
+  linear_store_word(output, 3u, channels);
+  linear_store_word(output, 4u, state_size);
+  linear_store_word(output, 5u, sequence_length);
+  linear_store_word(output, 6u, time_rank);
+  time_steps = dynamic_input + MAMBA_HEADER;
+  b_values = time_steps + sequence_length * time_rank;
+  c_values = b_values + sequence_length * state_size;
+  for (channel = 0u; channel < channels; ++channel) {
+    const float *dynamic_record =
+        dynamic_input + MAMBA_HEADER + shared_words + channel * dynamic_stride;
+    const float *model_record = model_input + MAMBA_HEADER + channel * model_stride;
+    float *output_record = output + MAMBA_HEADER + channel * output_stride;
+    const float *u = dynamic_record;
+    const float *z = u + sequence_length;
+    const float *initial_state = z + sequence_length;
+    const float *delta_weight = model_record;
+    const float *a = delta_weight + time_rank;
+    float skip = a[state_size];
+    float delta_bias = a[state_size + 1u];
+    float state[MAMBA_MAX_STATE];
+    unsigned state_index;
+    unsigned time_index;
+    for (state_index = 0u; state_index < state_size; ++state_index) {
+      state[state_index] = initial_state[state_index];
+    }
+    for (time_index = 0u; time_index < sequence_length; ++time_index) {
+      float raw_delta =
+          linear_dot(time_steps + time_index * time_rank, delta_weight, time_rank);
+      float transformed_delta = mamba_softplus(raw_delta + delta_bias);
+      float input_value = u[time_index];
+      float result = 0.0f;
+      const float *b = b_values + time_index * state_size;
+      const float *c = c_values + time_index * state_size;
+      for (state_index = 0u; state_index < state_size; ++state_index) {
+        state[state_index] = expf(transformed_delta * a[state_index]) * state[state_index] +
+                             transformed_delta * b[state_index] * input_value;
+        result += c[state_index] * state[state_index];
+      }
+      output_record[time_index] = (result + skip * input_value) * mamba_silu(z[time_index]);
+    }
+    for (state_index = 0u; state_index < state_size; ++state_index) {
+      output_record[sequence_length + state_index] = state[state_index];
+    }
+  }
+}
+
 void controlled_act(unsigned layerParams) {
   act_abi_invocation invocation;
   const float *activation;
@@ -516,6 +614,10 @@ void controlled_act(unsigned layerParams) {
   output = ACT_ABI_OUTPUT_PTR32(float, invocation, 2u);
   if (linear_word(activation, 0u) == MAMBA_MAGIC) {
     mamba_execute(invocation, activation, weights, output);
+    return;
+  }
+  if (linear_word(activation, 0u) == MAMBA_PROJECTED_DELTA_MAGIC) {
+    mamba_execute_projected_delta(invocation, activation, weights, output);
     return;
   }
   if (invocation.element_count != LINEAR_INVOCATION_WORDS ||
