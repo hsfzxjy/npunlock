@@ -661,10 +661,8 @@ class Viewer {
                 || Number(Boolean(b.fieldName)) - Number(Boolean(a.fieldName))
                 || (this.depths.get(b.node.id) ?? 0) - (this.depths.get(a.node.id) ?? 0));
         }
-        const focusedSection = this.current.nodeId ? this.nodes.get(this.current.nodeId) : undefined;
-        const focusedSpans = focusedSection?.kind === "section"
-            ? focusedSection.spans.filter(span => span.artifact === artifact.id)
-            : [];
+        const focusedNode = this.current.nodeId ? this.nodes.get(this.current.nodeId) : undefined;
+        const focusedSpans = focusedNode?.spans.filter(span => span.artifact === artifact.id) ?? [];
         const fragment = document.createDocumentFragment();
         for (let rowIndex = first; rowIndex < last; rowIndex += 1) {
             const row = document.createElement("div");
@@ -685,12 +683,12 @@ class Viewer {
                 hexCells.append(this.byteElement(offset, value, annotations, false));
                 asciiCells.append(this.byteElement(offset, value, annotations, true));
             }
-            row.append(offsetElement, hexCells, asciiCells, this.sectionRangeGuide(rowOffset, focusedSpans));
+            row.append(offsetElement, hexCells, asciiCells, this.focusedRangeGuide(rowOffset, focusedSpans));
             fragment.append(row);
         }
         this.hexRows.replaceChildren(fragment);
     }
-    sectionRangeGuide(rowOffset, spans) {
+    focusedRangeGuide(rowOffset, spans) {
         const guide = document.createElement("span");
         guide.className = "range-guide";
         guide.setAttribute("aria-hidden", "true");

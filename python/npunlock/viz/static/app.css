@@ -225,16 +225,16 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .range-guide { position: relative; height: 18px; pointer-events: none; }
 .range-guide-segment {
   position: absolute;
-  inset: 0 auto 0 1px;
+  inset: 0 1px 0 auto;
   width: 8px;
-  border-left: 2px solid var(--select-line);
+  border-right: 2px solid var(--select-line);
   opacity: .85;
 }
 .range-guide-segment.range-start::before,
 .range-guide-segment.range-end::after {
   content: "";
   position: absolute;
-  left: 0;
+  right: 0;
   width: 7px;
   border-top: 2px solid var(--select-line);
 }
