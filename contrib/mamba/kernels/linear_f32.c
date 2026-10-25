@@ -23,6 +23,8 @@ float logf(float value);
 float sqrtf(float value);
 void *memcpy(void *destination, const void *source, unsigned size);
 
+typedef float linear_float4 __attribute__((ext_vector_type(4)));
+
 static unsigned linear_word(const float *buffer, unsigned index) {
   union {
     float value;
@@ -39,6 +41,47 @@ static void linear_store_word(float *buffer, unsigned index, unsigned word) {
   } item;
   item.word = word;
   buffer[index] = item.value;
+}
+
+static float linear_dot(const float *left, const float *right, unsigned count) {
+  float total = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)left | (unsigned)right) & 15u) == 0u) {
+    linear_float4 sums = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *left4 = (const linear_float4 *)left;
+    const linear_float4 *right4 = (const linear_float4 *)right;
+    for (; index + 4u <= count; index += 4u) {
+      sums += left4[index / 4u] * right4[index / 4u];
+    }
+    total = (sums[0] + sums[1]) + (sums[2] + sums[3]);
+  }
+  for (; index < count; ++index) {
+    total += left[index] * right[index];
+  }
+  return total;
+}
+
+static float linear_rms_dot(const float *values, const float *norm_weights, const float *row,
+                            unsigned count, float rms_scale) {
+  float total = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)values | (unsigned)norm_weights | (unsigned)row) & 15u) == 0u) {
+    linear_float4 sums = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *values4 = (const linear_float4 *)values;
+    const linear_float4 *norm_weights4 = (const linear_float4 *)norm_weights;
+    const linear_float4 *row4 = (const linear_float4 *)row;
+    for (; index + 4u <= count; index += 4u) {
+      sums += (values4[index / 4u] * (norm_weights4[index / 4u] * rms_scale)) *
+              row4[index / 4u];
+    }
+    total = (sums[0] + sums[1]) + (sums[2] + sums[3]);
+  }
+  for (; index < count; ++index) {
+    float value = values[index];
+    value *= rms_scale * norm_weights[index];
+    total += value * row[index];
+  }
+  return total;
 }
 
 static float mamba_softplus(float value) {
@@ -148,6 +191,7 @@ void controlled_act(unsigned layerParams) {
   unsigned conv_state_offset = 0u;
   unsigned conv_weight_offset = 0u;
   unsigned conv_bias_offset = 0u;
+  unsigned weight_input_rows;
   float rms_scale = 1.0f;
   unsigned output_index;
   ACT_ABI_LOAD_INVOCATION32_OR_RETURN(layerParams, invocation);
@@ -167,9 +211,11 @@ void controlled_act(unsigned layerParams) {
   input_count = linear_word(activation, 2u);
   output_count = linear_word(weights, 3u);
   flags = linear_word(activation, 4u);
+  weight_input_rows = linear_word(activation, 6u);
   if (input_count == 0u || input_count > LINEAR_MAX_INPUTS ||
       input_count != linear_word(weights, 2u) ||
-      LINEAR_HEADER + input_count * output_count > invocation.element_count ||
+      output_count != linear_word(activation, 3u) || weight_input_rows > output_count ||
+      weight_input_rows > (invocation.element_count - LINEAR_HEADER) / input_count ||
       (flags & ~(LINEAR_FLAG_RESIDUAL | LINEAR_FLAG_RMS_NORM | LINEAR_FLAG_CONVOLUTION)) != 0u ||
       (flags & (LINEAR_FLAG_RMS_NORM | LINEAR_FLAG_CONVOLUTION)) ==
           (LINEAR_FLAG_RMS_NORM | LINEAR_FLAG_CONVOLUTION)) {
@@ -177,6 +223,9 @@ void controlled_act(unsigned layerParams) {
   }
   auxiliary_offset = LINEAR_HEADER + input_count;
   if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
+    if (output_count > invocation.element_count - auxiliary_offset) {
+      return;
+    }
     auxiliary_offset += output_count;
   }
   if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
@@ -199,7 +248,10 @@ void controlled_act(unsigned layerParams) {
     conv_bias_offset = conv_weight_offset + input_count * LINEAR_CONV_WIDTH;
     auxiliary_offset = conv_bias_offset + input_count;
   }
+  auxiliary_offset = (auxiliary_offset + 3u) & ~3u;
   if (auxiliary_offset > invocation.element_count ||
+      output_count - weight_input_rows >
+          (invocation.element_count - auxiliary_offset) / input_count ||
       ((flags & LINEAR_FLAG_CONVOLUTION) != 0u &&
        (LINEAR_STATE_OUTPUT_OFFSET + input_count * LINEAR_CONV_WIDTH > invocation.element_count ||
         LINEAR_CONV_OUTPUT_OFFSET + input_count > invocation.element_count))) {
@@ -228,17 +280,18 @@ void controlled_act(unsigned layerParams) {
     }
   }
   for (output_index = 0u; output_index < output_count; ++output_index) {
-    const float *row = weights + LINEAR_HEADER + output_index * input_count;
-    float total = 0.0f;
-    unsigned input_index;
-    for (input_index = 0u; input_index < input_count; ++input_index) {
-      float value = activation[LINEAR_HEADER + input_index];
-      if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
-        value *= rms_scale * activation[rms_weight_offset + input_index];
-      } else if ((flags & LINEAR_FLAG_CONVOLUTION) != 0u) {
-        value = output[LINEAR_CONV_OUTPUT_OFFSET + input_index];
-      }
-      total += value * row[input_index];
+    const float *row =
+        output_index < weight_input_rows
+            ? weights + LINEAR_HEADER + output_index * input_count
+            : activation + auxiliary_offset + (output_index - weight_input_rows) * input_count;
+    float total;
+    if ((flags & LINEAR_FLAG_RMS_NORM) != 0u) {
+      total = linear_rms_dot(activation + LINEAR_HEADER, activation + rms_weight_offset, row,
+                             input_count, rms_scale);
+    } else if ((flags & LINEAR_FLAG_CONVOLUTION) != 0u) {
+      total = linear_dot(output + LINEAR_CONV_OUTPUT_OFFSET, row, input_count);
+    } else {
+      total = linear_dot(activation + LINEAR_HEADER, row, input_count);
     }
     if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
       total += activation[LINEAR_HEADER + input_count + output_index];

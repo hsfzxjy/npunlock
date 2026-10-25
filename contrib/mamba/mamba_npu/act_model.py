@@ -23,7 +23,9 @@ class ActModelCache:
 def _empty_timings() -> dict[str, float]:
     return {
         "linear_submissions": 0.0,
+        "linear_upload_ms": 0.0,
         "linear_execution_wall_ms": 0.0,
+        "linear_download_ms": 0.0,
         "scan_execution_wall_ms": 0.0,
         "fused_rms_norm_calls": 0.0,
         "fused_convolution_calls": 0.0,
@@ -35,6 +37,13 @@ def _add_timings(target: dict[str, float], source: dict[str, float]) -> None:
         target[name] = target.get(name, 0.0) + value
 
 
+def _add_linear_timings(target: dict[str, float], timing: dict[str, float]) -> None:
+    target["linear_submissions"] += timing["submissions"]
+    target["linear_upload_ms"] += timing["upload_ms"]
+    target["linear_execution_wall_ms"] += timing["execution_wall_ms"]
+    target["linear_download_ms"] += timing["download_ms"]
+
+
 class ActMambaRunner:
     """One-token Mamba-130m execution with all neural arithmetic on one ACT graph."""
 
@@ -43,8 +52,8 @@ class ActMambaRunner:
         self.runtime = runtime
 
     def step(
-        self, token_id: int, cache: ActModelCache | None = None
-    ) -> tuple[np.ndarray, ActModelCache, dict[str, float]]:
+        self, token_id: int, cache: ActModelCache | None = None, *, compute_logits: bool = True
+    ) -> tuple[np.ndarray | None, ActModelCache, dict[str, float]]:
         import torch
 
         with torch.no_grad():
@@ -63,8 +72,7 @@ class ActMambaRunner:
                 rms_epsilon=layer.norm.variance_epsilon,
             )
             totals["fused_rms_norm_calls"] += 1.0
-            totals["linear_submissions"] += timing["submissions"]
-            totals["linear_execution_wall_ms"] += timing["execution_wall_ms"]
+            _add_linear_timings(totals, timing)
             x, z = np.split(projected, 2, axis=-1)
             conv_state = None if cache is None else cache.convolution_states[layer_index]
             parameters, convolution, conv_state, timing = self.runtime.run_convolution(
@@ -76,14 +84,12 @@ class ActMambaRunner:
             )
             next_convolution.append(conv_state)
             totals["fused_convolution_calls"] += 1.0
-            totals["linear_submissions"] += timing["submissions"]
-            totals["linear_execution_wall_ms"] += timing["execution_wall_ms"]
+            _add_linear_timings(totals, timing)
             time_step = parameters[:, : mixer.time_step_rank]
             b_value = parameters[:, mixer.time_step_rank : mixer.time_step_rank + mixer.ssm_state_size]
             c_value = parameters[:, -mixer.ssm_state_size :]
             delta, timing = self.runtime.run(time_step, mixer.dt_proj.weight.detach().numpy().T)
-            totals["linear_submissions"] += timing["submissions"]
-            totals["linear_execution_wall_ms"] += timing["execution_wall_ms"]
+            _add_linear_timings(totals, timing)
             a, d, bias = mixer_parameters(mixer)
             ssm_state = None if cache is None else cache.ssm_states[layer_index]
             scan, ssm_state, timing = self.runtime.run_scan(
@@ -94,17 +100,17 @@ class ActMambaRunner:
             hidden, timing = self.runtime.run(
                 scan.T, mixer.out_proj.weight.detach().numpy().T, residual=residual
             )
-            totals["linear_submissions"] += timing["submissions"]
-            totals["linear_execution_wall_ms"] += timing["execution_wall_ms"]
-        logits, timing = self.runtime.run(
-            hidden,
-            self.model.lm_head.weight.detach().numpy().T,
-            rms_weight=self.model.backbone.norm_f.weight.detach().numpy(),
-            rms_epsilon=self.model.backbone.norm_f.variance_epsilon,
-        )
-        totals["fused_rms_norm_calls"] += 1.0
-        totals["linear_submissions"] += timing["submissions"]
-        totals["linear_execution_wall_ms"] += timing["execution_wall_ms"]
+            _add_linear_timings(totals, timing)
+        logits = None
+        if compute_logits:
+            logits, timing = self.runtime.run(
+                hidden,
+                self.model.lm_head.weight.detach().numpy().T,
+                rms_weight=self.model.backbone.norm_f.weight.detach().numpy(),
+                rms_epsilon=self.model.backbone.norm_f.variance_epsilon,
+            )
+            totals["fused_rms_norm_calls"] += 1.0
+            _add_linear_timings(totals, timing)
         return logits, ActModelCache(next_convolution, next_ssm), totals
 
     def prefill(self, input_ids: object) -> tuple[np.ndarray, ActModelCache, dict[str, float]]:
@@ -114,9 +120,13 @@ class ActMambaRunner:
         cache = None
         totals = _empty_timings()
         logits = None
-        for token_id in ids:
-            logits, cache, timing = self.step(int(token_id), cache)
+        for index, token_id in enumerate(ids):
+            logits, cache, timing = self.step(
+                int(token_id), cache, compute_logits=index + 1 == ids.size
+            )
             _add_timings(totals, timing)
+        if logits is None:
+            raise RuntimeError("final prefill token did not produce logits")
         return np.asarray(logits), cache, totals
 
     def generate_greedy(
@@ -131,5 +141,7 @@ class ActMambaRunner:
             ids.append(next_token)
             if index + 1 < new_tokens:
                 logits, cache, timing = self.step(next_token, cache)
+                if logits is None:
+                    raise RuntimeError("decode token did not produce logits")
                 _add_timings(totals, timing)
         return ids, totals

@@ -124,7 +124,23 @@ class NpuActLinear:
             raise ValueError("weight must have shape (1..1536 input features, output features)")
         if residual is not None and residual.size != matrix.shape[1]:
             raise ValueError("residual must contain one value per output feature")
-        capacity = (INVOCATION_WORDS - HEADER_WORDS) // vector.size
+        weight_capacity = (INVOCATION_WORDS - HEADER_WORDS) // vector.size
+        fixed_activation_words = HEADER_WORDS + vector.size
+        if rms_weight is not None:
+            fixed_activation_words += vector.size
+        if convolution_state is not None:
+            fixed_activation_words += vector.size * 9
+        capacity = weight_capacity
+        while True:
+            candidate = capacity + 1
+            activation_words = fixed_activation_words
+            if residual is not None:
+                activation_words += candidate
+            activation_words = (activation_words + 3) & ~3
+            activation_words += max(0, candidate - weight_capacity) * vector.size
+            if activation_words > INVOCATION_WORDS:
+                break
+            capacity = candidate
         per_submission = capacity * REPLICAS
         result = np.empty(matrix.shape[1], dtype=np.float32)
         total_execution = total_upload = total_download = 0.0
@@ -132,8 +148,13 @@ class NpuActLinear:
         final_state = None
         convolution_output = None
         for begin in range(0, matrix.shape[1], per_submission):
-            activation_pack = np.zeros((REPLICAS, INVOCATION_WORDS), dtype=np.float32)
-            weight_pack = np.zeros_like(activation_pack)
+            started = perf_counter()
+            activation_pack = np.asarray(self.inputs["linear_activation"]).reshape(
+                REPLICAS, INVOCATION_WORDS
+            )
+            weight_pack = np.asarray(self.inputs["linear_weights"]).reshape(
+                REPLICAS, INVOCATION_WORDS
+            )
             awords = activation_pack.view(np.uint32)
             wwords = weight_pack.view(np.uint32)
             counts = []
@@ -144,6 +165,8 @@ class NpuActLinear:
                 awords[replica, :4] = (MAGIC, VERSION, vector.size, count)
                 awords[replica, 4] = flags
                 activation_pack[replica, 5] = rms_epsilon
+                weight_rows = min(count, weight_capacity)
+                awords[replica, 6] = weight_rows
                 wwords[replica, :4] = (MAGIC, VERSION, vector.size, count)
                 activation_pack[replica, HEADER_WORDS : HEADER_WORDS + vector.size] = vector
                 cursor = HEADER_WORDS + vector.size
@@ -168,13 +191,19 @@ class NpuActLinear:
                     cursor += vector.size
                 if cursor > INVOCATION_WORDS:
                     raise ValueError("linear auxiliary data exceeds the validated invocation span")
-                if count:
-                    weight_pack[replica, HEADER_WORDS : HEADER_WORDS + count * vector.size] = matrix[
-                        :, replica_begin : replica_begin + count
+                cursor = (cursor + 3) & ~3
+                if weight_rows:
+                    weight_pack[
+                        replica, HEADER_WORDS : HEADER_WORDS + weight_rows * vector.size
+                    ] = matrix[:, replica_begin : replica_begin + weight_rows].T.reshape(-1)
+                activation_rows = count - weight_rows
+                if activation_rows:
+                    activation_pack[
+                        replica, cursor : cursor + activation_rows * vector.size
+                    ] = matrix[
+                        :,
+                        replica_begin + weight_rows : replica_begin + count,
                     ].T.reshape(-1)
-            started = perf_counter()
-            np.copyto(self.inputs["linear_activation"], activation_pack.reshape(1, -1))
-            np.copyto(self.inputs["linear_weights"], weight_pack.reshape(1, -1))
             total_upload += (perf_counter() - started) * 1000.0
             started = perf_counter()
             self.program.run(self.inputs, outputs={"linear_output": self.output})
@@ -223,13 +252,13 @@ class NpuActLinear:
         model, model_layout = pack_model(a, d, delta_bias, sequence_length=layout.sequence_length)
         if model_layout != layout:
             raise ValueError("selective-scan model and dynamic layouts differ")
-        activation_pack = np.zeros((REPLICAS, INVOCATION_WORDS), dtype=np.float32)
-        weight_pack = np.zeros_like(activation_pack)
+        started = perf_counter()
+        activation_pack = np.asarray(self.inputs["linear_activation"]).reshape(
+            REPLICAS, INVOCATION_WORDS
+        )
+        weight_pack = np.asarray(self.inputs["linear_weights"]).reshape(REPLICAS, INVOCATION_WORDS)
         activation_pack[:, :SCAN_INVOCATION_WORDS] = dynamic.reshape(REPLICAS, SCAN_INVOCATION_WORDS)
         weight_pack[:, :SCAN_INVOCATION_WORDS] = model.reshape(REPLICAS, SCAN_INVOCATION_WORDS)
-        started = perf_counter()
-        np.copyto(self.inputs["linear_activation"], activation_pack.reshape(1, -1))
-        np.copyto(self.inputs["linear_weights"], weight_pack.reshape(1, -1))
         upload_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         self.program.run(self.inputs, outputs={"linear_output": self.output})

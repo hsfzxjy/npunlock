@@ -46,6 +46,7 @@ def main() -> None:
         saved_cache = cache.clone()
         generated = input_ids[0].tolist()
         first_continuation = None
+        decode_started = perf_counter()
         for index in range(args.new_tokens):
             token_id = int(np.argmax(logits[0]))
             generated.append(token_id)
@@ -54,6 +55,7 @@ def main() -> None:
                 add_timings(timings, step_timings)
                 if index == 0:
                     first_continuation = logits.copy()
+        decode_wall_ms = (perf_counter() - decode_started) * 1000.0
         first_token = generated[len(input_ids[0])]
         restored_logits, restored_cache, _ = runner.step(first_token, saved_cache)
         if first_continuation is None:
@@ -81,6 +83,11 @@ def main() -> None:
             ),
             "persistent_state_bytes": int(state_bytes),
             "prefill_wall_ms": prefill_wall_ms,
+            "incremental_decode_wall_ms": decode_wall_ms,
+            "end_to_end_generation_wall_ms": prefill_wall_ms + decode_wall_ms,
+            "generated_tokens_per_second": args.new_tokens
+            * 1000.0
+            / (prefill_wall_ms + decode_wall_ms),
             "timings_ms": timings,
             "npu_program_build_ms": runtime.build_ms,
             "execution_split": {
