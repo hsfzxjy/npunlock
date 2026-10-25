@@ -30,6 +30,16 @@ def _json_value(value: Any, what: str) -> Any:
     return value
 
 
+def _optional_description(value: str | None, what: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{what} must be a string or None")
+    if not value or value.strip() != value:
+        raise ValueError(f"{what} must be non-empty and have no surrounding whitespace")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Category:
     id: str
@@ -177,18 +187,28 @@ class Field:
     value: Any
     spans: tuple[Span, ...] = ()
     display: str | None = None
+    description: str | None = None
 
-    def __init__(self, value: Any, spans: Iterable[Span] = (), display: str | None = None) -> None:
+    def __init__(
+        self,
+        value: Any,
+        spans: Iterable[Span] = (),
+        display: str | None = None,
+        description: str | None = None,
+    ) -> None:
         object.__setattr__(self, "value", _json_value(value, "field value"))
         object.__setattr__(self, "spans", tuple(spans))
         if display is not None and not isinstance(display, str):
             raise TypeError("field display must be a string or None")
         object.__setattr__(self, "display", display)
+        object.__setattr__(self, "description", _optional_description(description, "field description"))
 
     def to_dict(self) -> dict[str, Any]:
         value = {"value": self.value}
         if self.display is not None:
             value["display"] = self.display
+        if self.description is not None:
+            value["description"] = self.description
         if self.spans:
             value["spans"] = [span.to_dict() for span in self.spans]
         return value
@@ -204,6 +224,7 @@ class Node:
     properties: Mapping[str, Any] = field(default_factory=dict)
     fields: Mapping[str, Field] = field(default_factory=dict)
     addresses: Mapping[str, Address] = field(default_factory=dict)
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +272,7 @@ class ArtifactGraph:
         node_id: str,
         *,
         label: str | None = None,
+        description: str | None = None,
         kind: str = "entity",
         category: str = "metadata",
         spans: Iterable[Span] = (),
@@ -263,6 +285,7 @@ class ArtifactGraph:
         if node_id in self.nodes:
             raise ValueError(f"duplicate node id: {node_id}")
         label = _identifier(label if label is not None else node_id, "node label")
+        description = _optional_description(description, "node description")
         kind = _identifier(kind, "node kind")
         if category not in self.categories:
             raise ValueError(f"unknown semantic category: {category}")
@@ -283,6 +306,7 @@ class ArtifactGraph:
             dict(_json_value(dict(properties or {}), "node properties")),
             field_values,
             address_values,
+            description,
         )
         self.nodes[node_id] = node
         if parent is not None:
@@ -366,6 +390,8 @@ class ArtifactGraph:
             }
             if node.id in self._parents:
                 value["parent"] = self._parents[node.id]
+            if node.description is not None:
+                value["description"] = node.description
             nodes.append(value)
         return {
             "format": FORMAT,
@@ -432,13 +458,19 @@ class ArtifactGraph:
                     Span(graph.artifacts[span["artifact"]], span["start"], span["end"])
                     for span in field_value.get("spans", ())
                 )
-                fields[name] = Field(field_value.get("value"), field_spans, field_value.get("display"))
+                fields[name] = Field(
+                    field_value.get("value"),
+                    field_spans,
+                    field_value.get("display"),
+                    field_value.get("description"),
+                )
             addresses = {
                 name: Address(address["space"], address["value"]) for name, address in item.get("addresses", {}).items()
             }
             graph.node(
                 item["id"],
                 label=item["label"],
+                description=item.get("description"),
                 kind=item["kind"],
                 category=item["category"],
                 spans=spans,

@@ -248,6 +248,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   overflow-wrap: anywhere;
 }
 .inspector-subtitle { color: var(--text-dim); margin-bottom: 8px; }
+.inspector-description { margin: 5px 0 8px; color: var(--text-dim); line-height: 1.42; }
 .inspector-section { margin-top: 11px; }
 .inspector-section > h2 {
   margin: 0 0 3px;
@@ -271,6 +272,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .field-name { color: var(--text-dim); overflow-wrap: anywhere; }
 .field-value { font-family: var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
 .field-size { color: var(--text-faint); font-family: var(--mono); white-space: nowrap; }
+.field-description { grid-column: 2 / -1; color: var(--text-dim); line-height: 1.35; }
 .jump {
   display: block;
   width: 100%;

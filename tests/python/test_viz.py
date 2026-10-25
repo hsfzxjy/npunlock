@@ -36,9 +36,10 @@ def test_model_and_serialization() -> None:
     outer = graph.node(
         "outer",
         label="Outer",
+        description="Container record for the nested test entities.",
         kind="record",
         spans=[Span(first, 0, 32)],
-        fields={"size": Field(32, [Span(first, 4, 8)])},
+        fields={"size": Field(32, [Span(first, 4, 8)], description="Encoded record size in bytes.")},
     )
     inner = graph.node(
         "inner",
@@ -64,6 +65,8 @@ def test_model_and_serialization() -> None:
     assert graph.nodes["inner"].addresses["runtime"].space == "virtual"
     assert len(graph.artifacts) == 2
     assert graph.to_dict()["nodes"][1]["parent"] == "outer"
+    assert graph.to_dict()["nodes"][0]["description"].startswith("Container record")
+    assert graph.to_dict()["nodes"][0]["fields"]["size"]["description"].startswith("Encoded record")
 
     portable = graph.dumps(include_data=True)
     restored = ArtifactGraph.loads(portable)
@@ -74,6 +77,8 @@ def test_model_and_serialization() -> None:
 
     expect_error(ValueError, Span, first, 4, 4)
     expect_error(ValueError, Category, "bad", "Bad", "#xyz")
+    expect_error(ValueError, Field, 1, (), None, " ")
+    expect_error(ValueError, graph.node, "bad-description", description="")
     invalid = ArtifactGraph("Invalid")
     artifact = invalid.artifact("tiny", data=b"abc")
     invalid.node("past-end", spans=[Span(artifact, 2, 4)])
@@ -187,6 +192,8 @@ def test_npunlock_fixture_annotations() -> None:
     assert sum(node.kind == "ActKernelInvocation" for node in graph.nodes.values()) == 2
     assert sum(link.kind == "selects_range" for link in graph.links) == 2
     assert sum(link.kind == "selects_code" for link in graph.links) == 2
+    assert graph.nodes["native.range.0"].description is not None
+    assert graph.nodes["native.range.0"].fields["code_size"].description is not None
     exact = [link for link in graph.links if link.kind == "byte_identical_to"]
     assert len(exact) == 1
     assert exact[0].properties["evidence"] == "exact executable-image byte comparison"

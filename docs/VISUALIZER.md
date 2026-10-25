@@ -50,10 +50,11 @@ The serialization envelope is `npunlock.artifact-graph`, version 1.
 - A `Span` is a nonempty file-relative half-open interval `[start, end)` and
   always identifies its artifact. It never represents a virtual address.
 - A `Node` has a stable ID, label, kind, semantic category, optional JSON
-  properties, zero or more spans, fields, and explicitly named non-file
-  `Address` values. Logical nodes need no byte span; one node may cover several
-  noncontiguous spans.
-- `Field` optionally identifies its exact byte spans. The inspector reports the
+  properties, an optional plain-text description, zero or more spans, fields,
+  and explicitly named non-file `Address` values. Logical nodes need no byte
+  span; one node may cover several noncontiguous spans.
+- `Field` optionally identifies its exact byte spans and has an optional
+  plain-text description. The inspector reports the
   total annotated byte size for each field and uses a stable, distinct field
   color in both the field row and selected entity's hex bytes. Fields without
   exact spans explicitly show that their size is unknown.
@@ -83,6 +84,11 @@ section records, ACT range and invocation records, their relocations, and
 range-selected `KernelText` images. When a standalone kernel `.text` is exactly
 byte-identical to a selected native code image, it adds that cross-artifact
 relationship; it does not infer one from names or sizes.
+
+The adapter supplies concise explanations for standard ELF regions and for
+documented ACT fields. Wording explicitly distinguishes confirmed meanings
+from execution-tested inferences and leaves undecoded carrier-specific fields
+qualified rather than guessing.
 
 The optional `target_groups=` argument accepts the existing
 `NativeLibraries.discover_patch_targets()` or `discover_patch_targets_v2()`

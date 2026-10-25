@@ -127,12 +127,48 @@ def _section_category(name: str) -> str:
     return "unknown"
 
 
+def _section_description(section: _Section) -> str:
+    descriptions = {
+        ".text.KernelText": (
+            "Executable SHAVE code storage. ACT range relocations select byte slices within this section."
+        ),
+        ".text.KernelData": "Kernel-associated data storage; this viewer does not infer an ABI for its contents.",
+        ".text.KernelParams": (
+            "ACT kernel parameter records referenced by invocation relocations; detailed layouts remain carrier-specific."
+        ),
+        ".text.ActKernelRanges": (
+            "Observed 0x18-byte ACT range records that reference executable slices in KernelText."
+        ),
+        ".text.ActKernelInvocations": (
+            "Observed 0x40-byte ACT invocation records that connect scheduled work to ranges and parameters."
+        ),
+        ".text": "Linked executable code in the standalone SHAVE ELF.",
+        ".symtab": "ELF symbol table used to name sections and relocation targets.",
+        ".strtab": "Null-terminated strings used by the ELF symbol table.",
+        ".shstrtab": "Null-terminated names for ELF sections.",
+    }
+    if section.name in descriptions:
+        return descriptions[section.name]
+    if section.section_type == 4:
+        return "ELF64 relocation entries with explicit addends; links identify their target records and sections."
+    if section.section_type == 8:
+        return "An ELF NOBITS section: it has a logical size but occupies no payload bytes in the file."
+    return "An ELF section header and, when present, its file-backed payload. No additional format meaning is inferred."
+
+
 def _field(
-    artifact: Artifact, data: bytes, offset: int, size: int, *, signed: bool = False, display: str | None = None
+    artifact: Artifact,
+    data: bytes,
+    offset: int,
+    size: int,
+    *,
+    signed: bool = False,
+    display: str | None = None,
+    description: str | None = None,
 ) -> Field:
     raw = _bounded(data, offset, size, "field")
     value = int.from_bytes(raw, "little", signed=signed)
-    return Field(value, [Span(artifact, offset, offset + size)], display)
+    return Field(value, [Span(artifact, offset, offset + size)], display, description)
 
 
 def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix: str) -> tuple[_Elf, dict[int, Node]]:
@@ -140,6 +176,7 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
     root = graph.node(
         f"{prefix}.elf",
         label=f"{artifact.name} · ELF{elf.elf_class * 32}",
+        description="Complete little-endian ELF container. Child regions explain its header, sections, and known relationships.",
         kind="ELF image",
         category="unknown",
         properties={"byte_order": "little-endian", "file_size": len(data)},
@@ -148,22 +185,41 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
     graph.node(
         f"{prefix}.header",
         label="ELF header",
+        description="Standard ELF identification and table-location fields for this binary artifact.",
         kind="header",
         category="metadata",
         spans=[Span(artifact, 0, elf.header_size)],
         fields={
-            "class": Field(f"ELF{elf.elf_class * 32}", [Span(artifact, 4, 5)]),
-            "type": _field(artifact, data, 16, 2),
-            "machine": _field(artifact, data, 18, 2),
-            "entry": _field(artifact, data, entry_offset, entry_size, display=hex(elf.entry)),
+            "class": Field(
+                f"ELF{elf.elf_class * 32}",
+                [Span(artifact, 4, 5)],
+                description="ELF word size: 32-bit for standalone SHAVE kernels or 64-bit for native graphs.",
+            ),
+            "type": _field(artifact, data, 16, 2, description="Standard ELF object-file type."),
+            "machine": _field(artifact, data, 18, 2, description="Standard ELF target-machine identifier."),
+            "entry": _field(
+                artifact,
+                data,
+                entry_offset,
+                entry_size,
+                display=hex(elf.entry),
+                description="Virtual entry address recorded by the ELF header.",
+            ),
             "section_table": _field(
                 artifact,
                 data,
                 32 if elf.elf_class == 1 else 40,
                 4 if elf.elf_class == 1 else 8,
                 display=hex(elf.section_offset),
+                description="File offset of the ELF section-header table.",
             ),
-            "section_count": _field(artifact, data, 48 if elf.elf_class == 1 else 60, 2),
+            "section_count": _field(
+                artifact,
+                data,
+                48 if elf.elf_class == 1 else 60,
+                2,
+                description="Number of entries in the ELF section-header table.",
+            ),
         },
         addresses={"entry": Address("virtual", elf.entry)},
         parent=root,
@@ -171,6 +227,7 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
     table = graph.node(
         f"{prefix}.sections",
         label=f"Section table · {len(elf.sections)} entries",
+        description="Contiguous standard ELF section headers. Each child also links its file-backed payload when present.",
         kind="table",
         category="metadata",
         spans=[Span(artifact, elf.section_offset, elf.section_offset + len(elf.sections) * elf.section_entry_size)],
@@ -189,17 +246,51 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
             offset_field, size_field, link_field, info_field, align_field = 24, 32, 40, 44, 48
             wide = 8
         fields = {
-            "index": section.index,
-            "type": _field(artifact, data, base + 4, 4),
-            "file_offset": _field(artifact, data, base + offset_field, wide, display=hex(section.offset)),
-            "size": _field(artifact, data, base + size_field, wide, display=hex(section.size)),
-            "link": _field(artifact, data, base + link_field, 4),
-            "info": _field(artifact, data, base + info_field, 4),
-            "alignment": _field(artifact, data, base + align_field, wide, display=hex(section.alignment)),
+            "index": Field(section.index, description="Zero-based position in the section-header table."),
+            "type": _field(artifact, data, base + 4, 4, description="Standard ELF section type."),
+            "file_offset": _field(
+                artifact,
+                data,
+                base + offset_field,
+                wide,
+                display=hex(section.offset),
+                description="File-relative start of the section payload.",
+            ),
+            "size": _field(
+                artifact,
+                data,
+                base + size_field,
+                wide,
+                display=hex(section.size),
+                description="Section payload size in bytes, or logical size for NOBITS sections.",
+            ),
+            "link": _field(
+                artifact,
+                data,
+                base + link_field,
+                4,
+                description="Section index whose standard ELF role depends on this section type.",
+            ),
+            "info": _field(
+                artifact,
+                data,
+                base + info_field,
+                4,
+                description="Additional standard ELF metadata whose role depends on this section type.",
+            ),
+            "alignment": _field(
+                artifact,
+                data,
+                base + align_field,
+                wide,
+                display=hex(section.alignment),
+                description="Required section alignment in bytes.",
+            ),
         }
         node = graph.node(
             f"{prefix}.section.{section.index}",
             label=section.name or f"section {section.index} (null)",
+            description=_section_description(section),
             kind="section",
             category=_section_category(section.name),
             spans=spans,
@@ -317,13 +408,39 @@ def _annotate_native_records(
         node = graph.node(
             f"{prefix}.range.{index}",
             label=f"ACT range {index}",
+            description=(
+                "Observed 0x18-byte ACT kernel-range record. Its relocation selects code in KernelText; "
+                "the +0x0c extent is an execution-tested inference for this supported carrier family."
+            ),
             kind="ActKernelRange",
             category="metadata",
             spans=[Span(artifact, offset, offset + 0x18)],
             fields={
-                "code_virtual_address": _field(artifact, data, offset + 4, 4, display=hex(virtual_address)),
-                "code_reference": _field(artifact, data, offset + 8, 4),
-                "code_size": _field(artifact, data, offset + 0x0C, 4, display=hex(code_size)),
+                "code_virtual_address": _field(
+                    artifact,
+                    data,
+                    offset + 4,
+                    4,
+                    display=hex(virtual_address),
+                    description="SHAVE virtual address recorded for this range's executable image.",
+                ),
+                "code_reference": _field(
+                    artifact,
+                    data,
+                    offset + 8,
+                    4,
+                    description="Relocation-backed reference field targeting the KernelText section.",
+                ),
+                "code_size": _field(
+                    artifact,
+                    data,
+                    offset + 0x0C,
+                    4,
+                    display=hex(code_size),
+                    description=(
+                        "Observed executable extent at record +0x0c; its bounding role is an execution-tested inference."
+                    ),
+                ),
             },
             addresses={"SHAVE code": Address("SHAVE virtual", virtual_address)},
             properties={"extent evidence": "execution-tested inference"},
@@ -338,6 +455,9 @@ def _annotate_native_records(
                 code = graph.node(
                     f"{prefix}.code.{addend:x}.{code_size:x}",
                     label=f"KernelText +{hex(addend)} · {hex(code_size)} bytes",
+                    description=(
+                        "Exact KernelText byte slice selected by a range relocation addend and the observed range extent."
+                    ),
                     kind="code image",
                     category="code",
                     spans=[Span(artifact, kernel_text.offset + addend, kernel_text.offset + addend + code_size)],
@@ -357,16 +477,58 @@ def _annotate_native_records(
         node = graph.node(
             f"{prefix}.invocation.{index}",
             label=f"ACT invocation {index}",
+            description=(
+                "Observed 0x40-byte ACT invocation record. Its +0 word selects a range in the supported compiler "
+                "family; other decoded words remain carrier-specific where noted."
+            ),
             kind="ActKernelInvocation",
             category="metadata",
             spans=[Span(artifact, offset, offset + 0x40)],
             fields={
-                "selected_range": _field(artifact, data, offset, 4),
-                "parameters_reference": _field(artifact, data, offset + 4, 4),
-                "kernel_data_reference": _field(artifact, data, offset + 8, 4),
-                "invocation_index": _field(artifact, data, offset + 0x30, 4),
-                "tile_index": _field(artifact, data, offset + 0x34, 4),
-                "kernel_range_index": _field(artifact, data, offset + 0x38, 4),
+                "selected_range": _field(
+                    artifact,
+                    data,
+                    offset,
+                    4,
+                    description="Zero-based ACT range selector, confirmed for the supported compiler family.",
+                ),
+                "parameters_reference": _field(
+                    artifact,
+                    data,
+                    offset + 4,
+                    4,
+                    description="Relocation-backed reference to this invocation's KernelParams base.",
+                ),
+                "kernel_data_reference": _field(
+                    artifact,
+                    data,
+                    offset + 8,
+                    4,
+                    description="Relocation-backed data-reference field; its detailed ABI remains carrier-specific.",
+                ),
+                "invocation_index": _field(
+                    artifact,
+                    data,
+                    offset + 0x30,
+                    4,
+                    description="Raw record word at +0x30 exposed for diagnosis; no general semantic contract is claimed.",
+                ),
+                "tile_index": _field(
+                    artifact,
+                    data,
+                    offset + 0x34,
+                    4,
+                    description=(
+                        "Raw +0x34 value that strongly correlates with tile selection; exact relocation semantics remain open."
+                    ),
+                ),
+                "kernel_range_index": _field(
+                    artifact,
+                    data,
+                    offset + 0x38,
+                    4,
+                    description="Raw record word at +0x38 exposed for diagnosis; no general semantic contract is claimed.",
+                ),
             },
             properties=properties,
             parent=section_nodes[invocations.index],
@@ -386,13 +548,31 @@ def _annotate_native_records(
             relocation = graph.node(
                 f"{prefix}.relocation.{relocation_section.index}.{index}",
                 label=f"{relocation_section.name}[{index}] · {symbol_name}",
+                description=(
+                    "Standard ELF64 Rela entry connecting a field in the target section to a symbol plus an addend."
+                ),
                 kind="ELF64 Rela",
                 category="reference",
                 spans=[Span(artifact, entry_offset, entry_offset + 24)],
                 fields={
-                    "target_offset": _field(artifact, data, entry_offset, 8, display=hex(target_offset)),
-                    "symbol_index": Field(symbol_index, [Span(artifact, entry_offset + 8, entry_offset + 16)]),
-                    "type": Field(relocation_type, [Span(artifact, entry_offset + 8, entry_offset + 16)]),
+                    "target_offset": _field(
+                        artifact,
+                        data,
+                        entry_offset,
+                        8,
+                        display=hex(target_offset),
+                        description="Offset within the relocation section's target section.",
+                    ),
+                    "symbol_index": Field(
+                        symbol_index,
+                        [Span(artifact, entry_offset + 8, entry_offset + 16)],
+                        description="Symbol-table index encoded in the Rela information word.",
+                    ),
+                    "type": Field(
+                        relocation_type,
+                        [Span(artifact, entry_offset + 8, entry_offset + 16)],
+                        description="Relocation type encoded in the Rela information word.",
+                    ),
                     "addend": _field(
                         artifact,
                         data,
@@ -400,6 +580,7 @@ def _annotate_native_records(
                         8,
                         signed=True,
                         display=hex(addend) if addend >= 0 else str(addend),
+                        description="Signed constant addend applied by the relocation.",
                     ),
                 },
                 properties={"symbol": symbol_name},

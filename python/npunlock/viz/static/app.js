@@ -317,7 +317,7 @@ class Viewer {
             const label = document.createElement("span");
             label.className = "tree-label";
             label.textContent = node.label;
-            label.title = node.label;
+            label.title = node.description ? `${node.label}\n${node.description}` : node.label;
             const kind = document.createElement("span");
             kind.className = "tree-kind";
             kind.textContent = node.kind;
@@ -561,7 +561,13 @@ class Viewer {
             if (this.hoveredNode && annotations.some(span => span.node.id === this.hoveredNode))
                 cell.classList.add("hovered");
             cell.title = annotations
-                .map(span => span.fieldName ? `${span.node.label} · ${span.fieldName}` : span.node.label)
+                .map(span => {
+                if (!span.fieldName)
+                    return span.node.description ? `${span.node.label} — ${span.node.description}` : span.node.label;
+                const field = span.node.fields[span.fieldName];
+                const label = `${span.node.label} · ${span.fieldName}`;
+                return field?.description ? `${label} — ${field.description}` : label;
+            })
                 .filter((value, index, all) => all.indexOf(value) === index)
                 .join("\n");
         }
@@ -607,6 +613,12 @@ class Viewer {
         subtitle.textContent = node ? `${node.kind} · ${node.id}` : `${this.current.end - this.current.offset} selected byte${this.current.end - this.current.offset === 1 ? "" : "s"}`;
         this.inspector.append(title, subtitle);
         if (node) {
+            if (node.description) {
+                const description = document.createElement("p");
+                description.className = "inspector-description";
+                description.textContent = node.description;
+                this.inspector.append(description);
+            }
             if (node.spans.length) {
                 const section = this.section("byte spans");
                 for (const span of node.spans)
@@ -644,6 +656,12 @@ class Viewer {
                     const byteSize = spans.reduce((total, span) => total + span.end - span.start, 0);
                     size.textContent = spans.length ? `${byteSize} byte${byteSize === 1 ? "" : "s"}` : "size unknown";
                     element.append(mark, label, value, size);
+                    if (field.description) {
+                        const description = document.createElement("span");
+                        description.className = "field-description";
+                        description.textContent = field.description;
+                        element.append(description);
+                    }
                     section.append(element);
                 }
                 this.inspector.append(section);
