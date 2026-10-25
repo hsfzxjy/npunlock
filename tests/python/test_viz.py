@@ -244,6 +244,13 @@ def test_npunlock_fixture_annotations() -> None:
     assert sum(node.kind == "MemRefData" for node in graph.nodes.values()) == 4
     assert sum(node.kind == "DMA task" for node in graph.nodes.values()) == 3
     assert sum(node.kind == "DPU invariant" for node in graph.nodes.values()) == 1
+    assert graph.nodes["native.section.0"].properties["relevance"] == "irrelevant"
+    assert graph.nodes["kernel.section.0"].properties["relevance"] == "irrelevant"
+    null_symbols = [
+        node for node in graph.nodes.values() if node.kind == "ELF symbol" and node.label == "symbol 0 (null)"
+    ]
+    assert len(null_symbols) == 6
+    assert all(node.properties["relevance"] == "irrelevant" for node in null_symbols)
 
     compatibility = graph.nodes["native.compatibility"]
     assert {name: field.value for name, field in compatibility.fields.items()} == {
@@ -274,6 +281,17 @@ def test_npunlock_fixture_annotations() -> None:
     assert dma.properties["transfer_type"] == 1
     assert dma.fields["length_bytes"].value == 32
     assert dma.fields["type1_source_width"].description
+    assert dma.fields["type0_post_or_type1_source_width"].properties["relevance"] == "irrelevant"
+    assert dma.fields["type0_wait_or_type1_destination_width"].properties["relevance"] == "irrelevant"
+    assert dma.fields["type1_source_width"].properties.get("relevance") != "irrelevant"
+    type0_blob = bytearray((ROOT / "tests/fixtures/npu3720/add1-shared-1x16.blob").read_bytes())
+    type0_blob[dma.spans[0].start + 8] &= 0xFC
+    type0_graph = build_npunlock_graph(type0_blob)
+    type0_dma = type0_graph.nodes["native.dma.5.0"]
+    assert type0_dma.properties["transfer_type"] == 0
+    assert type0_dma.fields["type1_source_width"].properties["relevance"] == "irrelevant"
+    assert type0_dma.fields["type1_post_mask"].properties["relevance"] == "irrelevant"
+    assert type0_dma.fields["type0_post_or_type1_source_width"].properties.get("relevance") != "irrelevant"
     dpu = graph.nodes["native.dpu-invariant.0"]
     assert dpu.fields["variant_count"].value == 1
     assert dpu.fields["cluster"].value == 0
@@ -367,6 +385,7 @@ def test_bundled_frontend() -> None:
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index
     assert 'id="toggle-dim-irrelevant"' in index
+    assert ">focus relevant</button>" in index
     schemas = files("npunlock.viz").joinpath("schemas")
     for name in ("descriptor.schema.json", "elf.json", "npu3720-act-compiler-8.3.json"):
         assert schemas.joinpath(name).read_bytes()

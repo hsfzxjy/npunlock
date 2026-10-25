@@ -133,6 +133,18 @@ def _section_description(section: _Section) -> str:
     return description or lookup(_ELF_SCHEMA, "defaults", "section_description")
 
 
+def _with_field_properties(field: Field, **updates: Any) -> Field:
+    properties = dict(field.properties)
+    properties.update(updates)
+    return Field(field.value, field.spans, field.display, field.description, properties)
+
+
+def _mark_fields_irrelevant(fields: dict[str, Field], names: Sequence[str], scope: str) -> None:
+    for name in names:
+        field = fields[name]
+        fields[name] = _with_field_properties(field, relevance="irrelevant", scope=scope)
+
+
 def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix: str) -> tuple[_Elf, dict[int, Node]]:
     elf = _parse_elf(data)
     root = graph.node(
@@ -181,12 +193,23 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
         metadata = node_metadata(_ELF_SCHEMA, "section")
         metadata["category"] = _section_category(section.name)
         metadata["description"] = _section_description(section)
+        properties: dict[str, Any] = {}
+        if section.index == 0 and not section.name and section.section_type == 0 and section.size == 0:
+            properties = {
+                "confidence": "confirmed",
+                "relevance": "irrelevant",
+                "relevance_scope": "ELF null-section sentinel; extended numbering is unsupported",
+            }
+            metadata["description"] = (
+                "ELF null-section sentinel. It has no payload or target in the supported interpretation."
+            )
         node = graph.node(
             f"{prefix}.section.{section.index}",
             label=section.name or f"section {section.index} (null)",
             spans=spans,
             fields=fields,
             addresses={"section virtual": Address("virtual", section.address)} if section.address else {},
+            properties=properties,
             parent=table,
             **metadata,
         )
@@ -227,18 +250,39 @@ def _annotate_symbols(
     prefix: str,
 ) -> dict[tuple[int, int], Node]:
     symbols = _symbols(data, elf)
+    referenced_symbols = {
+        (section.link, symbol_index)
+        for section in elf.sections
+        for _, _, symbol_index, _, _ in _relocations(data, elf, section)
+    }
     result: dict[tuple[int, int], Node] = {}
     for (table_index, symbol_index), (name, section_index, value) in symbols.items():
         table = elf.sections[table_index]
         offset = table.offset + symbol_index * table.entry_size
+        fields = decode_record_fields(_ELF_SCHEMA, f"elf{elf.elf_class * 32}_symbol", artifact, data, offset)
+        is_unused_null = (
+            symbol_index == 0
+            and (table_index, symbol_index) not in referenced_symbols
+            and all(field.value == 0 for field in fields.values())
+        )
+        metadata = node_metadata(_ELF_SCHEMA, "symbol")
+        properties: dict[str, Any] = {}
+        if is_unused_null:
+            properties = {
+                "confidence": "confirmed",
+                "relevance": "irrelevant",
+                "relevance_scope": "unreferenced all-zero ELF null-symbol sentinel",
+            }
+            metadata["description"] = "All-zero ELF null-symbol sentinel. No relocation in this artifact references it."
         node = graph.node(
             f"{prefix}.symbol.{table_index}.{symbol_index}",
             label=name or f"symbol {symbol_index} (null)",
             spans=[Span(artifact, offset, offset + table.entry_size)],
-            fields=decode_record_fields(_ELF_SCHEMA, f"elf{elf.elf_class * 32}_symbol", artifact, data, offset),
+            fields=fields,
             addresses={"symbol value": Address("virtual", value)} if value else {},
+            properties=properties,
             parent=section_nodes[table_index],
-            **node_metadata(_ELF_SCHEMA, "symbol"),
+            **metadata,
         )
         result[(table_index, symbol_index)] = node
         if section_index != 0 and section_index in section_nodes:
@@ -589,6 +633,29 @@ def _annotate_routing_records(
                 fields = decode_record_fields(_NPU3720_ACT_SCHEMA, "dma_task", artifact, data, offset)
                 config = fields["config"].value
                 planes_and_id = fields["planes_and_task_id"].value
+                transfer_type = config & 3
+                if transfer_type == 0:
+                    _mark_fields_irrelevant(
+                        fields,
+                        (
+                            "type1_source_width",
+                            "type1_source_stride",
+                            "type1_destination_width",
+                            "type1_destination_stride",
+                            "type1_post_mask",
+                            "type1_wait_mask",
+                        ),
+                        "not applicable to DMA transfer type 0",
+                    )
+                elif transfer_type == 1:
+                    _mark_fields_irrelevant(
+                        fields,
+                        (
+                            "type0_post_or_type1_source_width",
+                            "type0_wait_or_type1_destination_width",
+                        ),
+                        "redundant packed view; decomposed DMA type-1 fields are authoritative",
+                    )
                 node = graph.node(
                     f"{prefix}.dma.{section.index}.{index}",
                     label=f"DMA engine {suffix} · task {index}",
@@ -597,7 +664,7 @@ def _annotate_routing_records(
                     properties={
                         "engine_index": int(suffix),
                         "task_index": index,
-                        "transfer_type": config & 3,
+                        "transfer_type": transfer_type,
                         "plane_count": planes_and_id & 0xFF,
                         "task_id": planes_and_id >> 8,
                     },

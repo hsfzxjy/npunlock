@@ -698,15 +698,17 @@ class Viewer {
         }
         cell.textContent = ascii ? printable(value) : value.toString(16).padStart(2, "0");
         const primary = annotations[0];
-        const selectedField = this.current.nodeId
-            ? annotations.find(span => span.node.id === this.current.nodeId && span.fieldName)
-            : undefined;
+        const preferredField = (nodeId) => {
+            const fields = annotations.filter(span => span.node.id === nodeId && span.fieldName);
+            return fields.find(span => !this.isIrrelevant(span.node, span.fieldName)) ?? fields[0];
+        };
+        const selectedField = this.current.nodeId ? preferredField(this.current.nodeId) : undefined;
         if (primary) {
             cell.classList.add("annotated");
-            const semanticSpan = selectedField ?? primary;
-            const baseColor = selectedField?.fieldName
-                ? this.fieldColor(selectedField.node, selectedField.fieldName)
-                : this.categoryColor(primary.node.category);
+            const semanticSpan = selectedField ?? preferredField(primary.node.id) ?? primary;
+            const baseColor = semanticSpan.fieldName
+                ? this.fieldColor(semanticSpan.node, semanticSpan.fieldName)
+                : this.categoryColor(semanticSpan.node.category);
             const irrelevant = this.isIrrelevant(semanticSpan.node, semanticSpan.fieldName);
             const semanticColor = this.displayColor(baseColor, irrelevant);
             if (this.options.dimIrrelevant && irrelevant)

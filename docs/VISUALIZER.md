@@ -82,16 +82,18 @@ before serving.
 Categories use one restrained color each and are configurable by passing
 `Category` values to `ArtifactGraph`.
 
-The `dim irrelevant` toolbar option strongly fades both the foreground and
+The `focus relevant` toolbar option strongly fades both the foreground and
 semantic fill of hex/ASCII bytes explicitly carrying `relevance:
 "irrelevant"`. It also fades the complete field row in the inspector and the
-complete node or section row in the structure tree. It is enabled by default,
-never hides bytes, and leaves the active byte selection at full contrast. The
-toggle, structure/inspector visibility, and user-adjusted panel widths are
-stored in `localStorage`; malformed or unavailable storage falls back safely
-to defaults. Browser storage is scoped by origin, including the port, so use a
-stable explicit `show(graph, port=...)` value when preferences should carry
-between separate viewer processes. Random-port sessions remain isolated.
+complete node or section row in the structure tree. This is a focus aid, not a
+claim that muted bytes can be discarded: bytes remain the source of truth and
+the viewer never hides them. The option is enabled by default and leaves the
+active byte selection at full contrast. Its state, structure/inspector
+visibility, and user-adjusted panel widths are stored in `localStorage`;
+malformed or unavailable storage falls back safely to defaults. Browser
+storage is scoped by origin, including the port, so use a stable explicit
+`show(graph, port=...)` value when preferences should carry between separate
+viewer processes. Random-port sessions remain isolated.
 
 ## Format descriptors
 
@@ -170,6 +172,11 @@ file-level interpretation remains reachable from any byte.
 Reserved ELF identification padding is explicitly marked as confirmed
 irrelevant because the standard assigns it no supported meaning. Raw or
 unexplained carrier fields are not dimmed: uncertainty is not irrelevance.
+The npunlock adapter also marks ELF null-section sentinels, unreferenced
+all-zero null-symbol sentinels, and inactive or redundant DMA record
+interpretations as irrelevant. These classifications are conditional on the
+parsed artifact; a referenced symbol or active DMA interpretation stays at
+full emphasis.
 
 The optional `target_groups=` argument accepts the existing
 `NativeLibraries.discover_patch_targets()` or `discover_patch_targets_v2()`
