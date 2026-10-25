@@ -36,8 +36,9 @@ def letterbox(image: np.ndarray, size: int = 640) -> tuple[np.ndarray, Letterbox
     top = round(vertical / 2 - 0.1)
     bottom = round(vertical / 2 + 0.1)
     padded = cv2.copyMakeBorder(resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
-    tensor = np.ascontiguousarray(padded[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32)[None] / 255.0
-    return tensor, LetterboxInfo((height, width), (size, size), scale, left, top)
+    tensor = np.ascontiguousarray(padded[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32)
+    np.divide(tensor, np.float32(255.0), out=tensor)
+    return tensor[None], LetterboxInfo((height, width), (size, size), scale, left, top)
 
 
 def scale_boxes_to_image(boxes: np.ndarray, info: LetterboxInfo) -> np.ndarray:

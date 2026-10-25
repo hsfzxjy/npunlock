@@ -62,9 +62,11 @@ instead of searching all 255 records for every selected box. The separate
 carrier also uses two 2,048-word rows, which the reviewed compiler maps to two
 full-span ACT targets instead of four replicas. In a retained 50-run recheck,
 the separate NMS workload took 0.37 ms median wall time. Full
-OpenVINO-plus-CPU-NMS, two-workload, and single-graph medians were 14.82,
-14.27, and 14.61 ms. These submission-to-fence results are variable system
-measurements, not a general speedup claim or kernel-only timing.
+OpenVINO-plus-CPU-NMS, two-workload, and single-graph medians in the latest
+recheck were 13.42, 16.54, and 12.39 ms. Host tensor construction is bit-exact
+but now normalizes in place; its isolated median fell from 3.01 to 2.08 ms on
+`bus.jpg`. These submission-to-fence results are variable system measurements,
+not a general speedup claim or kernel-only timing.
 
 ## Public smoke test
 
