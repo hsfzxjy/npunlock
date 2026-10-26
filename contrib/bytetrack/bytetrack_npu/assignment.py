@@ -432,7 +432,12 @@ class NpuAssignment:
         forbidden: object | None = None,
     ) -> AssignmentResult:
         matrix, mask, limit = _normalize_problem(costs, threshold, forbidden)
+        fast_path = None
         if matrix.shape[0] == 0 or matrix.shape[1] == 0:
+            fast_path = "empty_fast_path_ms"
+        elif mask.all():
+            fast_path = "infeasible_fast_path_ms"
+        if fast_path is not None:
             started = perf_counter()
             rows, columns = matrix.shape
             return AssignmentResult(
@@ -443,7 +448,7 @@ class NpuAssignment:
                 augmented_cost=float(
                     np.float64(rows + columns) * np.float64(limit) * 0.5
                 ),
-                timings={"empty_fast_path_ms": (perf_counter() - started) * 1000.0},
+                timings={fast_path: (perf_counter() - started) * 1000.0},
             )
         started = perf_counter()
         # The cost-limited objective is symmetric; making the smaller side the

@@ -1,10 +1,11 @@
 # ByteTrack assignment on ACT-SHAVE
 
 This example tracks people in real video with ByteTrack while a custom
-ACT-SHAVE kernel solves every non-empty ByteTrack linear-assignment stage on
-Intel NPU3720. Empty stages are completed directly from their shape because
-there is no optimization problem or device work to perform. For non-empty
-stages, the kernel performs the complete bounded shortest-augmenting-
+ACT-SHAVE kernel solves every feasible ByteTrack linear-assignment stage on
+Intel NPU3720. Empty stages and matrices with no permitted edge are completed
+directly because their all-unmatched result is forced and there is no
+optimization problem or device work to perform. For feasible stages, the
+kernel performs the complete bounded shortest-augmenting-
 path search: it initializes assignments, updates dual costs, follows
 predecessors, augments the matching, and writes both row and column results.
 
@@ -22,8 +23,8 @@ The demo deliberately describes the split as it is:
 video decode, letterbox, annotation                         CPU
 YOLO11n and stable top-k candidate selection                OpenVINO NPU
 class filtering, greedy NMS, IoU costs, Kalman prediction   CPU
-non-empty ByteTrack linear-assignment stages                ACT-SHAVE NPU
-empty assignment contracts                                  CPU
+feasible ByteTrack linear-assignment stages                 ACT-SHAVE NPU
+empty or no-feasible-edge assignment contracts              CPU
 track activation, reactivation, loss and removal            CPU
 ```
 
@@ -113,14 +114,14 @@ demonstrates the control-flow capability and reduces CPU algorithm work; it is
 not a latency speedup over optimized CPU solvers at this capacity.
 
 The optimized 300-frame `vtest.avi` run produced CPU/NPU tracker agreement on
-every frame. Of 900 association stages, 549 had an empty side and completed
-from their shape without submitting a graph; all 351 non-empty stages executed
-on the NPU. YOLO inference took 9.58 ms median, the complete tracker took 1.87
-ms, and non-empty assignment graph calls took 0.94 ms median from submission
-through output copy. Complete decode-to-annotated-frame work took 19.05 ms
-median. Persistent identities included tracks visible for 289 and 282 frames.
-The tracker also uses an SPD Cholesky solve for its 4 by 4 Kalman updates.
-These are one-system measurements, not general performance claims.
+every frame. Of 900 association stages, 549 had an empty side and 19 non-empty
+matrices had no permitted edge, so 332 feasible stages executed on the NPU.
+YOLO inference took 9.67 ms median, the complete tracker took 1.94 ms, and
+feasible assignment graph calls took 0.99 ms median from submission through
+output copy. Complete decode-to-annotated-frame work took 19.11 ms median.
+Persistent identities included tracks visible for 289 and 282 frames. The
+tracker also uses an SPD Cholesky solve for its 4 by 4 Kalman updates. These are
+one-system measurements, not general performance claims.
 
 The CPU reference NMS used by this combined demo computes each selected box's
 remaining IoUs as one FP64 NumPy batch while preserving score/index ordering,
@@ -138,8 +139,8 @@ agreement; the median of their frame-time medians was 19.00 ms.
   16; the tracker rejects overflow instead of truncating internally.
 - Association is class-agnostic, matching the selected original ByteTrack
   reference. Filtering before the tracker controls which classes share it.
-- YOLO preprocessing, NMS, Kalman filtering, cost construction, empty
-  assignment contracts, lifecycle management, video I/O, and drawing remain
+- YOLO preprocessing, NMS, Kalman filtering, cost construction, forced
+  all-unmatched contracts, lifecycle management, video I/O, and drawing remain
   on the CPU.
 - The ordinary execution path copies through graphinfer's internal Level Zero
   allocations. Kernel-only device time is not exposed by this demo.
