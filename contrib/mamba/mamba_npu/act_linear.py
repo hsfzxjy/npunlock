@@ -7,13 +7,15 @@ import numpy as np
 import npunlock as npu
 
 from .packing import INVOCATION_WORDS as SCAN_INVOCATION_WORDS
+from .packing import REPLICAS as SCAN_REPLICAS
 from .packing import pack_dynamic, pack_model, unpack_output
 
 
 MAGIC = 0x4C494E31
 PROJECTED_DELTA_MAGIC = 0x4D414432
 VERSION = 1
-REPLICAS = 4
+GROUP_REPLICAS = 4
+REPLICAS = 8
 INVOCATION_WORDS = 65536
 LOGICAL_WORDS = REPLICAS * INVOCATION_WORDS
 HEADER_WORDS = 16
@@ -27,6 +29,7 @@ KERNEL_PATH = Path(__file__).resolve().parents[1] / "kernels" / "linear_f32.c"
 
 class NpuActLinear:
     def __init__(self, *, movi_dll_dir: str | Path, native_dir: str | Path | None = None):
+        npu.configure(movi_dll_dir=movi_dll_dir)
         activation = npu.input("linear_activation", shape=(1, LOGICAL_WORDS), dtype="f32")
         weights = npu.input("linear_weights", shape=(1, LOGICAL_WORDS), dtype="f32")
         output = npu.custom(
@@ -36,13 +39,34 @@ class NpuActLinear:
             carrier="Subtract",
             _name="linear_output",
         )
-        started = perf_counter()
-        self.program = npu.compile(
+        prepared = npu.prepare(
             npu.Graph([activation, weights], [output], name="mamba_act_linear_f32"),
-            movi_dll_dir=movi_dll_dir,
             native_dir=native_dir,
         )
+        if len(prepared.groups) != REPLICAS // GROUP_REPLICAS:
+            raise RuntimeError(
+                f"ACT linear carrier exposed {len(prepared.groups)} groups, "
+                f"expected {REPLICAS // GROUP_REPLICAS}"
+            )
+        for group in prepared.groups:
+            if (
+                group.input_dtypes != ("f32", "f32")
+                or group.output_dtype != "f32"
+                or len(group.targets) != GROUP_REPLICAS
+                or group.per_invocation_input_element_counts
+                != (INVOCATION_WORDS, INVOCATION_WORDS)
+                or group.per_invocation_output_element_count != INVOCATION_WORDS
+            ):
+                raise RuntimeError(
+                    "ACT linear carrier partition contract changed: "
+                    f"inputs={group.per_invocation_input_element_counts!r}, "
+                    f"output={group.per_invocation_output_element_count!r}, "
+                    f"targets={len(group.targets)}"
+                )
+        started = perf_counter()
+        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
+        self.carrier_explanation = prepared.explain()
         self.inputs = self.program.shared_inputs()
         self.output = self.program.shared_output()
 
@@ -287,15 +311,21 @@ class NpuActLinear:
             REPLICAS, INVOCATION_WORDS
         )
         weight_pack = np.asarray(self.inputs["linear_weights"]).reshape(REPLICAS, INVOCATION_WORDS)
-        activation_pack[:, :SCAN_INVOCATION_WORDS] = dynamic.reshape(REPLICAS, SCAN_INVOCATION_WORDS)
-        weight_pack[:, :SCAN_INVOCATION_WORDS] = model.reshape(REPLICAS, SCAN_INVOCATION_WORDS)
+        activation_pack[:, :SCAN_INVOCATION_WORDS] = 0.0
+        weight_pack[:, :SCAN_INVOCATION_WORDS] = 0.0
+        activation_pack[:SCAN_REPLICAS, :SCAN_INVOCATION_WORDS] = dynamic.reshape(
+            SCAN_REPLICAS, SCAN_INVOCATION_WORDS
+        )
+        weight_pack[:SCAN_REPLICAS, :SCAN_INVOCATION_WORDS] = model.reshape(
+            SCAN_REPLICAS, SCAN_INVOCATION_WORDS
+        )
         upload_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         self.program.run(self.inputs, outputs={"linear_output": self.output})
         execution_wall_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         scan_output = np.asarray(self.output).reshape(REPLICAS, INVOCATION_WORDS)[
-            :, :SCAN_INVOCATION_WORDS
+            :SCAN_REPLICAS, :SCAN_INVOCATION_WORDS
         ].copy()
         sequence, final_state = unpack_output(scan_output, layout)
         download_ms = (perf_counter() - started) * 1000.0
