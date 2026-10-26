@@ -192,7 +192,7 @@ def main() -> int:
         assignment.close()
 
     report = {
-        "schema": "npunlock.bytetrack.demo.v1",
+        "schema": "npunlock.bytetrack.demo.v2",
         "platform": platform.platform(),
         "python": sys.version,
         "openvino": ov.__version__,

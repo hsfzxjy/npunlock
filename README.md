@@ -17,6 +17,11 @@ These contributions use custom ACT-SHAVE code beyond what the tested stock
 OpenVINO paths provided. They are focused capability proofs, not claims of
 universal model support or automatic speedups.
 
+- **[ByteTrack assignment](contrib/bytetrack/README.md) — optimal matching with
+  data-dependent augmenting paths.** YOLO11 runs through OpenVINO NPU, while a
+  bounded FP32 ACT-SHAVE solver handles all three ByteTrack association stages.
+  A 300-frame pedestrian-video run agreed with a parallel CPU LAPJV tracker on
+  every frame. The current contract is deliberately limited to 16 by 16 costs.
 - **[YOLO11n NMS](contrib/yolo11-nms/README.md) — one native NPU graph.** The
   recorded OpenVINO stack runs the official embedded-NMS export on CPU but
   rejects it for the NPU. npunlock combines YOLO, candidate selection, packing,

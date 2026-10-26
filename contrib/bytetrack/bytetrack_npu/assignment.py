@@ -382,7 +382,7 @@ class NpuAssignment:
         packed = _pack_problem(matrix, mask, limit)
         if self.shared_input is not None:
             np.copyto(self.shared_input, packed)
-        pack_upload_ms = (perf_counter() - started) * 1000.0
+        pack_or_upload_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         payload = packed if self.shared_input is None else self.shared_input
         guard = self.guard if self.shared_guard is None else self.shared_guard
@@ -410,7 +410,7 @@ class NpuAssignment:
             match_cost=result.match_cost,
             augmented_cost=result.augmented_cost,
             timings={
-                "pack_upload_ms": pack_upload_ms,
+                "pack_or_upload_ms": pack_or_upload_ms,
                 "graphinfer_wall_ms": graphinfer_wall_ms,
                 "decode_ms": decode_ms,
             },

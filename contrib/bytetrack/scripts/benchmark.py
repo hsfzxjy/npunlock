@@ -36,6 +36,26 @@ def measure(callable_object: object, repeats: int) -> dict[str, float]:
     return timing_summary(values)
 
 
+def measure_npu(
+    backend: NpuAssignment,
+    costs: np.ndarray,
+    threshold: float,
+    repeats: int,
+) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+    total_values = []
+    component_values: dict[str, list[float]] = {}
+    for _ in range(repeats):
+        started = perf_counter()
+        result = backend.assign(costs, threshold)
+        total_values.append((perf_counter() - started) * 1000.0)
+        for name, value in result.timings.items():
+            component_values.setdefault(name, []).append(value)
+    return (
+        timing_summary(total_values),
+        {name: timing_summary(values) for name, values in component_values.items()},
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark bounded ByteTrack assignment backends")
     parser.add_argument("--movi-dll-dir", type=Path)
@@ -75,17 +95,20 @@ def main() -> int:
                 device = npu.assign(costs, threshold)
                 if not np.isclose(reference.augmented_cost, device.augmented_cost, atol=1e-5):
                     raise RuntimeError("NPU assignment does not match the SciPy optimum")
-                case["npu_submission_ms"] = measure(
-                    lambda: npu.assign(costs, threshold),
+                npu_call_ms, npu_components_ms = measure_npu(
+                    npu,
+                    costs,
+                    threshold,
                     options.runs,
                 )
-                case["last_npu_components_ms"] = device.timings
+                case["npu_call_ms"] = npu_call_ms
+                case["npu_components_ms"] = npu_components_ms
             cases.append(case)
     finally:
         if npu is not None:
             npu.close()
     report = {
-        "schema": "npunlock.bytetrack.assignment-benchmark.v1",
+        "schema": "npunlock.bytetrack.assignment-benchmark.v2",
         "warmup": options.warmup,
         "npu_runs": options.runs,
         "cpu_runs": options.cpu_runs,

@@ -695,6 +695,11 @@ different graph structure, not that the C expression itself is invalid.
   patching pipeline.
 - [Runnable examples](../examples) provide host-oracle-backed recipes for each
   supported custom-kernel family.
+- [ByteTrack contribution](../contrib/bytetrack/README.md) uses a bounded FP32
+  shortest-augmenting-path kernel for all three tracking association stages.
+  It demonstrates runtime-supplied rectangular costs, explicit unmatched and
+  forbidden-edge semantics, deterministic fixed-capacity results, and real
+  video identities checked frame-by-frame against CPU LAPJV.
 - [XGBoost contribution](../contrib/xgboost/README.md) shows a deliberately
   narrow tree-ensemble workload, including a two-part runtime forest whose two
   NPU traversals are connected inside one graph: the first ACT node forwards
