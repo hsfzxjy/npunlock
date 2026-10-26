@@ -35,6 +35,11 @@ universal model support or automatic speedups.
   and heap maintenance. All 24 recorded queries matched the host traversal
   exactly, but the demo is capped at 48 nodes and optimized CPU hnswlib is still
   much faster.
+- **[Mamba-1 inference](contrib/mamba/README.md) — persistent selective state.**
+  The complete Mamba-130m neural path runs on ACT-SHAVE while explicit state is
+  carried across prefill chunks and decoding calls. It matched official greedy
+  generation; the CPU handles tokenization, packing, submission orchestration,
+  and greedy selection rather than neural layers.
 
 Each example keeps its extra Python dependencies under `contrib/`; the core
 npunlock package remains OpenVINO-free.
