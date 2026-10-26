@@ -18,6 +18,7 @@ jobs:
     outputs:
       publish: ${{ steps.check.outputs.publish }}
       previous_tag: ${{ steps.check.outputs.previous_tag }}
+      history_relation: ${{ steps.check.outputs.history_relation }}
       release_tag: ${{ steps.check.outputs.release_tag }}
       package_version: ${{ steps.check.outputs.package_version }}
 
@@ -39,16 +40,35 @@ jobs:
             jq -r '[.[] | select(.draft == false)] | first | .tag_name // ""' <<<"${releases}"
           )"
           publish=true
+          history_relation="none"
           release_tag=""
           package_version=""
 
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && -n "${previous_tag}" ]]; then
+          if [[ -n "${previous_tag}" ]]; then
             if ! git rev-parse --verify --quiet "${previous_tag}^{commit}" >/dev/null; then
               git fetch --no-tags origin "refs/tags/${previous_tag}:refs/tags/${previous_tag}"
             fi
-            if [[ "$(git rev-list --count "${previous_tag}..HEAD")" == "0" ]]; then
+
+            if git merge-base --is-ancestor "${previous_tag}^{commit}" HEAD; then
+              history_relation="ancestor"
+            elif git merge-base "${previous_tag}^{commit}" HEAD >/dev/null; then
+              history_relation="diverged"
+              echo "::warning::History diverged from ${previous_tag}; release decisions will compare repository contents."
+            else
+              history_relation="unrelated"
+              echo "::warning::History has no common ancestor with ${previous_tag}; release decisions will compare repository contents."
+            fi
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && -n "${previous_tag}" ]]; then
+            if [[ "${history_relation}" == "ancestor" ]] && \
+                [[ "$(git rev-list --count "${previous_tag}..HEAD")" == "0" ]]; then
               publish=false
               echo "No commits were added after ${previous_tag}; skipping the daily release."
+            elif [[ "${history_relation}" != "ancestor" ]] && \
+                git diff --quiet "${previous_tag}^{commit}" HEAD --; then
+              publish=false
+              echo "History changed but repository contents still match ${previous_tag}; skipping the daily release."
             fi
           fi
 
@@ -79,6 +99,7 @@ jobs:
 
           echo "publish=${publish}" >>"${GITHUB_OUTPUT}"
           echo "previous_tag=${previous_tag}" >>"${GITHUB_OUTPUT}"
+          echo "history_relation=${history_relation}" >>"${GITHUB_OUTPUT}"
           echo "release_tag=${release_tag}" >>"${GITHUB_OUTPUT}"
           echo "package_version=${package_version}" >>"${GITHUB_OUTPUT}"
 
@@ -238,6 +259,7 @@ jobs:
         shell: bash
         env:
           PREVIOUS_TAG: ${{ needs.check.outputs.previous_tag }}
+          HISTORY_RELATION: ${{ needs.check.outputs.history_relation }}
           RELEASE_TAG: ${{ needs.check.outputs.release_tag }}
           PACKAGE_VERSION: ${{ needs.check.outputs.package_version }}
         run: |
@@ -253,35 +275,59 @@ jobs:
             echo
           } >"${notes}"
 
+          log_args=()
           if [[ -n "${PREVIOUS_TAG}" ]]; then
             if ! git rev-parse --verify --quiet "${PREVIOUS_TAG}^{commit}" >/dev/null; then
               git fetch --no-tags origin "refs/tags/${PREVIOUS_TAG}:refs/tags/${PREVIOUS_TAG}"
             fi
             echo "Compared with [\`${PREVIOUS_TAG}\`](https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS_TAG}...${RELEASE_TAG})." >>"${notes}"
             echo >>"${notes}"
-            range="${PREVIOUS_TAG}..HEAD"
+
+            case "${HISTORY_RELATION}" in
+              ancestor)
+                log_args=("${PREVIOUS_TAG}..HEAD")
+                ;;
+              diverged)
+                echo "Repository history diverged from the previous release, usually because the branch was rewritten. The list below contains commits unique to the current history." >>"${notes}"
+                echo >>"${notes}"
+                log_args=(--right-only --cherry-pick "${PREVIOUS_TAG}...HEAD")
+                ;;
+              *)
+                echo "Repository history has no common ancestor with the previous release. The list below is limited to the latest 100 commits on the current history." >>"${notes}"
+                echo >>"${notes}"
+                log_args=(--max-count=100 HEAD)
+                ;;
+            esac
           else
             echo "This is the first published release; the list covers repository history through this build." >>"${notes}"
             echo >>"${notes}"
-            range="HEAD"
+            log_args=(HEAD)
           fi
 
-          if [[ "$(git rev-list --count "${range}")" == "0" ]]; then
+          if [[ "$(git rev-list --count "${log_args[@]}")" == "0" ]]; then
             echo "- No new commits. This release was requested manually." >>"${notes}"
           else
-            git log "${range}" --reverse \
+            git log "${log_args[@]}" --reverse \
               --pretty=format:'- [`%h`](https://github.com/'"${GITHUB_REPOSITORY}"'/commit/%H) %s' \
               >>"${notes}"
             echo >>"${notes}"
           fi
 
-          breakthrough="$(
-            grep -m1 '^> \*\*Latest breakthrough' README.md | \
-              sed "s#](wiki/#](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/wiki/#g"
-          )"
+          breakthrough="$(grep -m1 '^> \*\*Latest breakthrough' README.md || true)"
+          if [[ -n "${breakthrough}" ]]; then
+            breakthrough="$(
+              sed "s#](wiki/#](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/wiki/#g" \
+                <<<"${breakthrough}"
+            )"
+          else
+            latest_heading="$(awk '/^## [0-9]+\. / { heading=$0 } END { print heading }' wiki/REVERSE_ENGINEERING.md)"
+            latest_title="${latest_heading#\#\# }"
+            if [[ -n "${latest_title}" ]]; then
+              breakthrough="**Latest recorded ABI milestone: ${latest_title}.** See the [reverse-engineering record](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/wiki/REVERSE_ENGINEERING.md)."
+            fi
+          fi
           if [[ -z "${breakthrough}" ]]; then
-            echo "README.md does not contain the synchronized latest-breakthrough excerpt." >&2
-            exit 1
+            breakthrough="No ABI milestone summary is recorded for this snapshot."
           fi
 
           {
