@@ -531,6 +531,14 @@ void controlled_act(unsigned layerParams) {
           (LINEAR_FLAG_RMS_NORM | LINEAR_FLAG_CONVOLUTION)) {
     return;
   }
+  if (output_count == 0u) {
+    linear_store_word(output, 0u, LINEAR_MAGIC);
+    linear_store_word(output, 1u, LINEAR_VERSION);
+    linear_store_word(output, 2u, 0u);
+    linear_store_word(output, 3u, flags);
+    linear_store_word(output, 4u, sequence_length);
+    return;
+  }
   auxiliary_offset = LINEAR_HEADER + input_count * sequence_length;
   if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
     residual_offset = auxiliary_offset;

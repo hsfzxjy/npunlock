@@ -189,7 +189,8 @@ class NpuActLinear:
             capacity = candidate
         if capacity == 0:
             raise ValueError("linear output cannot fit the validated invocation span")
-        per_submission = capacity * REPLICAS
+        active_replicas = GROUP_REPLICAS if convolution_state is not None else REPLICAS
+        per_submission = capacity * active_replicas
         result = np.empty((sequence_length, matrix.shape[1]), dtype=np.float32)
         total_execution = total_upload = total_download = 0.0
         submissions = 0
@@ -208,7 +209,11 @@ class NpuActLinear:
             counts = []
             for replica in range(REPLICAS):
                 replica_begin = begin + replica * capacity
-                count = max(0, min(capacity, matrix.shape[1] - replica_begin))
+                count = (
+                    max(0, min(capacity, matrix.shape[1] - replica_begin))
+                    if replica < active_replicas
+                    else 0
+                )
                 counts.append(count)
                 awords[replica, :4] = (MAGIC, VERSION, input_count, count)
                 awords[replica, 4] = flags
