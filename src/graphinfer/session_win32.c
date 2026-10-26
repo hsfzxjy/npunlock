@@ -94,8 +94,10 @@ struct graphinfer_session {
   npunlock_ze_command_queue_handle submission_queue;
   npunlock_ze_command_list_handle submission_list;
   npunlock_ze_fence_handle submission_fence;
+  void *execute_allocations[SESSION_MAX_ARGUMENTS];
   bool submission_list_closed;
   bool submission_fence_submitted;
+  bool execute_list_recorded;
   bool submission_failed;
 };
 
@@ -483,7 +485,7 @@ static void session_unref(graphinfer_session *session) {
   }
 }
 
-static npunlock_status submit(graphinfer_session *session, bool initialize,
+static npunlock_status submit(graphinfer_session *session, bool initialize, bool reuse_recording,
                               npunlock_diagnostic *diagnostic) {
   npunlock_ze_command_queue_desc queue_desc = {0};
   npunlock_ze_command_list_desc list_desc = {0};
@@ -519,7 +521,12 @@ static npunlock_status submit(graphinfer_session *session, bool initialize,
       return session_driver_error(diagnostic, "zeFenceCreate", code);
     }
   }
-  if (session->submission_list_closed) {
+  if (reuse_recording &&
+      (initialize || !session->execute_list_recorded || !session->submission_list_closed)) {
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR, "graphinfer.session",
+                                   "cached execute command list is unavailable");
+  }
+  if (!reuse_recording && session->submission_list_closed) {
     code = session->ze.command_list_reset(session->submission_list);
     if (code != NPUNLOCK_ZE_SUCCESS) {
       session->submission_failed = true;
@@ -535,21 +542,23 @@ static npunlock_status submit(graphinfer_session *session, bool initialize,
     }
     session->submission_fence_submitted = false;
   }
-  code = initialize ? session->graph.append_initialize(session->submission_list, session->handle,
-                                                       NULL, 0, NULL)
-                    : session->graph.append_execute(session->submission_list, session->handle, NULL,
-                                                    NULL, 0, NULL);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    session->submission_failed = true;
-    return session_driver_error(
-        diagnostic, initialize ? "pfnAppendGraphInitialize" : "pfnAppendGraphExecute", code);
+  if (!reuse_recording) {
+    code = initialize ? session->graph.append_initialize(session->submission_list, session->handle,
+                                                         NULL, 0, NULL)
+                      : session->graph.append_execute(session->submission_list, session->handle,
+                                                      NULL, NULL, 0, NULL);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      session->submission_failed = true;
+      return session_driver_error(
+          diagnostic, initialize ? "pfnAppendGraphInitialize" : "pfnAppendGraphExecute", code);
+    }
+    code = session->ze.command_list_close(session->submission_list);
+    if (code != NPUNLOCK_ZE_SUCCESS) {
+      session->submission_failed = true;
+      return session_driver_error(diagnostic, "zeCommandListClose", code);
+    }
+    session->submission_list_closed = true;
   }
-  code = session->ze.command_list_close(session->submission_list);
-  if (code != NPUNLOCK_ZE_SUCCESS) {
-    session->submission_failed = true;
-    return session_driver_error(diagnostic, "zeCommandListClose", code);
-  }
-  session->submission_list_closed = true;
   code = session->ze.command_queue_execute(session->submission_queue, 1, &session->submission_list,
                                            session->submission_fence);
   if (code != NPUNLOCK_ZE_SUCCESS) {
@@ -827,16 +836,25 @@ static npunlock_status collect_bindings(graphinfer_session *session,
 static npunlock_status execute_allocations_locked(graphinfer_session *session,
                                                   void *const *allocations,
                                                   npunlock_diagnostic *diagnostic) {
+  bool reuse_recording = session->initialized && session->execute_list_recorded;
   npunlock_status status;
   size_t index;
   uint32_t code;
-  for (index = 0; index < session->argument_count; ++index) {
-    code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
-    if (code != NPUNLOCK_ZE_SUCCESS) {
-      return session_driver_error(diagnostic, "pfnSetArgumentValue(pre-init)", code);
+  if (reuse_recording) {
+    for (index = 0; index < session->argument_count; ++index) {
+      if (session->execute_allocations[index] != allocations[index]) {
+        reuse_recording = false;
+        break;
+      }
     }
   }
   if (!session->initialized) {
+    for (index = 0; index < session->argument_count; ++index) {
+      code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
+      if (code != NPUNLOCK_ZE_SUCCESS) {
+        return session_driver_error(diagnostic, "pfnSetArgumentValue(pre-init)", code);
+      }
+    }
     if ((session->init_stages & NPUNLOCK_ZE_GRAPH_STAGE_INITIALIZE) != 0) {
       if (session->graph.initialize == NULL) {
         return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_UNSUPPORTED,
@@ -854,20 +872,30 @@ static npunlock_status execute_allocations_locked(graphinfer_session *session,
                                        "graphinfer.session",
                                        "command-list initialization is unavailable");
       }
-      status = submit(session, true, diagnostic);
+      session->execute_list_recorded = false;
+      status = submit(session, true, false, diagnostic);
       if (status != NPUNLOCK_STATUS_OK) {
         return status;
       }
     }
     session->initialized = true;
   }
-  for (index = 0; index < session->argument_count; ++index) {
-    code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
-    if (code != NPUNLOCK_ZE_SUCCESS) {
-      return session_driver_error(diagnostic, "pfnSetArgumentValue(post-init)", code);
+  if (!reuse_recording) {
+    session->execute_list_recorded = false;
+    for (index = 0; index < session->argument_count; ++index) {
+      code = session->graph.set_argument(session->handle, (uint32_t)index, allocations[index]);
+      if (code != NPUNLOCK_ZE_SUCCESS) {
+        return session_driver_error(diagnostic, "pfnSetArgumentValue(post-init)", code);
+      }
     }
   }
-  return submit(session, false, diagnostic);
+  status = submit(session, false, reuse_recording, diagnostic);
+  if (status == NPUNLOCK_STATUS_OK && !reuse_recording) {
+    memcpy(session->execute_allocations, allocations,
+           session->argument_count * sizeof(*session->execute_allocations));
+    session->execute_list_recorded = true;
+  }
+  return status;
 }
 
 npunlock_status graphinfer_session_infer(graphinfer_session *session,
