@@ -232,6 +232,18 @@ class NpuActLinear:
             wwords[:, 1] = VERSION
             wwords[:, 2] = input_count
             activation_pack[:, HEADER_WORDS : HEADER_WORDS + values.size] = flat_values
+            common_auxiliary_offset = HEADER_WORDS + values.size
+            if residual is None and rms_weight is not None:
+                activation_pack[
+                    :, common_auxiliary_offset : common_auxiliary_offset + input_count
+                ] = rms_weight
+            if residual is None and convolution_state is not None:
+                cursor = common_auxiliary_offset
+                activation_pack[:, cursor : cursor + input_count * 4] = flat_convolution_state
+                cursor += input_count * 4
+                activation_pack[:, cursor : cursor + input_count * 4] = flat_convolution_weight
+                cursor += input_count * 4
+                activation_pack[:, cursor : cursor + input_count] = convolution_bias
             counts = []
             for replica in range(REPLICAS):
                 replica_begin = begin + replica * capacity
@@ -253,19 +265,23 @@ class NpuActLinear:
                     )
                     cursor += residual_chunk.size
                 if rms_weight is not None:
-                    activation_pack[replica, cursor : cursor + input_count] = rms_weight
+                    if residual is not None:
+                        activation_pack[replica, cursor : cursor + input_count] = rms_weight
                     cursor += input_count
                 if convolution_state is not None:
-                    activation_pack[replica, cursor : cursor + input_count * 4] = (
-                        flat_convolution_state
-                    )
-                    cursor += input_count * 4
-                    activation_pack[replica, cursor : cursor + input_count * 4] = (
-                        flat_convolution_weight
-                    )
-                    cursor += input_count * 4
-                    activation_pack[replica, cursor : cursor + input_count] = convolution_bias
-                    cursor += input_count
+                    if residual is None:
+                        cursor += input_count * 9
+                    else:
+                        activation_pack[replica, cursor : cursor + input_count * 4] = (
+                            flat_convolution_state
+                        )
+                        cursor += input_count * 4
+                        activation_pack[replica, cursor : cursor + input_count * 4] = (
+                            flat_convolution_weight
+                        )
+                        cursor += input_count * 4
+                        activation_pack[replica, cursor : cursor + input_count] = convolution_bias
+                        cursor += input_count
                 if cursor > INVOCATION_WORDS:
                     raise ValueError("linear auxiliary data exceeds the validated invocation span")
                 cursor = (cursor + 3) & ~3

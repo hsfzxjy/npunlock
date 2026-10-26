@@ -56,6 +56,9 @@ class ActMambaRunner:
     def __init__(self, model: object, runtime: NpuActLinear):
         self.model = model
         self.runtime = runtime
+        self._ssm_parameters = [
+            mixer_parameters(layer.mixer) for layer in model.backbone.layers
+        ]
 
     def step(
         self, token_id: int, cache: ActModelCache | None = None, *, compute_logits: bool = True
@@ -99,7 +102,7 @@ class ActMambaRunner:
             time_step = parameters[:, : mixer.time_step_rank]
             b_value = parameters[:, mixer.time_step_rank : mixer.time_step_rank + mixer.ssm_state_size]
             c_value = parameters[:, -mixer.ssm_state_size :]
-            a, d, bias = mixer_parameters(mixer)
+            a, d, bias = self._ssm_parameters[layer_index]
             ssm_state = None if cache is None else cache.ssm_states[layer_index]
             scan, ssm_state, timing = self.runtime.run_scan_projected_delta(
                 a,

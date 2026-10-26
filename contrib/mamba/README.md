@@ -64,7 +64,7 @@ compiler 8.3:
 - maximum/mean prefill-logit error was `1.83e-4 / 4.34e-5`, and restoring the
   recurrent cache reproduced continuation logits bit-for-bit; and
 - median six-token prefill was 0.63 seconds and median three-token generation
-  was 1.18 seconds (`2.53 token/s`). The matching official PyTorch CPU medians
+  was 1.20 seconds (`2.50 token/s`). The matching official PyTorch CPU medians
   were 72.4 ms and 150.7 ms (`19.90 token/s`), so this is a programmability
   demonstration rather than a CPU speedup.
 
