@@ -165,6 +165,83 @@ static void linear_dot_rows_quad(const float *left, const float *right0, const f
   *total3 = sum3;
 }
 
+static void linear_dot_rows_eight(const float *left, const float *right0, const float *right1,
+                                  const float *right2, const float *right3, const float *right4,
+                                  const float *right5, const float *right6, const float *right7,
+                                  unsigned count, float *total0, float *total1, float *total2,
+                                  float *total3, float *total4, float *total5, float *total6,
+                                  float *total7) {
+  float sum0 = 0.0f;
+  float sum1 = 0.0f;
+  float sum2 = 0.0f;
+  float sum3 = 0.0f;
+  float sum4 = 0.0f;
+  float sum5 = 0.0f;
+  float sum6 = 0.0f;
+  float sum7 = 0.0f;
+  unsigned index = 0u;
+  if ((((unsigned)left | (unsigned)right0 | (unsigned)right1 | (unsigned)right2 |
+        (unsigned)right3 | (unsigned)right4 | (unsigned)right5 | (unsigned)right6 |
+        (unsigned)right7) &
+       15u) == 0u) {
+    linear_float4 sums0 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums1 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums2 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums3 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums4 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums5 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums6 = {0.0f, 0.0f, 0.0f, 0.0f};
+    linear_float4 sums7 = {0.0f, 0.0f, 0.0f, 0.0f};
+    const linear_float4 *left4 = (const linear_float4 *)left;
+    const linear_float4 *right04 = (const linear_float4 *)right0;
+    const linear_float4 *right14 = (const linear_float4 *)right1;
+    const linear_float4 *right24 = (const linear_float4 *)right2;
+    const linear_float4 *right34 = (const linear_float4 *)right3;
+    const linear_float4 *right44 = (const linear_float4 *)right4;
+    const linear_float4 *right54 = (const linear_float4 *)right5;
+    const linear_float4 *right64 = (const linear_float4 *)right6;
+    const linear_float4 *right74 = (const linear_float4 *)right7;
+    for (; index + 4u <= count; index += 4u) {
+      linear_float4 value = left4[index / 4u];
+      sums0 += value * right04[index / 4u];
+      sums1 += value * right14[index / 4u];
+      sums2 += value * right24[index / 4u];
+      sums3 += value * right34[index / 4u];
+      sums4 += value * right44[index / 4u];
+      sums5 += value * right54[index / 4u];
+      sums6 += value * right64[index / 4u];
+      sums7 += value * right74[index / 4u];
+    }
+    sum0 = (sums0[0] + sums0[1]) + (sums0[2] + sums0[3]);
+    sum1 = (sums1[0] + sums1[1]) + (sums1[2] + sums1[3]);
+    sum2 = (sums2[0] + sums2[1]) + (sums2[2] + sums2[3]);
+    sum3 = (sums3[0] + sums3[1]) + (sums3[2] + sums3[3]);
+    sum4 = (sums4[0] + sums4[1]) + (sums4[2] + sums4[3]);
+    sum5 = (sums5[0] + sums5[1]) + (sums5[2] + sums5[3]);
+    sum6 = (sums6[0] + sums6[1]) + (sums6[2] + sums6[3]);
+    sum7 = (sums7[0] + sums7[1]) + (sums7[2] + sums7[3]);
+  }
+  for (; index < count; ++index) {
+    float value = left[index];
+    sum0 += value * right0[index];
+    sum1 += value * right1[index];
+    sum2 += value * right2[index];
+    sum3 += value * right3[index];
+    sum4 += value * right4[index];
+    sum5 += value * right5[index];
+    sum6 += value * right6[index];
+    sum7 += value * right7[index];
+  }
+  *total0 = sum0;
+  *total1 = sum1;
+  *total2 = sum2;
+  *total3 = sum3;
+  *total4 = sum4;
+  *total5 = sum5;
+  *total6 = sum6;
+  *total7 = sum7;
+}
+
 static void linear_dot_2x2(const float *left0, const float *left1, const float *right0,
                            const float *right1, unsigned count, float *total00, float *total10,
                            float *total01, float *total11) {
@@ -544,7 +621,69 @@ void controlled_act(unsigned layerParams) {
                           : (flags & LINEAR_FLAG_CONVOLUTION) != 0u
                               ? output + LINEAR_CONV_OUTPUT_OFFSET
                               : activation + LINEAR_HEADER;
-    for (output_index = 0u; output_index + 3u < output_count; output_index += 4u) {
+    for (output_index = 0u; output_index + 7u < output_count; output_index += 8u) {
+      const float *row0 =
+          output_index < weight_input_rows
+              ? weights + LINEAR_HEADER + output_index * input_count
+              : activation + auxiliary_offset + (output_index - weight_input_rows) * input_count;
+      const float *row1 =
+          output_index + 1u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 1u) * input_count
+              : activation + auxiliary_offset + (output_index + 1u - weight_input_rows) * input_count;
+      const float *row2 =
+          output_index + 2u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 2u) * input_count
+              : activation + auxiliary_offset + (output_index + 2u - weight_input_rows) * input_count;
+      const float *row3 =
+          output_index + 3u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 3u) * input_count
+              : activation + auxiliary_offset + (output_index + 3u - weight_input_rows) * input_count;
+      const float *row4 =
+          output_index + 4u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 4u) * input_count
+              : activation + auxiliary_offset + (output_index + 4u - weight_input_rows) * input_count;
+      const float *row5 =
+          output_index + 5u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 5u) * input_count
+              : activation + auxiliary_offset + (output_index + 5u - weight_input_rows) * input_count;
+      const float *row6 =
+          output_index + 6u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 6u) * input_count
+              : activation + auxiliary_offset + (output_index + 6u - weight_input_rows) * input_count;
+      const float *row7 =
+          output_index + 7u < weight_input_rows
+              ? weights + LINEAR_HEADER + (output_index + 7u) * input_count
+              : activation + auxiliary_offset + (output_index + 7u - weight_input_rows) * input_count;
+      float total0;
+      float total1;
+      float total2;
+      float total3;
+      float total4;
+      float total5;
+      float total6;
+      float total7;
+      linear_dot_rows_eight(values, row0, row1, row2, row3, row4, row5, row6, row7, input_count,
+                            &total0, &total1, &total2, &total3, &total4, &total5, &total6, &total7);
+      if ((flags & LINEAR_FLAG_RESIDUAL) != 0u) {
+        total0 += activation[residual_offset + output_index];
+        total1 += activation[residual_offset + output_index + 1u];
+        total2 += activation[residual_offset + output_index + 2u];
+        total3 += activation[residual_offset + output_index + 3u];
+        total4 += activation[residual_offset + output_index + 4u];
+        total5 += activation[residual_offset + output_index + 5u];
+        total6 += activation[residual_offset + output_index + 6u];
+        total7 += activation[residual_offset + output_index + 7u];
+      }
+      output[LINEAR_HEADER + output_index] = total0;
+      output[LINEAR_HEADER + output_index + 1u] = total1;
+      output[LINEAR_HEADER + output_index + 2u] = total2;
+      output[LINEAR_HEADER + output_index + 3u] = total3;
+      output[LINEAR_HEADER + output_index + 4u] = total4;
+      output[LINEAR_HEADER + output_index + 5u] = total5;
+      output[LINEAR_HEADER + output_index + 6u] = total6;
+      output[LINEAR_HEADER + output_index + 7u] = total7;
+    }
+    for (; output_index + 3u < output_count; output_index += 4u) {
       const float *row0 =
           output_index < weight_input_rows
               ? weights + LINEAR_HEADER + output_index * input_count
