@@ -33,7 +33,7 @@ extend_cost=True, cost_limit=threshold)`, so this is not unconstrained matching
 followed by threshold filtering.
 
 The graph uses the validated two-input FP32 `Subtract` carrier. Four ACT
-invocations receive independent copies of the same 512-word problem and must
+invocations receive independent copies of the same 288-word problem and must
 return identical result bytes. The second carrier input is a validated zero
 guard; the solver reads costs from the first input. Replica disagreement,
 malformed output, duplicate assignments, forbidden matches, and inconsistent
@@ -97,21 +97,22 @@ and identity persistence.
   --movi-dll-dir C:\path\to\MVC_DEPEND `
   --native-dir build\windows\Debug `
   --output contrib\bytetrack\outputs\benchmark.json `
-  --warmup 20 --runs 200 --cpu-runs 2000
+  --warmup 30 --runs 500 --cpu-runs 5000
 ```
 
 On the recorded Core Ultra 5 125H system with graph compiler 8.3, OpenVINO
 2026.3.1, and the repository's current native runtime, median complete NPU
-calls were 0.78 ms for 1 by 1, 1.04 ms for 8 by 8, and 1.77 ms for 16 by 16.
-Median SciPy and LAPJV calls were about 0.10-0.11 ms over the same cases. The
-NPU result demonstrates the control-flow capability and reduces CPU algorithm
-work; it is not a latency speedup over optimized CPU solvers at this capacity.
+calls were 0.57 ms for 1 by 1, 0.61 ms for 8 by 8, and 0.77 ms for 16 by 16.
+The benchmark also includes 1 by 16, 4 by 16, 8 by 16, 16 by 4, and 16 by 8
+problems. Median SciPy and LAPJV calls were about 0.10-0.12 ms. The NPU result
+demonstrates the control-flow capability and reduces CPU algorithm work; it is
+not a latency speedup over optimized CPU solvers at this capacity.
 
 The 300-frame `vtest.avi` run produced CPU/NPU tracker agreement on every
-frame. YOLO inference took 9.76 ms median, the complete tracker took 4.77 ms,
-and each of the 900 NPU assignment graph calls took 0.60 ms median from
+frame. YOLO inference took 9.63 ms median, the complete tracker took 4.06 ms,
+and each of the 900 NPU assignment graph calls took 0.53 ms median from
 submission through output copy. Complete decode-to-annotated-frame work took
-23.98 ms median. Persistent identities included tracks visible for 289 and 282
+22.57 ms median. Persistent identities included tracks visible for 289 and 282
 frames. These are one-system measurements, not general performance claims.
 
 ## Limits

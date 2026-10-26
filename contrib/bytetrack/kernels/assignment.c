@@ -1,10 +1,10 @@
 #include <npunlock/npu3720_kernel.h>
 
-#define ASSIGN_CHUNK_ELEMENTS 512u
+#define ASSIGN_CHUNK_ELEMENTS 288u
 #define ASSIGN_MAX_CHUNKS_PER_INVOCATION 4u
 #define ASSIGN_MAX_ROWS 16u
 #define ASSIGN_MAX_COLUMNS 16u
-#define ASSIGN_MAX_ORDER (ASSIGN_MAX_ROWS + ASSIGN_MAX_COLUMNS)
+#define ASSIGN_MAX_AUGMENTED_COLUMNS (ASSIGN_MAX_ROWS + ASSIGN_MAX_COLUMNS)
 #define ASSIGN_INPUT_MAGIC 372041u
 #define ASSIGN_OUTPUT_MAGIC 372042u
 #define ASSIGN_FORMAT_VERSION 1u
@@ -12,7 +12,7 @@
 #define ASSIGN_INPUT_COST_OFFSET 32u
 #define ASSIGN_OUTPUT_ROW_OFFSET 16u
 #define ASSIGN_OUTPUT_COLUMN_OFFSET 32u
-#define ASSIGN_OUTPUT_WORDS 64u
+#define ASSIGN_OUTPUT_WORDS 50u
 
 #define ASSIGN_STATUS_OK 0u
 #define ASSIGN_STATUS_BAD_HEADER 1u
@@ -27,26 +27,97 @@ typedef union assign_float_bits {
   unsigned bits;
 } assign_float_bits;
 
-static int assign_is_finite(float value) {
+static inline int assign_is_finite(float value) {
   assign_float_bits converted;
   converted.value = value;
   return (converted.bits & 0x7f800000u) != 0x7f800000u;
 }
 
-static float assign_augmented_cost(const float *costs, const unsigned *forbidden, unsigned rows,
-                                   unsigned columns, float threshold, unsigned row,
-                                   unsigned column) {
-  if (row < rows && column < columns) {
+static inline float assign_augmented_cost(const float *costs, const unsigned *forbidden,
+                                          unsigned columns, float threshold, unsigned row,
+                                          unsigned column) {
+  if (column < columns) {
     float value = costs[row * ASSIGN_MAX_COLUMNS + column];
-    if ((forbidden[row] & (1u << column)) != 0u || !assign_is_finite(value) || value > threshold) {
+    if ((forbidden[row] & (1u << column)) != 0u || value > threshold) {
       return ASSIGN_LARGE_COST;
     }
     return value;
   }
-  if (row >= rows && column >= columns) {
-    return 0.0f;
+  /* Charging one threshold per unmatched real row differs from the full
+     threshold/2 square augmentation only by a constant. */
+  return threshold;
+}
+
+static inline int assign_hungarian(const float *costs, const unsigned *forbidden, unsigned rows,
+                                   unsigned columns, unsigned solve_columns, float threshold,
+                                   unsigned *selected_row) {
+  float potentials_row[ASSIGN_MAX_ROWS + 1u];
+  float potentials_column[ASSIGN_MAX_AUGMENTED_COLUMNS + 1u];
+  float minimum[ASSIGN_MAX_AUGMENTED_COLUMNS + 1u];
+  unsigned predecessor[ASSIGN_MAX_AUGMENTED_COLUMNS + 1u];
+  unsigned used[ASSIGN_MAX_AUGMENTED_COLUMNS + 1u];
+  unsigned row;
+  unsigned column;
+
+  for (row = 0u; row <= rows; ++row) {
+    potentials_row[row] = 0.0f;
   }
-  return threshold * 0.5f;
+  for (column = 0u; column <= solve_columns; ++column) {
+    potentials_column[column] = 0.0f;
+    selected_row[column] = 0u;
+    used[column] = 0u;
+  }
+  for (row = 1u; row <= rows; ++row) {
+    unsigned current_column = 0u;
+    selected_row[0] = row;
+    for (column = 0u; column <= solve_columns; ++column) {
+      minimum[column] = ASSIGN_LARGE_COST;
+      predecessor[column] = 0u;
+    }
+    do {
+      unsigned current_row;
+      unsigned next_column = 0u;
+      float delta = ASSIGN_LARGE_COST;
+      used[current_column] = row;
+      current_row = selected_row[current_column];
+      for (column = 1u; column <= solve_columns; ++column) {
+        if (used[column] != row) {
+          float reduced = assign_augmented_cost(costs, forbidden, columns, threshold,
+                                                current_row - 1u, column - 1u) -
+                          potentials_row[current_row] - potentials_column[column];
+          if (reduced < minimum[column] ||
+              (reduced == minimum[column] && current_column < predecessor[column])) {
+            minimum[column] = reduced;
+            predecessor[column] = current_column;
+          }
+          if (minimum[column] < delta ||
+              (minimum[column] == delta && (next_column == 0u || column < next_column))) {
+            delta = minimum[column];
+            next_column = column;
+          }
+        }
+      }
+      if (next_column == 0u || delta >= ASSIGN_LARGE_COST) {
+        return 0;
+      }
+      for (column = 0u; column <= solve_columns; ++column) {
+        if (used[column] == row) {
+          potentials_row[selected_row[column]] += delta;
+          potentials_column[column] -= delta;
+        } else {
+          minimum[column] -= delta;
+        }
+      }
+      current_column = next_column;
+    } while (selected_row[current_column] != 0u);
+
+    do {
+      unsigned previous_column = predecessor[current_column];
+      selected_row[current_column] = selected_row[previous_column];
+      current_column = previous_column;
+    } while (current_column != 0u);
+  }
+  return 1;
 }
 
 static void assign_clear_output(float *output) {
@@ -71,22 +142,16 @@ static void assign_solve_chunk(const float *input, float *output) {
   const unsigned *forbidden = input_words + ASSIGN_INPUT_FORBIDDEN_OFFSET;
   const float *costs = input + ASSIGN_INPUT_COST_OFFSET;
   unsigned *output_words = (unsigned *)output;
-  float potentials_row[ASSIGN_MAX_ORDER + 1u];
-  float potentials_column[ASSIGN_MAX_ORDER + 1u];
-  float minimum[ASSIGN_MAX_ORDER + 1u];
-  unsigned selected_row[ASSIGN_MAX_ORDER + 1u];
-  unsigned predecessor[ASSIGN_MAX_ORDER + 1u];
-  unsigned used[ASSIGN_MAX_ORDER + 1u];
+  unsigned selected_row[ASSIGN_MAX_AUGMENTED_COLUMNS + 1u];
   int row_to_column[ASSIGN_MAX_ROWS];
   int column_to_row[ASSIGN_MAX_COLUMNS];
   unsigned rows;
   unsigned columns;
-  unsigned order;
+  unsigned augmented_columns;
   unsigned row;
   unsigned column;
   unsigned match_count = 0u;
-  unsigned forbidden_count = 0u;
-  unsigned relaxation_count = 0u;
+  int solved = 0;
   float threshold;
   float match_cost = 0.0f;
 
@@ -108,93 +173,32 @@ static void assign_solve_chunk(const float *input, float *output) {
     assign_write_failure(output, ASSIGN_STATUS_BAD_THRESHOLD, rows, columns);
     return;
   }
-  order = rows + columns;
-  if (order > ASSIGN_MAX_ORDER) {
+  augmented_columns = rows + columns;
+  if (augmented_columns > ASSIGN_MAX_AUGMENTED_COLUMNS) {
     assign_write_failure(output, ASSIGN_STATUS_INTERNAL_BOUND, rows, columns);
     return;
   }
-
-  for (row = 0u; row <= order; ++row) {
-    potentials_row[row] = 0.0f;
-    potentials_column[row] = 0.0f;
-    selected_row[row] = 0u;
-  }
   for (row = 0u; row < rows; ++row) {
     row_to_column[row] = -1;
-    for (column = 0u; column < columns; ++column) {
-      float value = costs[row * ASSIGN_MAX_COLUMNS + column];
-      if ((forbidden[row] & (1u << column)) != 0u || !assign_is_finite(value) ||
-          value > threshold) {
-        ++forbidden_count;
-      }
-    }
   }
   for (column = 0u; column < columns; ++column) {
     column_to_row[column] = -1;
   }
 
-  for (row = 1u; row <= order; ++row) {
-    unsigned current_column = 0u;
-    selected_row[0] = row;
-    for (column = 0u; column <= order; ++column) {
-      minimum[column] = ASSIGN_LARGE_COST;
-      used[column] = 0u;
-      predecessor[column] = 0u;
-    }
-    do {
-      unsigned current_row;
-      unsigned next_column = 0u;
-      float delta = ASSIGN_LARGE_COST;
-      used[current_column] = 1u;
-      current_row = selected_row[current_column];
-      for (column = 1u; column <= order; ++column) {
-        if (!used[column]) {
-          float reduced = assign_augmented_cost(costs, forbidden, rows, columns, threshold,
-                                                current_row - 1u, column - 1u) -
-                          potentials_row[current_row] - potentials_column[column];
-          ++relaxation_count;
-          if (reduced < minimum[column] ||
-              (reduced == minimum[column] && current_column < predecessor[column])) {
-            minimum[column] = reduced;
-            predecessor[column] = current_column;
-          }
-          if (minimum[column] < delta ||
-              (minimum[column] == delta && (next_column == 0u || column < next_column))) {
-            delta = minimum[column];
-            next_column = column;
-          }
-        }
-      }
-      if (next_column == 0u || delta >= ASSIGN_LARGE_COST) {
-        assign_write_failure(output, ASSIGN_STATUS_INTERNAL_BOUND, rows, columns);
-        return;
-      }
-      for (column = 0u; column <= order; ++column) {
-        if (used[column]) {
-          potentials_row[selected_row[column]] += delta;
-          potentials_column[column] -= delta;
-        } else {
-          minimum[column] -= delta;
-        }
-      }
-      current_column = next_column;
-    } while (selected_row[current_column] != 0u);
-
-    do {
-      unsigned previous_column = predecessor[current_column];
-      selected_row[current_column] = selected_row[previous_column];
-      current_column = previous_column;
-    } while (current_column != 0u);
+  solved =
+      assign_hungarian(costs, forbidden, rows, columns, augmented_columns, threshold, selected_row);
+  if (!solved) {
+    assign_write_failure(output, ASSIGN_STATUS_INTERNAL_BOUND, rows, columns);
+    return;
   }
 
-  for (column = 1u; column <= order; ++column) {
+  for (column = 1u; column <= columns; ++column) {
     unsigned assigned_row = selected_row[column];
-    if (assigned_row != 0u && assigned_row <= rows && column <= columns) {
+    if (assigned_row != 0u && assigned_row <= rows) {
       unsigned real_row = assigned_row - 1u;
       unsigned real_column = column - 1u;
       float value = costs[real_row * ASSIGN_MAX_COLUMNS + real_column];
-      if ((forbidden[real_row] & (1u << real_column)) == 0u && assign_is_finite(value) &&
-          value <= threshold) {
+      if ((forbidden[real_row] & (1u << real_column)) == 0u && value <= threshold) {
         row_to_column[real_row] = (int)real_column;
         column_to_row[real_column] = (int)real_row;
         match_cost += value;
@@ -211,9 +215,9 @@ static void assign_solve_chunk(const float *input, float *output) {
   output_words[5] = match_count;
   output_words[6] = rows - match_count;
   output_words[7] = columns - match_count;
-  output_words[8] = forbidden_count;
-  output_words[9] = order;
-  output_words[10] = relaxation_count;
+  output_words[8] = 0u;
+  output_words[9] = augmented_columns;
+  output_words[10] = 0u;
   for (row = 0u; row < ASSIGN_MAX_ROWS; ++row) {
     output_words[ASSIGN_OUTPUT_ROW_OFFSET + row] = row < rows ? (unsigned)row_to_column[row] : ~0u;
   }

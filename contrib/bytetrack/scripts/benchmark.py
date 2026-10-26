@@ -76,15 +76,28 @@ def main() -> int:
     generator = np.random.default_rng(20261026)
     cases = []
     try:
-        for size in (1, 2, 4, 8, 12, 16):
-            costs = generator.uniform(0.0, 1.0, size=(size, size)).astype(np.float32)
+        shapes = (
+            (1, 1),
+            (1, 16),
+            (2, 2),
+            (4, 4),
+            (4, 16),
+            (8, 8),
+            (8, 16),
+            (12, 12),
+            (16, 4),
+            (16, 8),
+            (16, 16),
+        )
+        for rows, columns in shapes:
+            costs = generator.uniform(0.0, 1.0, size=(rows, columns)).astype(np.float32)
             threshold = 0.8
             reference = scipy_assignment(costs, threshold)
             lap_result = lap.assign(costs, threshold)
             if not np.isclose(reference.augmented_cost, lap_result.augmented_cost, atol=1e-6):
                 raise RuntimeError("SciPy and LAPJV baselines disagree")
             case: dict[str, object] = {
-                "shape": [size, size],
+                "shape": [rows, columns],
                 "matches": len(reference.matches),
                 "scipy_ms": measure(lambda: scipy_assignment(costs, threshold), options.cpu_runs),
                 "lapjv_ms": measure(lambda: lap.assign(costs, threshold), options.cpu_runs),

@@ -12,8 +12,11 @@ import numpy as np
 
 MAX_ROWS = 16
 MAX_COLUMNS = 16
-CHUNK_ELEMENTS = 512
-LOGICAL_ELEMENTS = 4 * CHUNK_ELEMENTS
+CHUNK_ELEMENTS = 288
+GRAPH_REPLICAS = 4
+ACT_TARGETS = 4
+LOGICAL_ELEMENTS = GRAPH_REPLICAS * CHUNK_ELEMENTS
+DESCRIPTOR_ELEMENTS = ACT_TARGETS * CHUNK_ELEMENTS
 INPUT_MAGIC = 372041
 OUTPUT_MAGIC = 372042
 FORMAT_VERSION = 1
@@ -23,7 +26,8 @@ OUTPUT_ROW_ASSIGNMENT_OFFSET = 16
 OUTPUT_COLUMN_ASSIGNMENT_OFFSET = 32
 OUTPUT_MATCH_COST_OFFSET = 48
 OUTPUT_AUGMENTED_COST_OFFSET = 49
-OUTPUT_WORDS = 64
+OUTPUT_WORDS = 50
+COLUMN_BITS = np.left_shift(np.uint32(1), np.arange(MAX_COLUMNS, dtype=np.uint32))
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,29 +233,40 @@ class CpuLapjvAssignment:
         return result
 
 
-def _pack_problem(matrix: np.ndarray, forbidden: np.ndarray, threshold: np.float32) -> np.ndarray:
-    packed = np.zeros((4, CHUNK_ELEMENTS), dtype=np.float32)
-    for chunk in packed:
-        words = chunk.view(np.uint32)
-        words[0:8] = (
-            INPUT_MAGIC,
-            FORMAT_VERSION,
-            matrix.shape[0],
-            matrix.shape[1],
-            threshold.view(np.uint32),
-            0,
-            MAX_ROWS,
-            MAX_COLUMNS,
+def _pack_problem(
+    matrix: np.ndarray,
+    forbidden: np.ndarray,
+    threshold: np.float32,
+    output: np.ndarray | None = None,
+) -> np.ndarray:
+    if output is None:
+        packed = np.empty((GRAPH_REPLICAS, CHUNK_ELEMENTS), dtype=np.float32)
+    else:
+        packed = np.asarray(output, dtype=np.float32).reshape(GRAPH_REPLICAS, CHUNK_ELEMENTS)
+    chunk = packed[0]
+    chunk.fill(0)
+    words = chunk.view(np.uint32)
+    words[0:8] = (
+        INPUT_MAGIC,
+        FORMAT_VERSION,
+        matrix.shape[0],
+        matrix.shape[1],
+        threshold.view(np.uint32),
+        0,
+        MAX_ROWS,
+        MAX_COLUMNS,
+    )
+    if matrix.shape[0] and matrix.shape[1]:
+        words[INPUT_FORBIDDEN_OFFSET : INPUT_FORBIDDEN_OFFSET + matrix.shape[0]] = np.sum(
+            forbidden.astype(np.uint32) * COLUMN_BITS[: matrix.shape[1]],
+            axis=1,
+            dtype=np.uint32,
         )
-        for row in range(matrix.shape[0]):
-            row_mask = 0
-            for column in np.flatnonzero(forbidden[row]).tolist():
-                row_mask |= 1 << column
-            words[INPUT_FORBIDDEN_OFFSET + row] = row_mask
-        cost_view = chunk[INPUT_COST_OFFSET : INPUT_COST_OFFSET + MAX_ROWS * MAX_COLUMNS].reshape(
-            MAX_ROWS, MAX_COLUMNS
-        )
-        cost_view[: matrix.shape[0], : matrix.shape[1]] = matrix
+    cost_view = chunk[INPUT_COST_OFFSET : INPUT_COST_OFFSET + MAX_ROWS * MAX_COLUMNS].reshape(
+        MAX_ROWS, MAX_COLUMNS
+    )
+    cost_view[: matrix.shape[0], : matrix.shape[1]] = matrix
+    packed[1:] = chunk
     return packed.reshape(1, LOGICAL_ELEMENTS)
 
 
@@ -262,8 +277,9 @@ def _decode_npu_output(
     threshold: np.float32,
     timings: dict[str, float],
 ) -> AssignmentResult:
-    chunks = np.asarray(output, dtype=np.float32).reshape(4, CHUNK_ELEMENTS)
-    if not all(np.array_equal(chunks[0, :OUTPUT_WORDS].view(np.uint32), chunk[:OUTPUT_WORDS].view(np.uint32)) for chunk in chunks[1:]):
+    chunks = np.asarray(output, dtype=np.float32).reshape(GRAPH_REPLICAS, CHUNK_ELEMENTS)
+    replica_words = chunks[:, :OUTPUT_WORDS].view(np.uint32)
+    if not np.all(replica_words[1:] == replica_words[0]):
         raise RuntimeError("ACT assignment replicas returned different output bytes")
     chunk = chunks[0]
     words = chunk.view(np.uint32)
@@ -276,11 +292,45 @@ def _decode_npu_output(
         raise RuntimeError("ACT assignment output shape does not match the request")
     row_to_column = words[
         OUTPUT_ROW_ASSIGNMENT_OFFSET : OUTPUT_ROW_ASSIGNMENT_OFFSET + rows
-    ].view(np.int32).copy()
+    ].view(np.int32).tolist()
     column_to_row = words[
         OUTPUT_COLUMN_ASSIGNMENT_OFFSET : OUTPUT_COLUMN_ASSIGNMENT_OFFSET + columns
-    ].view(np.int32).copy()
-    result = _decode_assignments(row_to_column, column_to_row, matrix, threshold, timings)
+    ].view(np.int32).tolist()
+    matches = []
+    unmatched_rows = []
+    unmatched_columns = []
+    match_cost = 0.0
+    for row, column in enumerate(row_to_column):
+        if column == -1:
+            unmatched_rows.append(row)
+        elif (
+            column < 0
+            or column >= columns
+            or column_to_row[column] != row
+            or forbidden[row, column]
+            or matrix[row, column] > threshold
+        ):
+            raise RuntimeError("ACT assignment row and column mappings are inconsistent")
+        else:
+            matches.append((row, column))
+            match_cost += float(matrix[row, column])
+    for column, row in enumerate(column_to_row):
+        if row == -1:
+            unmatched_columns.append(column)
+        elif row < 0 or row >= rows or row_to_column[row] != column:
+            raise RuntimeError("ACT assignment column and row mappings are inconsistent")
+    match_array = np.asarray(matches, dtype=np.int32).reshape(-1, 2)
+    augmented_cost = match_cost + float(
+        np.float64(rows + columns - 2 * len(matches)) * np.float64(threshold) * 0.5
+    )
+    result = AssignmentResult(
+        matches=match_array,
+        unmatched_rows=np.asarray(unmatched_rows, dtype=np.int32),
+        unmatched_columns=np.asarray(unmatched_columns, dtype=np.int32),
+        match_cost=match_cost,
+        augmented_cost=augmented_cost,
+        timings=timings,
+    )
     if words[5] != len(result.matches) or words[6] != len(result.unmatched_rows) or words[7] != len(
         result.unmatched_columns
     ):
@@ -291,7 +341,6 @@ def _decode_npu_output(
         chunk[OUTPUT_AUGMENTED_COST_OFFSET], result.augmented_cost, rtol=2e-6, atol=2e-6
     ):
         raise RuntimeError("ACT assignment augmented cost does not match its assignments")
-    _validate_solution(result, matrix, forbidden, threshold)
     return result
 
 
@@ -335,10 +384,10 @@ class NpuAssignment:
         if (
             group.input_dtypes != ("f32", "f32")
             or group.output_dtype != "f32"
-            or group.element_count != LOGICAL_ELEMENTS
+            or group.element_count != DESCRIPTOR_ELEMENTS
             or group.per_invocation_input_element_counts != (CHUNK_ELEMENTS, CHUNK_ELEMENTS)
             or group.per_invocation_output_element_count != CHUNK_ELEMENTS
-            or len(group.targets) != 4
+            or len(group.targets) != ACT_TARGETS
         ):
             raise RuntimeError(
                 "assignment carrier contract changed: "
@@ -360,6 +409,11 @@ class NpuAssignment:
         else:
             self.shared_input = None
             self.shared_guard = None
+        self.packed_input = (
+            self.shared_input
+            if self.shared_input is not None
+            else np.empty((1, LOGICAL_ELEMENTS), dtype=np.float32)
+        )
         self.shared_output = self.program.shared_output() if self.shared else None
         self.target_count = len(group.targets)
         self.source_sha256 = hashlib.sha256(source).hexdigest()
@@ -379,9 +433,12 @@ class NpuAssignment:
     ) -> AssignmentResult:
         matrix, mask, limit = _normalize_problem(costs, threshold, forbidden)
         started = perf_counter()
-        packed = _pack_problem(matrix, mask, limit)
-        if self.shared_input is not None:
-            np.copyto(self.shared_input, packed)
+        # The cost-limited objective is symmetric; making the smaller side the
+        # row side reduces the number of augmentations for tall matrices.
+        transposed = matrix.shape[0] > matrix.shape[1]
+        device_matrix = np.ascontiguousarray(matrix.T) if transposed else matrix
+        device_mask = np.ascontiguousarray(mask.T) if transposed else mask
+        packed = _pack_problem(device_matrix, device_mask, limit, self.packed_input)
         pack_or_upload_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         payload = packed if self.shared_input is None else self.shared_input
@@ -397,11 +454,23 @@ class NpuAssignment:
         started = perf_counter()
         result = _decode_npu_output(
             outputs["assignment_result"],
-            matrix,
-            mask,
+            device_matrix,
+            device_mask,
             limit,
             {},
         )
+        if transposed:
+            matches = result.matches[:, ::-1].copy()
+            if len(matches) > 1:
+                matches = matches[np.argsort(matches[:, 0], kind="stable")]
+            result = AssignmentResult(
+                matches=matches,
+                unmatched_rows=result.unmatched_columns.copy(),
+                unmatched_columns=result.unmatched_rows.copy(),
+                match_cost=result.match_cost,
+                augmented_cost=result.augmented_cost,
+                timings={},
+            )
         decode_ms = (perf_counter() - started) * 1000.0
         return AssignmentResult(
             matches=result.matches,
