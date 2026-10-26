@@ -448,7 +448,9 @@ class NpuActLinear:
             if (
                 HEADER_WORDS + shared_words + count * dynamic_stride > INVOCATION_WORDS
                 or HEADER_WORDS + count * model_stride > INVOCATION_WORDS
-                or HEADER_WORDS + count * output_stride > INVOCATION_WORDS
+                or HEADER_WORDS
+                + count * (output_stride + (sequence_length if sequence_length > 1 else 0))
+                > INVOCATION_WORDS
             ):
                 raise ValueError("projected selective scan exceeds the invocation capacity")
             channel_slices.append(slice(begin, end))

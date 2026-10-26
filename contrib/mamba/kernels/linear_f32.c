@@ -405,6 +405,7 @@ static void mamba_execute_projected_delta(act_abi_invocation invocation,
   const float *time_steps;
   const float *b_values;
   const float *c_values;
+  float *raw_deltas;
   if (linear_word(model_input, 0u) != MAMBA_PROJECTED_DELTA_MAGIC ||
       linear_word(dynamic_input, 1u) != MAMBA_VERSION ||
       linear_word(model_input, 1u) != MAMBA_VERSION) {
@@ -427,7 +428,9 @@ static void mamba_execute_projected_delta(act_abi_invocation invocation,
   output_stride = sequence_length + state_size;
   if (MAMBA_HEADER + shared_words + channels * dynamic_stride > invocation.element_count ||
       MAMBA_HEADER + channels * model_stride > invocation.element_count ||
-      MAMBA_HEADER + channels * output_stride > invocation.element_count) {
+      MAMBA_HEADER + channels *
+                             (output_stride + (sequence_length > 1u ? sequence_length : 0u)) >
+          invocation.element_count) {
     mamba_projected_delta_fail(output, 3u);
     return;
   }
@@ -441,6 +444,71 @@ static void mamba_execute_projected_delta(act_abi_invocation invocation,
   time_steps = dynamic_input + MAMBA_HEADER;
   b_values = time_steps + sequence_length * time_rank;
   c_values = b_values + sequence_length * state_size;
+  raw_deltas = output + MAMBA_HEADER + channels * output_stride;
+  if (sequence_length > 1u) {
+    unsigned time_index;
+    for (time_index = 0u; time_index < sequence_length; ++time_index) {
+      const float *step = time_steps + time_index * time_rank;
+      for (channel = 0u; channel + 7u < channels; channel += 8u) {
+        const float *row0 = model_input + MAMBA_HEADER + channel * model_stride;
+        const float *row1 = row0 + model_stride;
+        const float *row2 = row1 + model_stride;
+        const float *row3 = row2 + model_stride;
+        const float *row4 = row3 + model_stride;
+        const float *row5 = row4 + model_stride;
+        const float *row6 = row5 + model_stride;
+        const float *row7 = row6 + model_stride;
+        float total0;
+        float total1;
+        float total2;
+        float total3;
+        float total4;
+        float total5;
+        float total6;
+        float total7;
+        linear_dot_rows_eight(step, row0, row1, row2, row3, row4, row5, row6, row7, time_rank,
+                              &total0, &total1, &total2, &total3, &total4, &total5, &total6,
+                              &total7);
+        raw_deltas[channel * sequence_length + time_index] = total0;
+        raw_deltas[(channel + 1u) * sequence_length + time_index] = total1;
+        raw_deltas[(channel + 2u) * sequence_length + time_index] = total2;
+        raw_deltas[(channel + 3u) * sequence_length + time_index] = total3;
+        raw_deltas[(channel + 4u) * sequence_length + time_index] = total4;
+        raw_deltas[(channel + 5u) * sequence_length + time_index] = total5;
+        raw_deltas[(channel + 6u) * sequence_length + time_index] = total6;
+        raw_deltas[(channel + 7u) * sequence_length + time_index] = total7;
+      }
+      for (; channel + 3u < channels; channel += 4u) {
+        const float *row0 = model_input + MAMBA_HEADER + channel * model_stride;
+        const float *row1 = row0 + model_stride;
+        const float *row2 = row1 + model_stride;
+        const float *row3 = row2 + model_stride;
+        float total0;
+        float total1;
+        float total2;
+        float total3;
+        linear_dot_rows_quad(step, row0, row1, row2, row3, time_rank, &total0, &total1,
+                             &total2, &total3);
+        raw_deltas[channel * sequence_length + time_index] = total0;
+        raw_deltas[(channel + 1u) * sequence_length + time_index] = total1;
+        raw_deltas[(channel + 2u) * sequence_length + time_index] = total2;
+        raw_deltas[(channel + 3u) * sequence_length + time_index] = total3;
+      }
+      for (; channel + 1u < channels; channel += 2u) {
+        const float *row0 = model_input + MAMBA_HEADER + channel * model_stride;
+        const float *row1 = row0 + model_stride;
+        float total0;
+        float total1;
+        linear_dot_rows_pair(step, row0, row1, time_rank, &total0, &total1);
+        raw_deltas[channel * sequence_length + time_index] = total0;
+        raw_deltas[(channel + 1u) * sequence_length + time_index] = total1;
+      }
+      if (channel < channels) {
+        const float *row = model_input + MAMBA_HEADER + channel * model_stride;
+        raw_deltas[channel * sequence_length + time_index] = linear_dot(step, row, time_rank);
+      }
+    }
+  }
   for (channel = 0u; channel + 1u < channels; channel += 2u) {
     const float *dynamic_record =
         dynamic_input + MAMBA_HEADER + shared_words + channel * dynamic_stride;
@@ -472,9 +540,12 @@ static void mamba_execute_projected_delta(act_abi_invocation invocation,
       state1[state_index] = initial_state1[state_index];
     }
     for (time_index = 0u; time_index < sequence_length; ++time_index) {
-      const float *step = time_steps + time_index * time_rank;
-      float raw_delta0 = linear_dot(step, delta_weight0, time_rank);
-      float raw_delta1 = linear_dot(step, delta_weight1, time_rank);
+      float raw_delta0 =
+          sequence_length == 1u ? linear_dot(time_steps, delta_weight0, time_rank)
+                                : raw_deltas[channel * sequence_length + time_index];
+      float raw_delta1 = sequence_length == 1u
+                             ? linear_dot(time_steps, delta_weight1, time_rank)
+                             : raw_deltas[(channel + 1u) * sequence_length + time_index];
       float transformed_delta0 = mamba_softplus(raw_delta0 + delta_bias0);
       float transformed_delta1 = mamba_softplus(raw_delta1 + delta_bias1);
       float input_value0 = u0[time_index];
@@ -559,8 +630,9 @@ static void mamba_execute_projected_delta(act_abi_invocation invocation,
       state[state_index] = initial_state[state_index];
     }
     for (time_index = 0u; time_index < sequence_length; ++time_index) {
-      float raw_delta =
-          linear_dot(time_steps + time_index * time_rank, delta_weight, time_rank);
+      float raw_delta = sequence_length == 1u
+                            ? linear_dot(time_steps, delta_weight, time_rank)
+                            : raw_deltas[channel * sequence_length + time_index];
       float transformed_delta = mamba_softplus(raw_delta + delta_bias);
       float input_value = u[time_index];
       float result = 0.0f;
