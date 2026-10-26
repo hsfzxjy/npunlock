@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from time import perf_counter
 
@@ -69,6 +70,13 @@ class NpuActLinear:
         self.carrier_explanation = prepared.explain()
         self.inputs = self.program.shared_inputs()
         self.output = self.program.shared_output()
+        self._alternate_inputs = self.program.shared_inputs()
+        self._alternate_output = self.program.shared_output()
+        self._buffer_sets = (
+            (self.inputs, self.output),
+            (self._alternate_inputs, self._alternate_output),
+        )
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mamba-npu")
 
     def run(
         self,
@@ -196,12 +204,20 @@ class NpuActLinear:
         submissions = 0
         final_state = None
         convolution_output = None
-        for begin in range(0, matrix.shape[1], per_submission):
+        flat_values = values.reshape(-1)
+        flat_convolution_state = (
+            None if convolution_state is None else convolution_state.reshape(-1)
+        )
+        flat_convolution_weight = (
+            None if convolution_weight is None else convolution_weight.reshape(-1)
+        )
+
+        def pack_submission(inputs: object, begin: int) -> tuple[list[int], float]:
             started = perf_counter()
-            activation_pack = np.asarray(self.inputs["linear_activation"]).reshape(
+            activation_pack = np.asarray(inputs["linear_activation"]).reshape(
                 REPLICAS, INVOCATION_WORDS
             )
-            weight_pack = np.asarray(self.inputs["linear_weights"]).reshape(
+            weight_pack = np.asarray(inputs["linear_weights"]).reshape(
                 REPLICAS, INVOCATION_WORDS
             )
             awords = activation_pack.view(np.uint32)
@@ -222,9 +238,7 @@ class NpuActLinear:
                 awords[replica, 6] = weight_rows
                 awords[replica, 7] = sequence_length
                 wwords[replica, :4] = (MAGIC, VERSION, input_count, count)
-                activation_pack[replica, HEADER_WORDS : HEADER_WORDS + values.size] = values.reshape(
-                    -1
-                )
+                activation_pack[replica, HEADER_WORDS : HEADER_WORDS + values.size] = flat_values
                 cursor = HEADER_WORDS + values.size
                 if residual is not None and count:
                     residual_chunk = residual[:, replica_begin : replica_begin + count]
@@ -237,11 +251,11 @@ class NpuActLinear:
                     cursor += input_count
                 if convolution_state is not None:
                     activation_pack[replica, cursor : cursor + input_count * 4] = (
-                        convolution_state.reshape(-1)
+                        flat_convolution_state
                     )
                     cursor += input_count * 4
                     activation_pack[replica, cursor : cursor + input_count * 4] = (
-                        convolution_weight.reshape(-1)
+                        flat_convolution_weight
                     )
                     cursor += input_count * 4
                     activation_pack[replica, cursor : cursor + input_count] = convolution_bias
@@ -261,12 +275,34 @@ class NpuActLinear:
                         :,
                         replica_begin + weight_rows : replica_begin + count,
                     ].T.reshape(-1)
-            total_upload += (perf_counter() - started) * 1000.0
+            return counts, (perf_counter() - started) * 1000.0
+
+        def execute_submission(inputs: object, output: object) -> float:
             started = perf_counter()
-            self.program.run(self.inputs, outputs={"linear_output": self.output})
-            total_execution += (perf_counter() - started) * 1000.0
+            self.program.run(inputs, outputs={"linear_output": output})
+            return (perf_counter() - started) * 1000.0
+
+        begins = list(range(0, matrix.shape[1], per_submission))
+        counts, upload_ms = pack_submission(self._buffer_sets[0][0], begins[0])
+        total_upload += upload_ms
+        for submission_index, begin in enumerate(begins):
+            buffer_index = submission_index & 1
+            inputs, output = self._buffer_sets[buffer_index]
+            future = self._executor.submit(execute_submission, inputs, output)
+            next_counts = None
+            if submission_index + 1 < len(begins):
+                next_inputs = self._buffer_sets[buffer_index ^ 1][0]
+                try:
+                    next_counts, upload_ms = pack_submission(
+                        next_inputs, begins[submission_index + 1]
+                    )
+                    total_upload += upload_ms
+                except BaseException:
+                    future.result()
+                    raise
+            total_execution += future.result()
             started = perf_counter()
-            chunks = np.asarray(self.output).reshape(REPLICAS, INVOCATION_WORDS)
+            chunks = np.asarray(output).reshape(REPLICAS, INVOCATION_WORDS)
             words = chunks.view(np.uint32)
             for replica, count in enumerate(counts):
                 if tuple(words[replica, :3]) != (MAGIC, VERSION, count):
@@ -288,6 +324,8 @@ class NpuActLinear:
                 ].copy().reshape(sequence_length, input_count)
             total_download += (perf_counter() - started) * 1000.0
             submissions += 1
+            if next_counts is not None:
+                counts = next_counts
         return result, convolution_output, final_state, {
             "upload_ms": total_upload,
             "execution_wall_ms": total_execution,
@@ -481,6 +519,7 @@ class NpuActLinear:
         }
 
     def close(self) -> None:
+        self._executor.shutdown(wait=True)
         self.program.close()
 
     def __enter__(self) -> "NpuActLinear":

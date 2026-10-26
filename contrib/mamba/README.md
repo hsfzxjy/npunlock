@@ -63,8 +63,8 @@ compiler 8.3:
   next-token top five and greedy continuation `not yet clear` as Transformers;
 - maximum/mean prefill-logit error was `1.83e-4 / 4.34e-5`, and restoring the
   recurrent cache reproduced continuation logits bit-for-bit; and
-- median six-token prefill was 0.73 seconds and median three-token generation
-  was 1.44 seconds (`2.08 token/s`). The matching official PyTorch CPU medians
+- median six-token prefill was 0.66 seconds and median three-token generation
+  was 1.26 seconds (`2.38 token/s`). The matching official PyTorch CPU medians
   were 123.5 ms and 236.4 ms (`12.69 token/s`), so this is a programmability
   demonstration rather than a CPU speedup.
 
