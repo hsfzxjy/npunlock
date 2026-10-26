@@ -310,17 +310,35 @@ class NpuActLinear:
             started = perf_counter()
             chunks = np.asarray(output).reshape(REPLICAS, INVOCATION_WORDS)
             words = chunks.view(np.uint32)
-            for replica, count in enumerate(counts):
-                if tuple(words[replica, :3]) != (MAGIC, VERSION, count):
-                    raise RuntimeError("ACT linear output metadata is invalid")
-                if int(words[replica, 3]) != flags:
-                    raise RuntimeError("ACT linear output mode is invalid")
-                if int(words[replica, 4]) != sequence_length:
-                    raise RuntimeError("ACT linear output sequence length is invalid")
-                replica_begin = begin + replica * capacity
-                result[:, replica_begin : replica_begin + count] = chunks[
-                    replica, HEADER_WORDS : HEADER_WORDS + sequence_length * count
-                ].reshape(sequence_length, count)
+            if (
+                not np.all(words[:, 0] == MAGIC)
+                or not np.all(words[:, 1] == VERSION)
+                or not np.array_equal(words[:, 2], np.asarray(counts, dtype=np.uint32))
+            ):
+                raise RuntimeError("ACT linear output metadata is invalid")
+            if not np.all(words[:, 3] == flags):
+                raise RuntimeError("ACT linear output mode is invalid")
+            if not np.all(words[:, 4] == sequence_length):
+                raise RuntimeError("ACT linear output sequence length is invalid")
+            if (
+                counts[0] > 0
+                and all(count == counts[0] for count in counts[:active_replicas])
+                and not any(counts[active_replicas:])
+            ):
+                count = counts[0]
+                payload = chunks[
+                    :active_replicas,
+                    HEADER_WORDS : HEADER_WORDS + sequence_length * count,
+                ].reshape(active_replicas, sequence_length, count)
+                result[:, begin : begin + active_replicas * count] = payload.transpose(
+                    1, 0, 2
+                ).reshape(sequence_length, active_replicas * count)
+            else:
+                for replica, count in enumerate(counts):
+                    replica_begin = begin + replica * capacity
+                    result[:, replica_begin : replica_begin + count] = chunks[
+                        replica, HEADER_WORDS : HEADER_WORDS + sequence_length * count
+                    ].reshape(sequence_length, count)
             if convolution_state is not None:
                 final_state = chunks[
                     0, STATE_OUTPUT_OFFSET : STATE_OUTPUT_OFFSET + input_count * 4
