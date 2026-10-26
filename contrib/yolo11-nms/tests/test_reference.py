@@ -58,6 +58,20 @@ class ReferenceNmsTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(result.indices, [2, 5, 9])
 
+    def test_degenerate_boxes_do_not_suppress_candidates(self) -> None:
+        value = candidates(
+            [[0, 0, 0, 10], [0, 0, 0, 10], [0, 0, 10, 10]],
+            [0.9, 0.8, 0.7],
+            [0, 0, 0],
+        )
+        result = reference_nms(
+            value,
+            confidence_threshold=0.25,
+            iou_threshold=0.5,
+            max_detections=10,
+        )
+        np.testing.assert_array_equal(result.indices, [0, 1, 2])
+
     def test_transport_round_trip(self) -> None:
         value = candidates([[1, 2, 3, 4]], [0.75], [79], [8400])
         packed = pack_candidates(

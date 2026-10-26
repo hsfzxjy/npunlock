@@ -51,27 +51,6 @@ def _validate_candidates(candidates: DetectionBatch) -> None:
         raise ValueError("candidate boxes and scores must be finite")
 
 
-def _iou(left: np.ndarray, right: np.ndarray) -> float:
-    intersection_width = min(float(left[2]), float(right[2])) - max(float(left[0]), float(right[0]))
-    intersection_height = min(float(left[3]), float(right[3])) - max(float(left[1]), float(right[1]))
-    left_width = float(left[2]) - float(left[0])
-    left_height = float(left[3]) - float(left[1])
-    right_width = float(right[2]) - float(right[0])
-    right_height = float(right[3]) - float(right[1])
-    if (
-        intersection_width <= 0.0
-        or intersection_height <= 0.0
-        or left_width <= 0.0
-        or left_height <= 0.0
-        or right_width <= 0.0
-        or right_height <= 0.0
-    ):
-        return 0.0
-    intersection = intersection_width * intersection_height
-    union = left_width * left_height + right_width * right_height - intersection
-    return intersection / union if union > 0.0 else 0.0
-
-
 def reference_nms(
     candidates: DetectionBatch,
     *,
@@ -101,21 +80,40 @@ def reference_nms(
         (int(index) for index in eligible),
         key=lambda index: (-float(candidates.scores[index]), int(candidates.indices[index]), index),
     )
+    ordered = np.asarray(order, dtype=np.int64)
+    boxes = np.asarray(candidates.boxes, dtype=np.float64)
+    widths = boxes[:, 2] - boxes[:, 0]
+    heights = boxes[:, 3] - boxes[:, 1]
+    valid_boxes = (widths > 0.0) & (heights > 0.0)
+    areas = widths * heights
     suppressed = np.zeros(len(candidates), dtype=np.bool_)
     selected: list[int] = []
-    for index in order:
+    for position, index in enumerate(order):
         if suppressed[index]:
             continue
         selected.append(index)
         if len(selected) >= max_detections:
             break
-        for candidate in order:
-            if candidate == index or suppressed[candidate]:
-                continue
-            if candidates.classes[candidate] != candidates.classes[index]:
-                continue
-            if _iou(candidates.boxes[index], candidates.boxes[candidate]) > iou_threshold:
-                suppressed[candidate] = True
+        remaining = ordered[position + 1 :]
+        comparable = remaining[
+            (~suppressed[remaining])
+            & (candidates.classes[remaining] == candidates.classes[index])
+            & valid_boxes[remaining]
+        ]
+        if not valid_boxes[index] or comparable.size == 0:
+            continue
+        intersection_widths = np.minimum(boxes[index, 2], boxes[comparable, 2]) - np.maximum(
+            boxes[index, 0], boxes[comparable, 0]
+        )
+        intersection_heights = np.minimum(boxes[index, 3], boxes[comparable, 3]) - np.maximum(
+            boxes[index, 1], boxes[comparable, 1]
+        )
+        positive = (intersection_widths > 0.0) & (intersection_heights > 0.0)
+        intersections = intersection_widths[positive] * intersection_heights[positive]
+        unions = areas[index] + areas[comparable[positive]] - intersections
+        suppress = np.zeros(comparable.size, dtype=np.bool_)
+        suppress[positive] = (unions > 0.0) & (intersections / unions > iou_threshold)
+        suppressed[comparable[suppress]] = True
 
     chosen = np.asarray(selected, dtype=np.int64)
     return DetectionBatch(

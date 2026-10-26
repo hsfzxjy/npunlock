@@ -122,6 +122,13 @@ median. Persistent identities included tracks visible for 289 and 282 frames.
 The tracker also uses an SPD Cholesky solve for its 4 by 4 Kalman updates.
 These are one-system measurements, not general performance claims.
 
+The CPU reference NMS used by this combined demo computes each selected box's
+remaining IoUs as one FP64 NumPy batch while preserving score/index ordering,
+class separation, strict threshold comparisons, and degenerate-box behavior.
+Across the same 300 candidate batches, its isolated median fell from 0.565 to
+0.203 ms per frame. Three repeated complete runs all retained 300/300 tracker
+agreement; the median of their frame-time medians was 19.00 ms.
+
 ## Limits
 
 - Windows x64, Meteor Lake/NPU3720, graph compiler 8.3, and static FP32 carrier
