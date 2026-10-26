@@ -441,7 +441,106 @@ static void mamba_execute_projected_delta(act_abi_invocation invocation,
   time_steps = dynamic_input + MAMBA_HEADER;
   b_values = time_steps + sequence_length * time_rank;
   c_values = b_values + sequence_length * state_size;
-  for (channel = 0u; channel < channels; ++channel) {
+  for (channel = 0u; channel + 1u < channels; channel += 2u) {
+    const float *dynamic_record =
+        dynamic_input + MAMBA_HEADER + shared_words + channel * dynamic_stride;
+    const float *model_record = model_input + MAMBA_HEADER + channel * model_stride;
+    float *output_record = output + MAMBA_HEADER + channel * output_stride;
+    const float *dynamic_record1 = dynamic_record + dynamic_stride;
+    const float *model_record1 = model_record + model_stride;
+    float *output_record1 = output_record + output_stride;
+    const float *u0 = dynamic_record;
+    const float *u1 = dynamic_record1;
+    const float *z0 = u0 + sequence_length;
+    const float *z1 = u1 + sequence_length;
+    const float *initial_state0 = z0 + sequence_length;
+    const float *initial_state1 = z1 + sequence_length;
+    const float *delta_weight0 = model_record;
+    const float *delta_weight1 = model_record1;
+    const float *a0 = delta_weight0 + time_rank;
+    const float *a1 = delta_weight1 + time_rank;
+    float skip0 = a0[state_size];
+    float skip1 = a1[state_size];
+    float delta_bias0 = a0[state_size + 1u];
+    float delta_bias1 = a1[state_size + 1u];
+    float state0[MAMBA_MAX_STATE];
+    float state1[MAMBA_MAX_STATE];
+    unsigned state_index;
+    unsigned time_index;
+    for (state_index = 0u; state_index < state_size; ++state_index) {
+      state0[state_index] = initial_state0[state_index];
+      state1[state_index] = initial_state1[state_index];
+    }
+    for (time_index = 0u; time_index < sequence_length; ++time_index) {
+      const float *step = time_steps + time_index * time_rank;
+      float raw_delta0 = linear_dot(step, delta_weight0, time_rank);
+      float raw_delta1 = linear_dot(step, delta_weight1, time_rank);
+      float transformed_delta0 = mamba_softplus(raw_delta0 + delta_bias0);
+      float transformed_delta1 = mamba_softplus(raw_delta1 + delta_bias1);
+      float input_value0 = u0[time_index];
+      float input_value1 = u1[time_index];
+      float result0 = 0.0f;
+      float result1 = 0.0f;
+      const float *b = b_values + time_index * state_size;
+      const float *c = c_values + time_index * state_size;
+      if (state_size == MAMBA_MAX_STATE) {
+        for (state_index = 0u; state_index < MAMBA_MAX_STATE; state_index += 4u) {
+          linear_float4 transition0 = {
+              expf(transformed_delta0 * a0[state_index]),
+              expf(transformed_delta0 * a0[state_index + 1u]),
+              expf(transformed_delta0 * a0[state_index + 2u]),
+              expf(transformed_delta0 * a0[state_index + 3u]),
+          };
+          linear_float4 transition1 = {
+              expf(transformed_delta1 * a1[state_index]),
+              expf(transformed_delta1 * a1[state_index + 1u]),
+              expf(transformed_delta1 * a1[state_index + 2u]),
+              expf(transformed_delta1 * a1[state_index + 3u]),
+          };
+          linear_float4 current0 = *(linear_float4 *)(state0 + state_index);
+          linear_float4 current1 = *(linear_float4 *)(state1 + state_index);
+          linear_float4 addition0 =
+              transformed_delta0 * *(const linear_float4 *)(b + state_index);
+          linear_float4 addition1 =
+              transformed_delta1 * *(const linear_float4 *)(b + state_index);
+          addition0 *= input_value0;
+          addition1 *= input_value1;
+          current0 = transition0 * current0 + addition0;
+          current1 = transition1 * current1 + addition1;
+          *(linear_float4 *)(state0 + state_index) = current0;
+          *(linear_float4 *)(state1 + state_index) = current1;
+          result0 += c[state_index] * current0[0];
+          result0 += c[state_index + 1u] * current0[1];
+          result0 += c[state_index + 2u] * current0[2];
+          result0 += c[state_index + 3u] * current0[3];
+          result1 += c[state_index] * current1[0];
+          result1 += c[state_index + 1u] * current1[1];
+          result1 += c[state_index + 2u] * current1[2];
+          result1 += c[state_index + 3u] * current1[3];
+        }
+      } else {
+        for (state_index = 0u; state_index < state_size; ++state_index) {
+          state0[state_index] = expf(transformed_delta0 * a0[state_index]) *
+                                    state0[state_index] +
+                                transformed_delta0 * b[state_index] * input_value0;
+          state1[state_index] = expf(transformed_delta1 * a1[state_index]) *
+                                    state1[state_index] +
+                                transformed_delta1 * b[state_index] * input_value1;
+          result0 += c[state_index] * state0[state_index];
+          result1 += c[state_index] * state1[state_index];
+        }
+      }
+      output_record[time_index] =
+          (result0 + skip0 * input_value0) * mamba_silu(z0[time_index]);
+      output_record1[time_index] =
+          (result1 + skip1 * input_value1) * mamba_silu(z1[time_index]);
+    }
+    for (state_index = 0u; state_index < state_size; ++state_index) {
+      output_record[sequence_length + state_index] = state0[state_index];
+      output_record1[sequence_length + state_index] = state1[state_index];
+    }
+  }
+  if (channel < channels) {
     const float *dynamic_record =
         dynamic_input + MAMBA_HEADER + shared_words + channel * dynamic_stride;
     const float *model_record = model_input + MAMBA_HEADER + channel * model_stride;

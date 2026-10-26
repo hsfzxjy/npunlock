@@ -469,20 +469,19 @@ class NpuActLinear:
             cursor += b_value.size
             dynamic_pack[replica, cursor : cursor + c_value.size] = c_value.reshape(-1)
             cursor += c_value.size
-            dynamic_records = np.concatenate(
-                (u_value[begin:end], z_value[begin:end], state[begin:end]), axis=1
-            )
-            dynamic_pack[replica, cursor : cursor + count * dynamic_stride] = (
-                dynamic_records.reshape(-1)
-            )
-            model_records = np.zeros((count, model_stride), dtype=np.float32)
+            dynamic_records = dynamic_pack[
+                replica, cursor : cursor + count * dynamic_stride
+            ].reshape(count, dynamic_stride)
+            dynamic_records[:, :sequence_length] = u_value[begin:end]
+            dynamic_records[:, sequence_length : sequence_length * 2] = z_value[begin:end]
+            dynamic_records[:, sequence_length * 2 :] = state[begin:end]
+            model_records = model_pack[
+                replica, HEADER_WORDS : HEADER_WORDS + count * model_stride
+            ].reshape(count, model_stride)
             model_records[:, :time_rank] = delta_matrix[:, begin:end].T
             model_records[:, time_rank : time_rank + state_size] = a_value[begin:end]
             model_records[:, time_rank + state_size] = d_value[begin:end]
             model_records[:, time_rank + state_size + 1] = bias_value[begin:end]
-            model_pack[
-                replica, HEADER_WORDS : HEADER_WORDS + count * model_stride
-            ] = model_records.reshape(-1)
             begin = end
         upload_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
