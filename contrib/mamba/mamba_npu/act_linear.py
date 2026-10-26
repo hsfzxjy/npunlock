@@ -222,6 +222,16 @@ class NpuActLinear:
             )
             awords = activation_pack.view(np.uint32)
             wwords = weight_pack.view(np.uint32)
+            awords[:, 0] = MAGIC
+            awords[:, 1] = VERSION
+            awords[:, 2] = input_count
+            awords[:, 4] = flags
+            activation_pack[:, 5] = rms_epsilon
+            awords[:, 7] = sequence_length
+            wwords[:, 0] = MAGIC
+            wwords[:, 1] = VERSION
+            wwords[:, 2] = input_count
+            activation_pack[:, HEADER_WORDS : HEADER_WORDS + values.size] = flat_values
             counts = []
             for replica in range(REPLICAS):
                 replica_begin = begin + replica * capacity
@@ -231,14 +241,10 @@ class NpuActLinear:
                     else 0
                 )
                 counts.append(count)
-                awords[replica, :4] = (MAGIC, VERSION, input_count, count)
-                awords[replica, 4] = flags
-                activation_pack[replica, 5] = rms_epsilon
+                awords[replica, 3] = count
+                wwords[replica, 3] = count
                 weight_rows = min(count, weight_capacity)
                 awords[replica, 6] = weight_rows
-                awords[replica, 7] = sequence_length
-                wwords[replica, :4] = (MAGIC, VERSION, input_count, count)
-                activation_pack[replica, HEADER_WORDS : HEADER_WORDS + values.size] = flat_values
                 cursor = HEADER_WORDS + values.size
                 if residual is not None and count:
                     residual_chunk = residual[:, replica_begin : replica_begin + count]
