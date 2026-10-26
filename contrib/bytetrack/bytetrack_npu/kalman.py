@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.linalg import cho_factor, cho_solve
 
 
 class KalmanFilter:
@@ -76,7 +77,8 @@ class KalmanFilter:
         measurement: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         projected_mean, projected_covariance = self.project(mean, covariance)
-        gain = np.linalg.solve(projected_covariance, covariance[:, :4].T).T
+        factor = cho_factor(projected_covariance, lower=True, check_finite=False)
+        gain = cho_solve(factor, covariance[:, :4].T, check_finite=False).T
         innovation = np.asarray(measurement, dtype=np.float64) - projected_mean
         updated_mean = mean + gain @ innovation
         updated_covariance = covariance - gain @ projected_covariance @ gain.T

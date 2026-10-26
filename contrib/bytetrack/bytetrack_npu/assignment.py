@@ -432,6 +432,19 @@ class NpuAssignment:
         forbidden: object | None = None,
     ) -> AssignmentResult:
         matrix, mask, limit = _normalize_problem(costs, threshold, forbidden)
+        if matrix.shape[0] == 0 or matrix.shape[1] == 0:
+            started = perf_counter()
+            rows, columns = matrix.shape
+            return AssignmentResult(
+                matches=np.empty((0, 2), dtype=np.int32),
+                unmatched_rows=np.arange(rows, dtype=np.int32),
+                unmatched_columns=np.arange(columns, dtype=np.int32),
+                match_cost=0.0,
+                augmented_cost=float(
+                    np.float64(rows + columns) * np.float64(limit) * 0.5
+                ),
+                timings={"empty_fast_path_ms": (perf_counter() - started) * 1000.0},
+            )
         started = perf_counter()
         # The cost-limited objective is symmetric; making the smaller side the
         # row side reduces the number of augmentations for tall matrices.

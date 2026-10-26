@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from bytetrack_npu.assignment import scipy_assignment
+from bytetrack_npu.kalman import KalmanFilter
 from bytetrack_npu.tracker import ByteTracker, Detection, TrackState
 
 
@@ -23,6 +24,23 @@ def detection(x: float, score: float = 0.9, class_id: int = 0) -> Detection:
 
 
 class TrackingTests(unittest.TestCase):
+    def test_kalman_cholesky_update_matches_reference_solve(self) -> None:
+        kalman = KalmanFilter()
+        mean, covariance = kalman.initiate(np.asarray([40.0, 30.0, 0.5, 80.0]))
+        mean, covariance = kalman.predict(mean, covariance)
+        measurement = np.asarray([41.0, 29.0, 0.52, 79.0])
+        projected_mean, projected_covariance = kalman.project(mean, covariance)
+        reference_gain = np.linalg.solve(projected_covariance, covariance[:, :4].T).T
+        reference_mean = mean + reference_gain @ (measurement - projected_mean)
+        reference_covariance = (
+            covariance - reference_gain @ projected_covariance @ reference_gain.T
+        )
+
+        updated_mean, updated_covariance = kalman.update(mean, covariance, measurement)
+
+        np.testing.assert_allclose(updated_mean, reference_mean, rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(updated_covariance, reference_covariance, rtol=1e-12, atol=1e-12)
+
     def test_persistent_ids_and_all_three_assignment_stages(self) -> None:
         assignment = RecordingAssignment()
         tracker = ByteTracker(assignment)

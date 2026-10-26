@@ -1,8 +1,10 @@
 # ByteTrack assignment on ACT-SHAVE
 
 This example tracks people in real video with ByteTrack while a custom
-ACT-SHAVE kernel solves every one of ByteTrack's linear-assignment stages on
-Intel NPU3720. The kernel performs the complete bounded shortest-augmenting-
+ACT-SHAVE kernel solves every non-empty ByteTrack linear-assignment stage on
+Intel NPU3720. Empty stages are completed directly from their shape because
+there is no optimization problem or device work to perform. For non-empty
+stages, the kernel performs the complete bounded shortest-augmenting-
 path search: it initializes assignments, updates dual costs, follows
 predecessors, augments the matching, and writes both row and column results.
 
@@ -20,7 +22,8 @@ The demo deliberately describes the split as it is:
 video decode, letterbox, annotation                         CPU
 YOLO11n and stable top-k candidate selection                OpenVINO NPU
 class filtering, greedy NMS, IoU costs, Kalman prediction   CPU
-three ByteTrack linear-assignment stages                    ACT-SHAVE NPU
+non-empty ByteTrack linear-assignment stages                ACT-SHAVE NPU
+empty assignment contracts                                  CPU
 track activation, reactivation, loss and removal            CPU
 ```
 
@@ -102,18 +105,22 @@ and identity persistence.
 
 On the recorded Core Ultra 5 125H system with graph compiler 8.3, OpenVINO
 2026.3.1, and the repository's current native runtime, median complete NPU
-calls were 0.57 ms for 1 by 1, 0.61 ms for 8 by 8, and 0.77 ms for 16 by 16.
-The benchmark also includes 1 by 16, 4 by 16, 8 by 16, 16 by 4, and 16 by 8
-problems. Median SciPy and LAPJV calls were about 0.10-0.12 ms. The NPU result
+calls were 0.57 ms for 1 by 1, 0.58 ms for 8 by 8, and 0.80 ms for 16 by 16.
+The benchmark also includes empty contracts plus 1 by 16, 4 by 16, 8 by 16,
+16 by 4, and 16 by 8 problems. Median SciPy and LAPJV calls were about
+0.10-0.12 ms. The NPU result
 demonstrates the control-flow capability and reduces CPU algorithm work; it is
 not a latency speedup over optimized CPU solvers at this capacity.
 
-The 300-frame `vtest.avi` run produced CPU/NPU tracker agreement on every
-frame. YOLO inference took 9.63 ms median, the complete tracker took 4.06 ms,
-and each of the 900 NPU assignment graph calls took 0.53 ms median from
-submission through output copy. Complete decode-to-annotated-frame work took
-22.57 ms median. Persistent identities included tracks visible for 289 and 282
-frames. These are one-system measurements, not general performance claims.
+The optimized 300-frame `vtest.avi` run produced CPU/NPU tracker agreement on
+every frame. Of 900 association stages, 549 had an empty side and completed
+from their shape without submitting a graph; all 351 non-empty stages executed
+on the NPU. YOLO inference took 9.58 ms median, the complete tracker took 1.87
+ms, and non-empty assignment graph calls took 0.94 ms median from submission
+through output copy. Complete decode-to-annotated-frame work took 19.05 ms
+median. Persistent identities included tracks visible for 289 and 282 frames.
+The tracker also uses an SPD Cholesky solve for its 4 by 4 Kalman updates.
+These are one-system measurements, not general performance claims.
 
 ## Limits
 
@@ -124,8 +131,9 @@ frames. These are one-system measurements, not general performance claims.
   16; the tracker rejects overflow instead of truncating internally.
 - Association is class-agnostic, matching the selected original ByteTrack
   reference. Filtering before the tracker controls which classes share it.
-- YOLO preprocessing, NMS, Kalman filtering, cost construction, lifecycle
-  management, video I/O, and drawing remain on the CPU.
+- YOLO preprocessing, NMS, Kalman filtering, cost construction, empty
+  assignment contracts, lifecycle management, video I/O, and drawing remain
+  on the CPU.
 - The ordinary execution path copies through graphinfer's internal Level Zero
   allocations. Kernel-only device time is not exposed by this demo.
 - `vtest.avi` has no MOT ground truth, so the recorded run reports exact
