@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import ctypes
 import hashlib
 import io
@@ -25,6 +26,18 @@ from npunlock.doctor import collect_diagnostics, human_report
 
 
 class SymbolicTests(unittest.TestCase):
+    def test_every_explicit_public_export_has_a_stub_declaration(self) -> None:
+        tree = ast.parse((ROOT / "python/npunlock/__init__.pyi").read_text(encoding="utf-8"))
+        declared: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                declared.add(node.name)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                declared.add(node.target.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                declared.update(alias.asname or alias.name for alias in node.names)
+        self.assertEqual(sorted(set(npu.__all__) - declared), [])
+
     def test_act_group_reports_per_invocation_tensor_counts(self) -> None:
         dense = npu.ActGroup(
             0,

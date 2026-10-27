@@ -1,4 +1,5 @@
 from os import PathLike
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, TypeAlias, overload
 
 import numpy as np
@@ -20,6 +21,11 @@ class TensorSpec:
     def __init__(self, shape: object, dtype: object) -> None: ...
 
 class Tensor:
+    producer: Node
+    output_index: int
+    spec: TensorSpec
+    name: str | None
+    def __init__(self, producer: Node, output_index: int, spec: TensorSpec, name: str | None = ...) -> None: ...
     @property
     def shape(self) -> Shape: ...
     @property
@@ -37,11 +43,31 @@ class TensorContract:
     @property
     def dtype(self) -> DType: ...
 
+class Node:
+    op: str
+    inputs: tuple[Tensor, ...]
+    attrs: dict[str, object]
+    output_specs: tuple[TensorSpec, ...]
+    name: str | None
+    metadata: dict[str, object]
+    outputs: tuple[Tensor, ...]
+    def __init__(
+        self,
+        op: str,
+        inputs: tuple[Tensor, ...],
+        attrs: dict[str, object],
+        output_specs: tuple[TensorSpec, ...],
+        name: str | None = ...,
+        metadata: dict[str, object] = ...,
+    ) -> None: ...
+
 class Graph:
     inputs: tuple[Tensor, ...]
     outputs: tuple[Tensor, ...]
     name: str
     def __init__(self, inputs: Iterable[Tensor], outputs: Iterable[Tensor], name: str = ...) -> None: ...
+    @property
+    def nodes(self) -> tuple[Node, ...]: ...
 
 class PatchTarget:
     def __init__(
@@ -87,6 +113,11 @@ class PatchTargetV2:
     def input_count(self) -> int: ...
     @property
     def output(self) -> PatchTensorContract: ...
+
+class PatchResult:
+    graph_blob: bytes
+    report_json: bytes
+    def __init__(self, graph_blob: bytes, report_json: bytes) -> None: ...
 
 class ActGroup:
     index: int
@@ -332,6 +363,13 @@ class PatchReport:
     def summary(self) -> dict[str, object]: ...
 
 class ActGroupContract:
+    input_dtypes: tuple[DType, ...]
+    output_dtype: DType
+    input_element_counts: tuple[int, ...]
+    output_element_count: int
+    target_count: int
+    invocation_indices: tuple[int, ...] | None
+    range_indices: tuple[int, ...] | None
     def __init__(
         self,
         input_dtypes: tuple[DType, ...],
@@ -346,6 +384,8 @@ class ActGroupContract:
     def to_json(self) -> dict[str, object]: ...
 
 class CarrierContract:
+    groups: tuple[ActGroupContract, ...]
+    mapping_indices: tuple[tuple[int, ...], ...] | None
     def __init__(
         self,
         groups: tuple[ActGroupContract, ...],
@@ -355,6 +395,12 @@ class CarrierContract:
     def to_json(self) -> dict[str, object]: ...
 
 class ProgramContract:
+    inputs: tuple[tuple[str, Shape, DType], ...]
+    outputs: tuple[tuple[str, Shape, DType], ...]
+    patch_count: int
+    compiler: str
+    npu: str
+    targets_per_patch: tuple[int, ...] | None
     def __init__(
         self,
         inputs: tuple[tuple[str, Shape, DType], ...],
@@ -386,6 +432,7 @@ class ReviewedPatchBinding:
 class SerializedIR:
     xml: bytes
     weights: bytes
+    custom_nodes: tuple[Node, ...]
 
 class NativeLibraries:
     def __init__(self, directory: str | PathLike[str] | None = ...) -> None: ...
@@ -567,6 +614,8 @@ class PreparedGraph:
     ) -> Program: ...
 
 class PreparedIr:
+    xml: bytes
+    weights: bytes
     binding: ReviewedPatchBinding
     ir_provenance: IrCompileResult
     @property
@@ -585,14 +634,17 @@ class CacheStatus:
     state: str
     diagnostic: str | None
     load_ms: float
+    def __init__(self, state: str, diagnostic: str | None = ..., load_ms: float = ...) -> None: ...
 
 class CachedCompileResult:
     program: Program
     cache: CacheStatus
     build_ms: float
     explanation: str
+    def __init__(self, program: Program, cache: CacheStatus, build_ms: float, explanation: str) -> None: ...
 
 class ProgramCache:
+    directory: Path
     status: CacheStatus
     def __init__(self, directory: str | PathLike[str]) -> None: ...
     def load(
@@ -606,6 +658,11 @@ class ProgramCache:
     def store(self, request: Mapping[str, object], program: Program) -> None: ...
 
 def input(name: str, *, shape: object, dtype: object) -> Tensor: ...
+def serialize_ir(
+    graph: Graph,
+    *,
+    _carrier_overrides: Mapping[Node, str] | None = ...,
+) -> SerializedIR: ...
 def configure(*, movi_dll_dir: str | PathLike[str] | None) -> None: ...
 def compile_kernel(
     kernel: KernelSpec | bytes | str | PathLike[str],

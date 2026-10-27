@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import prod
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from .kernel import CompiledKernel, KernelSpec
 from .tensor import Tensor, TensorSpec, normalize_dtype
