@@ -3332,5 +3332,238 @@ class CompilationFlowTests(unittest.TestCase):
             corrupt_path.unlink(missing_ok=True)
 
 
+class ContractNative(FakeNative):
+    def __init__(self) -> None:
+        super().__init__()
+        self.discovery_groups = ((npu.PatchTarget(0, 0, 1, 32, 64, 0x1F),),)
+
+    def patch_graph(self, graph_blob: bytes, shave_elf: bytes, targets: object) -> npu.PatchResult:
+        target_values = tuple(targets)  # type: ignore[arg-type]
+        self.patch_args = (graph_blob, shave_elf, target_values)
+        self.patch_calls.append(self.patch_args)
+        patched = b"strict-patched-" + str(len(self.patch_calls)).encode("ascii")
+        report = {
+            "schema": "npunlock.patchblob.v1",
+            "input_graph_sha256": hashlib.sha256(graph_blob).hexdigest(),
+            "output_graph_sha256": hashlib.sha256(patched).hexdigest(),
+            "shave_elf_sha256": hashlib.sha256(shave_elf).hexdigest(),
+            "graph_contract": {
+                "compiler": "8.3",
+                "npu": "3720",
+                "tiles": 1,
+            },
+            "targets": [
+                {
+                    "invocation_index": target.invocation_index,
+                    "range_index": target.range_index,
+                }
+                for target in target_values
+            ],
+            "append": {"size": len(shave_elf)},
+            "validation": {
+                "section_contents_preserved": True,
+                "mutation_set_preserved": True,
+            },
+        }
+        return npu.PatchResult(patched, json.dumps(report, sort_keys=True).encode("utf-8"))
+
+
+class ContribFoundationTests(unittest.TestCase):
+    @staticmethod
+    def _reviewed_binding(serialized: npu.SerializedIR) -> npu.ReviewedPatchBinding:
+        payload = {
+            "schema": "npunlock.reviewed-patch-binding.v1",
+            "metadata": {"purpose": "offline test"},
+            "serialized_ir": {
+                "xml_sha256": hashlib.sha256(serialized.xml).hexdigest(),
+                "weights_sha256": hashlib.sha256(serialized.weights).hexdigest(),
+            },
+            "build_flags": "NPU_TILES=1",
+            "native_graph_sha256": hashlib.sha256(b"native").hexdigest(),
+            "provenance": {
+                "driver_index": 0,
+                "device_index": 0,
+                "driver_version": 1,
+                "vendor_id": 0x8086,
+                "device_id": 0x7D1D,
+                "graph_extension_version": 0x10012,
+                "compiler_version": [8, 3],
+            },
+            "inputs": [{"name": "x", "shape": [1, 32], "dtype": "f16"}],
+            "outputs": [{"name": "y", "shape": [1, 32], "dtype": "f16"}],
+            "targets": [
+                {
+                    "invocation_index": 0,
+                    "range_index": 0,
+                    "target_flags": 0,
+                    "tensors": [
+                        {
+                            "role": "input",
+                            "index": 0,
+                            "dtype": "f16",
+                            "element_count": 32,
+                            "span_bytes": 64,
+                            "observed_flags": 7,
+                        },
+                        {
+                            "role": "output",
+                            "index": 0,
+                            "dtype": "f16",
+                            "element_count": 32,
+                            "span_bytes": 64,
+                            "observed_flags": 15,
+                        },
+                    ],
+                }
+            ],
+        }
+        return npu.ReviewedPatchBinding.from_bytes(json.dumps(payload).encode("utf-8"))
+
+    def test_carrier_and_program_contracts_replace_manual_contrib_checks(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
+        fake = ContractNative()
+        prepared = npu.prepare(npu.Graph([x], [y]), libraries=fake)  # type: ignore[arg-type]
+        carrier = npu.CarrierContract(
+            (npu.ActGroupContract(("f16",), "f16", (32,), 32, 1),),
+            mapping_indices=((0,),),
+        )
+        self.assertIs(prepared.require(carrier), prepared)
+        program = prepared.build(movi_dll_dir="movi").require(
+            npu.ProgramContract(
+                inputs=(("x", (1, 32), "f16"),),
+                outputs=(("y", (1, 32), "f16"),),
+                patch_count=1,
+                targets_per_patch=(1,),
+            )
+        )
+        self.assertEqual(program.patch_evidence[0].graph_contract["tiles"], 1)
+        self.assertEqual(program.patch_evidence[0].summary()["patched_target_count"], 1)
+        with self.assertRaisesRegex(ValueError, "target count"):
+            prepared.require(npu.CarrierContract((npu.ActGroupContract(("f16",), "f16", (32,), 32, 2),)))
+
+    def test_reviewed_external_ir_is_exact_and_builds_a_normal_program(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        serialized = npu.serialize_ir(npu.Graph([x], [npu.Abs(x, _name="y")]))
+        binding = self._reviewed_binding(serialized)
+        fake = ContractNative()
+        prepared = npu.prepare_ir(
+            serialized.xml,
+            serialized.weights,
+            binding=binding,
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        program = prepared.build(npu.KernelSpec(b"kernel"), movi_dll_dir="movi")
+        self.assertEqual(program.input_contracts[0].name, "x")
+        self.assertEqual(program.output_contracts[0].name, "y")
+        self.assertEqual(fake.compile_ir_kwargs["build_flags"], "NPU_TILES=1")
+        with self.assertRaisesRegex(ValueError, "XML"):
+            npu.prepare_ir(
+                serialized.xml + b"corrupt",
+                serialized.weights,
+                binding=binding,
+                libraries=fake,  # type: ignore[arg-type]
+            )
+        self.assertEqual(fake.compile_ir_count, 1)
+
+    def test_program_cache_rejects_corruption_and_reloads_valid_bundle(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
+        fake = ContractNative()
+        program = npu.compile(
+            npu.Graph([x], [y]),
+            movi_dll_dir="movi",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        contract = npu.ProgramContract(
+            inputs=(("x", (1, 32), "f16"),),
+            outputs=(("y", (1, 32), "f16"),),
+            patch_count=1,
+            targets_per_patch=(1,),
+        )
+        request = {
+            "schema": "test-request.v1",
+            "provenance": program.provenance.to_json(),  # type: ignore[union-attr]
+        }
+        directory = ROOT / "build" / "python-program-cache-test"
+        directory.mkdir(parents=True, exist_ok=True)
+        for path in directory.iterdir():
+            path.unlink()
+        cache = npu.ProgramCache(directory)
+        cache.store(request, program)
+        self.assertEqual(cache.status.state, "stored")
+        loaded = cache.load(request, libraries=fake, timeout_ms=20_000, contract=contract)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(cache.status.state, "hit")
+        metadata = next(directory.glob("request-*.json"))
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+        (directory / value["program"]["path"]).write_bytes(b"corrupt")
+        self.assertIsNone(cache.load(request, libraries=fake, timeout_ms=20_000, contract=contract))
+        self.assertEqual(cache.status.state, "invalid")
+        for path in directory.iterdir():
+            path.unlink()
+        directory.rmdir()
+
+    def test_compile_cached_owns_dependency_identity_and_cache_hit(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
+        graph = npu.Graph([x], [y], name="cached")
+        carrier = npu.CarrierContract(
+            (npu.ActGroupContract(("f16",), "f16", (32,), 32, 1),),
+            mapping_indices=((0,),),
+        )
+        program_contract = npu.ProgramContract(
+            inputs=(("x", (1, 32), "f16"),),
+            outputs=(("y", (1, 32), "f16"),),
+            patch_count=1,
+            targets_per_patch=(1,),
+        )
+        root = ROOT / "build" / "python-compile-cache-test"
+        movi = root / "movi"
+        native = root / "native"
+        cache = root / "cache"
+        dependencies = {
+            movi / "bin" / "moviCompile64.dll": b"compile",
+            movi / "bin" / "moviAsm64.dll": b"assemble",
+            movi / "bin" / "moviLLD64.dll": b"link",
+            movi / "lib" / "mlibm.a": b"math",
+            native / "npunlock.dll": b"native",
+            native / "npunlock_worker.exe": b"worker",
+        }
+        for path, contents in dependencies.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+        fake = ContractNative()
+        try:
+            first = npu.compile_cached(
+                graph,
+                cache_dir=cache,
+                carrier_contract=carrier,
+                program_contract=program_contract,
+                movi_dll_dir=movi,
+                native_dir=native,
+                libraries=fake,  # type: ignore[arg-type]
+            )
+            second = npu.compile_cached(
+                graph,
+                cache_dir=cache,
+                carrier_contract=carrier,
+                program_contract=program_contract,
+                movi_dll_dir=movi,
+                native_dir=native,
+                libraries=fake,  # type: ignore[arg-type]
+            )
+            self.assertEqual(first.cache.state, "stored")
+            self.assertEqual(second.cache.state, "hit")
+            self.assertEqual(fake.compile_ir_count, 1)
+            self.assertEqual(len(fake.shave_calls), 1)
+        finally:
+            first.program.close() if "first" in locals() else None
+            second.program.close() if "second" in locals() else None
+            for path in sorted(root.rglob("*"), reverse=True):
+                path.unlink() if path.is_file() else path.rmdir()
+            root.rmdir()
+
+
 if __name__ == "__main__":
     unittest.main()

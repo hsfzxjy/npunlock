@@ -646,6 +646,52 @@ carrier and binding while continuing to rebuild the C kernel. When a plan uses
 native blobs. Loading reruns their strict comparisons and the selected coverage
 check without recompiling the graph.
 
+For applications that need the same reviewed carrier shape across releases,
+state that assumption once and let `npunlock` enforce it:
+
+```python
+carrier = npu.CarrierContract(
+    (
+        npu.ActGroupContract(
+            ("f32", "f32"),
+            "f32",
+            (1024, 1024),
+            1024,
+            4,
+        ),
+    ),
+    mapping_indices=((0,),),
+)
+
+prepared = npu.prepare(graph).require(carrier)
+program = prepared.build().require(
+    npu.ProgramContract(
+        inputs=(("left", (1, 4096), "f32"), ("right", (1, 4096), "f32")),
+        outputs=(("result", (1, 4096), "f32"),),
+        patch_count=1,
+        targets_per_patch=(4,),
+    )
+)
+```
+
+`Program.patch_evidence` returns validated `PatchReport` objects, including
+the preservation decisions and hash chain. Use it instead of parsing report
+JSON in application code.
+
+Contributions that rebuild the same model-independent program can use
+`npu.compile_cached(...)` with the same carrier and program contracts. The core
+cache binds the artifact to exact IR and kernel inputs, MoviTools and native
+runtime contents, live driver/compiler provenance, tensor contracts, and patch
+evidence. A corrupt or stale entry is a safe miss. Pass `cache_dir=None` to use
+the same validated build path without persistence.
+
+An advanced integration may serialize IR with another library only when it has
+an exact reviewed binding. `ReviewedPatchBinding` records the XML/weights and
+native-graph hashes, build flags, NPU provenance, explicit V2 targets, and I/O
+contracts. `npu.prepare_ir(xml, weights, binding=...)` rejects any drift before
+`PreparedIr.build()` returns an ordinary `Program`. This path is intentionally
+version-bound; it does not infer a source node from a name or a similar graph.
+
 ## 12. Use shared buffers when repeated copies matter
 
 Ordinary `Program.run()` copies NumPy inputs through internal Level Zero

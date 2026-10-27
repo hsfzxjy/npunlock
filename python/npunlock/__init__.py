@@ -6,6 +6,7 @@ import io
 import json
 import os
 import threading
+from time import perf_counter
 import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -33,6 +34,16 @@ from ._native import (
     PatchTensorContract,
     _native_directory,
 )
+from .contracts import (
+    ActGroupContract,
+    ArtifactIdentity,
+    CarrierContract,
+    NpuProvenance,
+    PatchReport,
+    ProgramContract,
+)
+from .cache import CacheStatus, ProgramCache, movitools_identity, native_runtime_identity
+from .external import ReviewedPatchBinding
 from .graph import Graph, Node, constant, custom, input, op
 from .ir import SerializedIR, serialize_ir
 from .kernel import CompiledKernel, KernelSpec, _compiler_definitions, _linker_script
@@ -40,14 +51,19 @@ from .tensor import DType, Shape, Tensor, TensorSpec
 
 __all__ = [
     "ActGroup",
+    "ActGroupContract",
     "ActGroupCompleteness",
     "ActGroupCoverage",
+    "ArtifactIdentity",
     "BuildPlan",
+    "CacheStatus",
     "CarrierMappingEvidence",
+    "CarrierContract",
     "CarrierProbe",
     "CarrierProbeFailure",
     "CarrierProbeReport",
     "CompiledKernel",
+    "CachedCompileResult",
     "CustomMapping",
     "DType",
     "Graph",
@@ -59,14 +75,20 @@ __all__ = [
     "KernelSpec",
     "NativeError",
     "NativeLibraries",
+    "NpuProvenance",
     "Node",
     "PatchResult",
+    "PatchReport",
     "PatchTarget",
     "PatchTargetV2",
     "PatchTensorContract",
     "PreparedGraph",
+    "PreparedIr",
     "Program",
+    "ProgramCache",
+    "ProgramContract",
     "ReviewedBinding",
+    "ReviewedPatchBinding",
     "SerializedIR",
     "Shape",
     "SharedArray",
@@ -74,6 +96,7 @@ __all__ = [
     "TensorContract",
     "TensorSpec",
     "compile",
+    "compile_cached",
     "compile_kernel",
     "compare_native_graphs",
     "configure",
@@ -86,6 +109,7 @@ __all__ = [
     "load",
     "op",
     "prepare",
+    "prepare_ir",
     "serialize_ir",
 ]
 
@@ -626,6 +650,58 @@ class Program:
         return tuple(values)
 
     @property
+    def provenance(self) -> NpuProvenance | None:
+        """Return stable driver/compiler identity when retained by this artifact."""
+
+        if self.ir_provenance is not None:
+            return NpuProvenance.from_ir_result(self.ir_provenance)
+        if self.artifact_manifest is None:
+            return None
+        try:
+            manifest = json.loads(self.artifact_manifest.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        value = manifest.get("provenance") if isinstance(manifest, dict) else None
+        return None if value is None else NpuProvenance.from_json(value)
+
+    @property
+    def patch_evidence(self) -> tuple[PatchReport, ...]:
+        """Parse and validate every retained patch preservation report."""
+
+        return tuple(PatchReport.parse(report) for report in self.patch_reports)
+
+    @property
+    def manifest(self) -> dict[str, object]:
+        """Return the canonical in-memory program manifest."""
+
+        patch_entries = tuple(
+            {
+                "path": f"patch-reports/{index:03d}.json",
+                **ArtifactIdentity.from_bytes(report).to_json(),
+            }
+            for index, report in enumerate(self.patch_reports)
+        )
+        return {
+            "schema": "npunlock.program.v1",
+            "graph": {
+                "path": "graph.blob",
+                **ArtifactIdentity.from_bytes(self.graph_blob).to_json(),
+            },
+            "inputs": [_contract_json(contract) for contract in self.input_contracts],
+            "outputs": [_contract_json(contract) for contract in self.output_contracts],
+            "provenance": None if self.provenance is None else self.provenance.to_json(),
+            "patch_reports": list(patch_entries),
+        }
+
+    def require(self, contract: ProgramContract) -> Program:
+        """Validate a reusable program contract and return this program."""
+
+        if not isinstance(contract, ProgramContract):
+            raise TypeError("Program.require() requires a ProgramContract")
+        contract.validate(self)
+        return self
+
+    @property
     def output_contracts(self) -> tuple[TensorContract, ...]:
         if self._saved_outputs:
             return self._saved_outputs
@@ -655,39 +731,8 @@ class Program:
     def export(self, destination: str | Path) -> None:
         """Write a self-describing, redistributable npunlock program bundle."""
 
-        input_contracts = self.input_contracts
-        output_contracts = self.output_contracts
-        patch_entries = tuple(
-            {
-                "path": f"patch-reports/{index:03d}.json",
-                "size": len(report),
-                "sha256": hashlib.sha256(report).hexdigest(),
-            }
-            for index, report in enumerate(self.patch_reports)
-        )
-        provenance = None
-        if self.ir_provenance is not None:
-            provenance = {
-                "driver_index": self.ir_provenance.driver_index,
-                "device_index": self.ir_provenance.device_index,
-                "driver_version": self.ir_provenance.driver_version,
-                "vendor_id": self.ir_provenance.vendor_id,
-                "device_id": self.ir_provenance.device_id,
-                "graph_extension_version": self.ir_provenance.graph_extension_version,
-                "compiler_version": list(self.ir_provenance.compiler_version),
-            }
-        manifest = {
-            "schema": "npunlock.program.v1",
-            "graph": {
-                "path": "graph.blob",
-                "size": len(self.graph_blob),
-                "sha256": hashlib.sha256(self.graph_blob).hexdigest(),
-            },
-            "inputs": [_contract_json(contract) for contract in input_contracts],
-            "outputs": [_contract_json(contract) for contract in output_contracts],
-            "provenance": provenance,
-            "patch_reports": list(patch_entries),
-        }
+        manifest = self.manifest
+        patch_entries = tuple(manifest["patch_reports"])  # type: ignore[arg-type]
         manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
         archive_bytes = io.BytesIO()
         with zipfile.ZipFile(archive_bytes, "w") as archive:
@@ -1131,6 +1176,122 @@ def compile_kernel(
     result = CompiledKernel(elf)
     object.__setattr__(result, "elf_name", f"<compiled from {spec.source_name}>")
     return result
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedIr:
+    """An exact caller-produced IR carrier validated against a reviewed binding."""
+
+    xml: bytes = field(repr=False)
+    weights: bytes = field(repr=False)
+    binding: ReviewedPatchBinding
+    ir_provenance: IrCompileResult
+    _libraries: NativeLibraries = field(repr=False, compare=False)
+    _timeout_ms: int = field(repr=False, compare=False)
+
+    @property
+    def provenance(self) -> NpuProvenance:
+        return NpuProvenance.from_ir_result(self.ir_provenance)
+
+    def build(
+        self,
+        kernel: KernelSpec | CompiledKernel | bytes | str | os.PathLike[str],
+        *,
+        movi_dll_dir: str | Path | None = None,
+        definitions: Sequence[str] = (),
+        linker_script: bytes | str | os.PathLike[str] | None = None,
+        movi_worker: str | None = None,
+    ) -> Program:
+        """Compile or reuse one kernel and apply the reviewed explicit targets."""
+
+        if isinstance(kernel, CompiledKernel):
+            if tuple(definitions) or linker_script is not None:
+                raise ValueError("compiled kernels cannot be combined with definitions or a linker script")
+            compiled = kernel
+        else:
+            compiled = compile_kernel(
+                kernel,
+                definitions=definitions,
+                linker_script=linker_script,
+                movi_dll_dir=movi_dll_dir,
+                timeout_ms=self._timeout_ms,
+                movi_worker=movi_worker,
+                libraries=self._libraries,
+            )
+        patched = self._libraries.patch_graph(
+            self.ir_provenance.graph_blob,
+            compiled.elf,
+            self.binding.targets,
+        )
+        report = PatchReport.parse(patched.report_json)
+        baseline_hash = hashlib.sha256(self.ir_provenance.graph_blob).hexdigest()
+        if report.input_graph_sha256 != baseline_hash:
+            raise RuntimeError("patch report input hash does not match the reviewed native graph")
+        if len(report.targets) != len(self.binding.targets):
+            raise RuntimeError("patch report target count does not match the reviewed binding")
+        inputs = tuple(TensorContract(name, shape, dtype) for name, shape, dtype in self.binding.inputs)
+        outputs = tuple(TensorContract(name, shape, dtype) for name, shape, dtype in self.binding.outputs)
+        program = Program(
+            patched.graph_blob,
+            None,
+            None,
+            self.ir_provenance,
+            (patched.report_json,),
+            self._libraries,
+            self._timeout_ms,
+            _saved_inputs=inputs,
+            _saved_outputs=outputs,
+        )
+        program.require(
+            ProgramContract(
+                self.binding.inputs,
+                self.binding.outputs,
+                1,
+                targets_per_patch=(len(self.binding.targets),),
+            )
+        )
+        return program
+
+
+def prepare_ir(
+    xml: bytes | bytearray | memoryview,
+    weights: bytes | bytearray | memoryview,
+    *,
+    binding: ReviewedPatchBinding,
+    native_dir: str | Path | None = None,
+    timeout_ms: int = 20_000,
+    ir_worker: str | None = None,
+    libraries: NativeLibraries | None = None,
+) -> PreparedIr:
+    """Compile caller-produced serialized IR only after exact binding validation."""
+
+    if not isinstance(binding, ReviewedPatchBinding):
+        raise TypeError("prepare_ir() requires a ReviewedPatchBinding")
+    if not isinstance(xml, (bytes, bytearray, memoryview)) or not isinstance(weights, (bytes, bytearray, memoryview)):
+        raise TypeError("prepare_ir() XML and weights must be bytes-like")
+    xml_bytes = bytes(xml)
+    weights_bytes = bytes(weights)
+    if not xml_bytes:
+        raise ValueError("prepare_ir() XML must not be empty")
+    binding.validate_ir(xml_bytes, weights_bytes)
+    native = libraries or _default_native_libraries(native_dir)
+    compiled = native.compile_ir(
+        xml_bytes,
+        weights_bytes,
+        build_flags=binding.build_flags,
+        timeout_ms=timeout_ms,
+        worker=ir_worker,
+    )
+    provenance = NpuProvenance.from_ir_result(compiled)
+    if provenance != binding.provenance:
+        raise ValueError(
+            "compiled IR provenance does not match the reviewed binding: "
+            f"expected {binding.provenance.to_json()!r}, got {provenance.to_json()!r}"
+        )
+    graph_hash = hashlib.sha256(compiled.graph_blob).hexdigest()
+    if graph_hash != binding.native_graph_sha256:
+        raise ValueError("compiled native graph does not match the reviewed binding")
+    return PreparedIr(xml_bytes, weights_bytes, binding, compiled, native, timeout_ms)
 
 
 def _legacy_target_dtype(target: PatchTarget) -> str | None:
@@ -1707,6 +1868,14 @@ class PreparedGraph:
     _build_flags: str = field(repr=False, compare=False)
     _saved_indices: tuple[tuple[int, ...], ...] | None = field(default=None, repr=False, compare=False)
     _saved_reviews: tuple[ReviewedBinding | None, ...] | None = field(default=None, repr=False, compare=False)
+
+    def require(self, contract: CarrierContract) -> PreparedGraph:
+        """Validate a declarative carrier contract and return this prepared graph."""
+
+        if not isinstance(contract, CarrierContract):
+            raise TypeError("PreparedGraph.require() requires a CarrierContract")
+        contract.validate(self)
+        return self
 
     def export(self, destination: str | Path, *, plan: BuildPlan | None = None) -> None:
         """Write this unpatched carrier and an optional reviewed binding plan."""
@@ -2855,3 +3024,166 @@ def compile(
         definitions=definitions,
         movi_worker=movi_worker,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CachedCompileResult:
+    program: Program
+    cache: CacheStatus
+    build_ms: float
+    explanation: str
+
+
+def _cached_kernel_specs(
+    serialized: SerializedIR,
+    kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None,
+    definitions: Sequence[str],
+    linker_script: str | Path | bytes | None,
+) -> tuple[KernelSpec | CompiledKernel, ...]:
+    custom_nodes = serialized.custom_nodes
+    if kernels is not None and not isinstance(kernels, Mapping):
+        raise TypeError("kernels must map custom output tensors to KernelSpec or CompiledKernel values")
+    supplied = {} if kernels is None else dict(kernels)
+    by_node: dict[Node, KernelSpec | CompiledKernel] = {}
+    for output, kernel in supplied.items():
+        if not isinstance(output, Tensor) or output.producer not in custom_nodes:
+            raise ValueError("kernel override keys must be outputs of custom nodes in this graph")
+        if output is not output.producer.outputs[0] or len(output.producer.outputs) != 1:
+            raise ValueError("kernel overrides currently require the sole output of a custom node")
+        if output.producer in by_node:
+            raise ValueError("one custom node received more than one kernel override")
+        if not isinstance(kernel, (KernelSpec, CompiledKernel)):
+            raise TypeError("kernel override values must be KernelSpec or CompiledKernel instances")
+        by_node[output.producer] = kernel
+    default_definitions = _compiler_definitions(definitions)
+    default_linker = _linker_script(linker_script)
+    result: list[KernelSpec | CompiledKernel] = []
+    for node in custom_nodes:
+        kernel = by_node.get(node)
+        if kernel is None:
+            source = node.metadata.get("_kernel")
+            if source is None:
+                raise ValueError(f"custom node {node.name or '<unnamed>'!r} has no C source or compiled kernel")
+            kernel = (
+                source
+                if isinstance(source, (KernelSpec, CompiledKernel))
+                else KernelSpec(source, definitions=default_definitions, linker_script=default_linker)  # type: ignore[arg-type]
+            )
+        result.append(kernel)
+    return tuple(result)
+
+
+def _kernel_cache_json(kernel: KernelSpec | CompiledKernel) -> dict[str, object]:
+    if isinstance(kernel, CompiledKernel):
+        return {"kind": "elf", "identity": ArtifactIdentity.from_bytes(kernel.elf).to_json()}
+    return {
+        "kind": "source",
+        "source": ArtifactIdentity.from_bytes(kernel.source).to_json(),
+        "definitions": list(kernel.definitions),
+        "linker_script": (
+            {"source": "builtin"}
+            if kernel.linker_script is None
+            else {"source": "caller", **ArtifactIdentity.from_bytes(kernel.linker_script).to_json()}
+        ),
+    }
+
+
+def compile_cached(
+    graph: Graph,
+    *,
+    cache_dir: str | Path | None,
+    carrier_contract: CarrierContract,
+    program_contract: ProgramContract,
+    native_dir: str | Path | None = None,
+    movi_dll_dir: str | Path | None = None,
+    kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = None,
+    linker_script: str | Path | bytes | None = None,
+    build_flags: str = "",
+    definitions: Sequence[str] = (),
+    timeout_ms: int = 20_000,
+    ir_worker: str | None = None,
+    movi_worker: str | None = None,
+    libraries: NativeLibraries | None = None,
+) -> CachedCompileResult:
+    """Load or build a contract-validated, provenance-bound program artifact."""
+
+    if not isinstance(graph, Graph):
+        raise TypeError("compile_cached() requires a Graph")
+    if not isinstance(carrier_contract, CarrierContract):
+        raise TypeError("compile_cached() requires a CarrierContract")
+    if not isinstance(program_contract, ProgramContract):
+        raise TypeError("compile_cached() requires a ProgramContract")
+    native = libraries or _default_native_libraries(native_dir)
+    serialized = serialize_ir(graph)
+    effective_flags = _effective_build_flags(serialized, build_flags)
+    resolved_kernels = _cached_kernel_specs(serialized, kernels, definitions, linker_script)
+    needs_movitools = any(isinstance(kernel, KernelSpec) for kernel in resolved_kernels)
+    resolved_movi = _resolve_movi_dll_dir(movi_dll_dir) if needs_movitools else None
+    if needs_movitools and resolved_movi is None:
+        raise ValueError(
+            "cached source compilation requires an MVC_DEPEND root from movi_dll_dir, "
+            "configure(), or NPUNLOCK_MOVITOOLS_DIR"
+        )
+    if cache_dir is None:
+        started = perf_counter()
+        prepared = prepare(
+            graph,
+            build_flags=build_flags,
+            timeout_ms=timeout_ms,
+            ir_worker=ir_worker,
+            libraries=native,
+        ).require(carrier_contract)
+        kernel_overrides = {node.outputs[0]: kernel for node, kernel in zip(serialized.custom_nodes, resolved_kernels)}
+        plan = prepared.plan(kernels=kernel_overrides)
+        program = plan.build(
+            movi_dll_dir=resolved_movi,
+            movi_worker=movi_worker,
+        ).require(program_contract)
+        return CachedCompileResult(
+            program,
+            CacheStatus("disabled"),
+            (perf_counter() - started) * 1000.0,
+            plan.explain(),
+        )
+    provenance_result = native.query_ir_provenance(timeout_ms=timeout_ms, worker=ir_worker)
+    provenance = NpuProvenance.from_ir_result(provenance_result)
+    runtime_root = _native_directory(native_dir)
+    request: dict[str, object] = {
+        "schema": "npunlock.compilation-request.v1",
+        "ir": {
+            "xml": ArtifactIdentity.from_bytes(serialized.xml).to_json(),
+            "weights": ArtifactIdentity.from_bytes(serialized.weights).to_json(),
+            "build_flags": effective_flags,
+        },
+        "kernels": [_kernel_cache_json(kernel) for kernel in resolved_kernels],
+        "provenance": provenance.to_json(),
+        "native_runtime": native_runtime_identity(runtime_root),
+        "movitools": None if resolved_movi is None else movitools_identity(resolved_movi),
+        "carrier_contract": carrier_contract.to_json(),
+        "program_contract": program_contract.to_json(),
+    }
+    cache = ProgramCache(cache_dir)
+    cached = cache.load(
+        request,
+        libraries=native,
+        timeout_ms=timeout_ms,
+        contract=program_contract,
+    )
+    if cached is not None:
+        return CachedCompileResult(cached, cache.status, 0.0, "loaded validated program from cache")
+    started = perf_counter()
+    prepared = prepare(
+        graph,
+        build_flags=build_flags,
+        timeout_ms=timeout_ms,
+        ir_worker=ir_worker,
+        libraries=native,
+    ).require(carrier_contract)
+    if NpuProvenance.from_ir_result(prepared.ir_provenance) != provenance:
+        raise RuntimeError("NPU driver/compiler provenance changed during cached compilation")
+    kernel_overrides = {node.outputs[0]: kernel for node, kernel in zip(serialized.custom_nodes, resolved_kernels)}
+    plan = prepared.plan(kernels=kernel_overrides)
+    program = plan.build(movi_dll_dir=resolved_movi, movi_worker=movi_worker).require(program_contract)
+    build_ms = (perf_counter() - started) * 1000.0
+    cache.store(request, program)
+    return CachedCompileResult(program, cache.status, build_ms, plan.explain())

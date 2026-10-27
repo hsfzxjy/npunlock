@@ -284,6 +284,105 @@ class IrCompileResult:
     graph_extension_version: int
     compiler_version: tuple[int, int]
 
+class NpuProvenance:
+    driver_index: int
+    device_index: int
+    driver_version: int
+    vendor_id: int
+    device_id: int
+    graph_extension_version: int
+    compiler_version: tuple[int, int]
+    def __init__(
+        self,
+        driver_index: int,
+        device_index: int,
+        driver_version: int,
+        vendor_id: int,
+        device_id: int,
+        graph_extension_version: int,
+        compiler_version: tuple[int, int],
+    ) -> None: ...
+    @classmethod
+    def from_ir_result(cls, value: IrCompileResult) -> NpuProvenance: ...
+    @classmethod
+    def from_json(cls, value: object) -> NpuProvenance: ...
+    def to_json(self) -> dict[str, object]: ...
+
+class ArtifactIdentity:
+    size: int
+    sha256: str
+    def __init__(self, size: int, sha256: str) -> None: ...
+    @classmethod
+    def from_bytes(cls, value: bytes) -> ArtifactIdentity: ...
+    def to_json(self) -> dict[str, object]: ...
+
+class PatchReport:
+    raw: bytes
+    input_graph_sha256: str
+    output_graph_sha256: str
+    shave_elf_sha256: str
+    compiler: str
+    npu: str
+    graph_contract: Mapping[str, object]
+    targets: tuple[Mapping[str, object], ...]
+    append: Mapping[str, object]
+    validation: Mapping[str, object]
+    @classmethod
+    def parse(cls, payload: bytes) -> PatchReport: ...
+    def summary(self) -> dict[str, object]: ...
+
+class ActGroupContract:
+    def __init__(
+        self,
+        input_dtypes: tuple[DType, ...],
+        output_dtype: DType,
+        input_element_counts: tuple[int, ...],
+        output_element_count: int,
+        target_count: int,
+        invocation_indices: tuple[int, ...] | None = ...,
+        range_indices: tuple[int, ...] | None = ...,
+    ) -> None: ...
+    def mismatch(self, group: ActGroup) -> str | None: ...
+    def to_json(self) -> dict[str, object]: ...
+
+class CarrierContract:
+    def __init__(
+        self,
+        groups: tuple[ActGroupContract, ...],
+        mapping_indices: tuple[tuple[int, ...], ...] | None = ...,
+    ) -> None: ...
+    def validate(self, prepared: PreparedGraph) -> None: ...
+    def to_json(self) -> dict[str, object]: ...
+
+class ProgramContract:
+    def __init__(
+        self,
+        inputs: tuple[tuple[str, Shape, DType], ...],
+        outputs: tuple[tuple[str, Shape, DType], ...],
+        patch_count: int,
+        compiler: str = ...,
+        npu: str = ...,
+        targets_per_patch: tuple[int, ...] | None = ...,
+    ) -> None: ...
+    def validate(self, program: Program) -> None: ...
+    def to_json(self) -> dict[str, object]: ...
+
+class ReviewedPatchBinding:
+    xml_sha256: str
+    weights_sha256: str
+    build_flags: str
+    native_graph_sha256: str
+    provenance: NpuProvenance
+    targets: tuple[PatchTargetV2, ...]
+    inputs: tuple[tuple[str, Shape, DType], ...]
+    outputs: tuple[tuple[str, Shape, DType], ...]
+    metadata: Mapping[str, object]
+    @classmethod
+    def from_bytes(cls, payload: bytes) -> ReviewedPatchBinding: ...
+    @classmethod
+    def load(cls, source: str | PathLike[str]) -> ReviewedPatchBinding: ...
+    def validate_ir(self, xml: bytes, weights: bytes) -> None: ...
+
 class SerializedIR:
     xml: bytes
     weights: bytes
@@ -336,6 +435,13 @@ class Program:
     patch_reports: tuple[bytes, ...]
     artifact_manifest: bytes | None
     @property
+    def provenance(self) -> NpuProvenance | None: ...
+    @property
+    def patch_evidence(self) -> tuple[PatchReport, ...]: ...
+    @property
+    def manifest(self) -> dict[str, object]: ...
+    def require(self, contract: ProgramContract) -> Program: ...
+    @property
     def input_contracts(self) -> tuple[TensorContract, ...]: ...
     @property
     def output_contracts(self) -> tuple[TensorContract, ...]: ...
@@ -378,6 +484,7 @@ class PreparedGraph:
     ir_provenance: IrCompileResult
     groups: tuple[ActGroup, ...]
     mappings: tuple[CustomMapping, ...]
+    def require(self, contract: CarrierContract) -> PreparedGraph: ...
     def export(self, destination: str | PathLike[str], *, plan: BuildPlan | None = ...) -> None: ...
     def find_groups(
         self,
@@ -459,6 +566,45 @@ class PreparedGraph:
         movi_worker: str | None = ...,
     ) -> Program: ...
 
+class PreparedIr:
+    binding: ReviewedPatchBinding
+    ir_provenance: IrCompileResult
+    @property
+    def provenance(self) -> NpuProvenance: ...
+    def build(
+        self,
+        kernel: KernelSpec | CompiledKernel | bytes | str | PathLike[str],
+        *,
+        movi_dll_dir: str | PathLike[str] | None = ...,
+        definitions: Sequence[str] = ...,
+        linker_script: bytes | str | PathLike[str] | None = ...,
+        movi_worker: str | None = ...,
+    ) -> Program: ...
+
+class CacheStatus:
+    state: str
+    diagnostic: str | None
+    load_ms: float
+
+class CachedCompileResult:
+    program: Program
+    cache: CacheStatus
+    build_ms: float
+    explanation: str
+
+class ProgramCache:
+    status: CacheStatus
+    def __init__(self, directory: str | PathLike[str]) -> None: ...
+    def load(
+        self,
+        request: Mapping[str, object],
+        *,
+        libraries: NativeLibraries,
+        timeout_ms: int,
+        contract: ProgramContract,
+    ) -> Program | None: ...
+    def store(self, request: Mapping[str, object], program: Program) -> None: ...
+
 def input(name: str, *, shape: object, dtype: object) -> Tensor: ...
 def configure(*, movi_dll_dir: str | PathLike[str] | None) -> None: ...
 def compile_kernel(
@@ -495,6 +641,33 @@ def prepare(
     ir_worker: str | None = ...,
     libraries: Any = ...,
 ) -> PreparedGraph: ...
+def prepare_ir(
+    xml: bytes | bytearray | memoryview,
+    weights: bytes | bytearray | memoryview,
+    *,
+    binding: ReviewedPatchBinding,
+    native_dir: str | PathLike[str] | None = ...,
+    timeout_ms: int = ...,
+    ir_worker: str | None = ...,
+    libraries: Any = ...,
+) -> PreparedIr: ...
+def compile_cached(
+    graph: Graph,
+    *,
+    cache_dir: str | PathLike[str] | None,
+    carrier_contract: CarrierContract,
+    program_contract: ProgramContract,
+    native_dir: str | PathLike[str] | None = ...,
+    movi_dll_dir: str | PathLike[str] | None = ...,
+    kernels: Mapping[Tensor, KernelSpec | CompiledKernel] | None = ...,
+    linker_script: str | PathLike[str] | bytes | None = ...,
+    build_flags: str = ...,
+    definitions: Sequence[str] = ...,
+    timeout_ms: int = ...,
+    ir_worker: str | None = ...,
+    movi_worker: str | None = ...,
+    libraries: Any = ...,
+) -> CachedCompileResult: ...
 def load_prepared(
     source: str | PathLike[str],
     *,
