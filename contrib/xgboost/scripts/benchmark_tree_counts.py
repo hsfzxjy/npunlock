@@ -46,9 +46,7 @@ def sha256(path: Path) -> str:
 
 
 def options() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Benchmark XGBoost model prefixes on CPU and ACT-SHAVE"
-    )
+    parser = argparse.ArgumentParser(description="Benchmark XGBoost model prefixes on CPU and ACT-SHAVE")
     parser.add_argument("--model-dir", type=Path, default=Path("contrib/xgboost/artifacts/model"))
     parser.add_argument(
         "--output",
@@ -85,9 +83,7 @@ def main() -> int:
             raise SystemExit(f"required input does not exist: {path}")
     ensemble = load_ensemble(model_path)
     if args.tree_counts[-1] > len(ensemble.trees):
-        raise SystemExit(
-            f"requested {args.tree_counts[-1]} trees, but model contains {len(ensemble.trees)}"
-        )
+        raise SystemExit(f"requested {args.tree_counts[-1]} trees, but model contains {len(ensemble.trees)}")
     booster = xgb.Booster()
     booster.load_model(model_path)
     if booster.num_boosted_rounds() != len(ensemble.trees):
@@ -95,9 +91,7 @@ def main() -> int:
     with np.load(validation_path, allow_pickle=False) as data:
         features = np.asarray(data["features"], dtype=np.float32)
     if args.batch_size > features.shape[0]:
-        raise SystemExit(
-            f"batch size {args.batch_size} exceeds {features.shape[0]} validation samples"
-        )
+        raise SystemExit(f"batch size {args.batch_size} exceeds {features.shape[0]} validation samples")
     features = features[: args.batch_size]
     names = ("f16", "f32") if args.transport == "both" else (args.transport,)
 
@@ -111,9 +105,7 @@ def main() -> int:
             "feature_count": ensemble.feature_count,
             "batch_size": args.batch_size,
         },
-        "versions": {
-            name: importlib.metadata.version(name) for name in ("numpy", "xgboost")
-        },
+        "versions": {name: importlib.metadata.version(name) for name in ("numpy", "xgboost")},
         "warmup_runs": args.warmup,
         "measured_runs": args.runs,
         "results": results,
@@ -122,9 +114,7 @@ def main() -> int:
         spec = transport_spec(name)
         capacity = batch_capacity(ensemble.feature_count, transport=spec)
         if args.batch_size > capacity:
-            raise SystemExit(
-                f"batch size {args.batch_size} exceeds {name} profile capacity {capacity}"
-            )
+            raise SystemExit(f"batch size {args.batch_size} exceeds {name} profile capacity {capacity}")
         transported = features.astype(spec.numpy_dtype).astype(np.float32)
         matrix = xgb.DMatrix(transported)
         transport_results: dict[str, object] = {}
@@ -145,9 +135,7 @@ def main() -> int:
                 matrix,
                 iteration_range=iteration_range,
             ).astype(np.float32)
-            parser_error = float(
-                np.max(np.abs(prefix.predict_margin(transported) - official_margins))
-            )
+            parser_error = float(np.max(np.abs(prefix.predict_margin(transported) - official_margins)))
             with NpuXGBoost(
                 prefix,
                 movi_dll_dir=args.movi_dll_dir,
@@ -158,10 +146,7 @@ def main() -> int:
                 margin_error = np.abs(predictions.margins - official_margins)
                 probability_error = np.abs(predictions.probabilities - official_probabilities)
                 class_agreement = float(
-                    np.mean(
-                        predictions.classes
-                        == (official_probabilities >= 0.5).astype(np.int32)
-                    )
+                    np.mean(predictions.classes == (official_probabilities >= 0.5).astype(np.int32))
                 )
                 for _ in range(args.warmup):
                     booster.predict(matrix, iteration_range=iteration_range)
@@ -178,6 +163,9 @@ def main() -> int:
                     npu_times.append((perf_counter() - started) * 1000.0)
                     graphinfer_times.append(timing["graphinfer_wall_ms"])
                 evidence = backend.patch_evidence
+                provenance = backend.program.provenance
+                if provenance is None:
+                    raise RuntimeError("compiled XGBoost program did not retain NPU provenance")
                 transport_results[str(tree_count)] = {
                     "trees": tree_count,
                     "nodes": prefix.node_count,
@@ -200,17 +188,7 @@ def main() -> int:
                         "graphinfer_submission_fence_wall": summary(graphinfer_times),
                     },
                     "patch_evidence": evidence,
-                    "ir_provenance": {
-                        "driver_version": backend.program.ir_provenance.driver_version,
-                        "vendor_id": backend.program.ir_provenance.vendor_id,
-                        "device_id": backend.program.ir_provenance.device_id,
-                        "graph_extension_version": (
-                            backend.program.ir_provenance.graph_extension_version
-                        ),
-                        "compiler_version": list(
-                            backend.program.ir_provenance.compiler_version
-                        ),
-                    },
+                    "ir_provenance": provenance.to_json(),
                 }
             margin_limit = 0.004 if name == "f16" else 1.0e-6
             probability_limit = 0.0005 if name == "f16" else 1.0e-6

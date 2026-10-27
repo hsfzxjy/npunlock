@@ -4,7 +4,6 @@ import argparse
 from dataclasses import asdict
 import json
 from pathlib import Path
-import sys
 
 import numpy as np
 
@@ -42,7 +41,7 @@ def main() -> None:
             "state_error": asdict(error_metrics(actual_state, expected_state)),
             "timings_ms": timings,
             "build_ms": runtime.build_ms,
-            "patch_report_count": len(runtime.program.patch_reports),
+            "patch_report_count": len(runtime.program.patch_evidence),
             "carrier": runtime.carrier_explanation,
         }
     rendered = json.dumps(evidence, indent=2, sort_keys=True)

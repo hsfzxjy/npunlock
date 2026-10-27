@@ -88,9 +88,7 @@ def run_transport(
             "maximum_batch_size": capacity,
             "arithmetic": "FP32 SHAVE comparisons, accumulation, and sigmoid",
         },
-        "reference_parser_max_abs_margin_error": float(
-            np.max(np.abs(parser_margins - official_margins))
-        ),
+        "reference_parser_max_abs_margin_error": float(np.max(np.abs(parser_margins - official_margins))),
     }
     with NpuXGBoost(
         ensemble,
@@ -160,10 +158,12 @@ def run_transport(
                 "graphinfer_submission_fence_wall_ms": summary(graphinfer_times),
                 "shared_buffer_to_host_ms": summary(download_times),
                 "note": (
-                    "Level Zero kernel timestamps are not exposed; graphinfer wall time "
-                    "is not pure kernel time."
+                    "Level Zero kernel timestamps are not exposed; graphinfer wall time " "is not pure kernel time."
                 ),
             }
+        provenance = backend.program.provenance
+        if provenance is None:
+            raise RuntimeError("compiled XGBoost program did not retain NPU provenance")
         result["performance"] = benchmark
         result["build"] = {
             "kernel_path": str(kernel_path),
@@ -172,13 +172,7 @@ def run_transport(
             "carrier": backend.carrier_explanation,
             "patch_evidence": backend.patch_evidence,
             "npunlock_manifest": backend.build_manifest,
-            "ir_provenance": {
-                "driver_version": backend.program.ir_provenance.driver_version,
-                "vendor_id": backend.program.ir_provenance.vendor_id,
-                "device_id": backend.program.ir_provenance.device_id,
-                "graph_extension_version": backend.program.ir_provenance.graph_extension_version,
-                "compiler_version": list(backend.program.ir_provenance.compiler_version),
-            },
+            "ir_provenance": provenance.to_json(),
         }
     if official_class_agreement != 1.0:
         raise RuntimeError(f"{name} NPU classes disagree with official XGBoost")
@@ -216,8 +210,7 @@ def main() -> int:
             "base_margin": ensemble.base_margin,
         },
         "versions": {
-            name: importlib.metadata.version(name)
-            for name in ("numpy", "xgboost", "scikit-learn", "openvino")
+            name: importlib.metadata.version(name) for name in ("numpy", "xgboost", "scikit-learn", "openvino")
         },
         "results": results,
     }

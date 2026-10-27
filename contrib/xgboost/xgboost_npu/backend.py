@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from time import perf_counter
 
@@ -77,9 +76,8 @@ class NpuXGBoost:
         return self.program.patch_evidence[0].summary()
 
     @property
-    def build_manifest(self) -> dict[str, object] | None:
-        payload = self.program.artifact_manifest
-        return None if payload is None else json.loads(payload.decode("utf-8"))
+    def build_manifest(self) -> dict[str, object]:
+        return self.program.manifest
 
     def run(self, features: object, *, shared: bool = True) -> tuple[Predictions, dict[str, float]]:
         values = np.asarray(features, dtype=np.float32)

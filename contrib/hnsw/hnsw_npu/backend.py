@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
-import json
 from pathlib import Path
 from time import perf_counter
 
@@ -163,9 +162,8 @@ class NpuHnsw:
         return {**report.summary(), "targets": [dict(target) for target in report.targets]}
 
     @property
-    def build_manifest(self) -> dict[str, object] | None:
-        payload = self.program.artifact_manifest
-        return None if payload is None else json.loads(payload.decode("utf-8"))
+    def build_manifest(self) -> dict[str, object]:
+        return self.program.manifest
 
     @property
     def runtime_provenance(self) -> dict[str, object] | None:

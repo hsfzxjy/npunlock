@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
@@ -1171,9 +1170,8 @@ class RuntimeNpuXGBoost:
         return _patch_summary(self.program.patch_evidence[0])
 
     @property
-    def build_manifest(self) -> dict[str, object] | None:
-        payload = self.program.artifact_manifest
-        return None if payload is None else json.loads(payload.decode("utf-8"))
+    def build_manifest(self) -> dict[str, object]:
+        return self.program.manifest
 
     def load_model(self, model: str | Path | Ensemble) -> None:
         if self._mode != "normal":
@@ -1406,11 +1404,10 @@ class ConnectedRuntimeNpuXGBoost:
         }
 
     @property
-    def build_manifest(self) -> dict[str, object] | None:
+    def build_manifest(self) -> dict[str, object]:
         if self.program is None:
             raise RuntimeError("connected runtime is closed")
-        payload = self.program.artifact_manifest
-        return None if payload is None else json.loads(payload.decode("utf-8"))
+        return self.program.manifest
 
     def load_model(self, model: str | Path | Ensemble) -> None:
         if self.program is None:
