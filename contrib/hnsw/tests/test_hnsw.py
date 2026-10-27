@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tempfile
 import unittest
 
 import numpy as np
@@ -51,9 +50,7 @@ class HnswTests(unittest.TestCase):
         self.assertEqual(packed.dtype, np.float32)
         self.assertEqual(packed.ndim, 2)
 
-        repetitions = (MAX_BATCH_QUERIES + len(index.vectors) - 1) // len(
-            index.vectors
-        )
+        repetitions = (MAX_BATCH_QUERIES + len(index.vectors) - 1) // len(index.vectors)
         maximum_batch = np.tile(index.vectors, (repetitions, 1))[:MAX_BATCH_QUERIES]
         packed, count = pack_queries(index, maximum_batch, k=5, ef_search=16)
         self.assertEqual(count, MAX_BATCH_QUERIES)
@@ -61,10 +58,13 @@ class HnswTests(unittest.TestCase):
 
     def test_index_round_trip(self) -> None:
         index = build_hnsw(vectors(), seed=1729)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "index.npz"
+        path = Path(__file__).resolve().parents[3] / "build" / "hnsw-index-round-trip-test.npz"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
             save_index(index, path)
             loaded = load_index(path)
+        finally:
+            path.unlink(missing_ok=True)
         np.testing.assert_array_equal(loaded.vectors, index.vectors)
         self.assertEqual(loaded.levels, index.levels)
         self.assertEqual(loaded.neighbors, index.neighbors)

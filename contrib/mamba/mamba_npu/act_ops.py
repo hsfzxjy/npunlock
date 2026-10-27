@@ -19,22 +19,19 @@ CONV_WIDTH = 4
 KERNEL_DIR = Path(__file__).resolve().parents[1] / "kernels"
 
 
-def _validate_group(prepared: object, invocation_words: int, label: str) -> None:
-    if len(prepared.groups) != 1:
-        raise RuntimeError(f"{label} carrier exposed {len(prepared.groups)} ACT groups, expected one")
-    group = prepared.groups[0]
-    if (
-        group.input_dtypes != ("f32", "f32")
-        or group.output_dtype != "f32"
-        or len(group.targets) != REPLICAS
-        or group.per_invocation_input_element_counts != (invocation_words, invocation_words)
-        or group.per_invocation_output_element_count != invocation_words
-    ):
-        raise RuntimeError(
-            f"{label} carrier partition contract changed: "
-            f"inputs={group.per_invocation_input_element_counts!r}, "
-            f"output={group.per_invocation_output_element_count!r}, targets={len(group.targets)}"
-        )
+def _carrier_contract(invocation_words: int) -> npu.CarrierContract:
+    return npu.CarrierContract(
+        (
+            npu.ActGroupContract(
+                ("f32", "f32"),
+                "f32",
+                (invocation_words, invocation_words),
+                invocation_words,
+                REPLICAS,
+            ),
+        ),
+        mapping_indices=((0,),),
+    )
 
 
 class NpuActRmsNorm:
@@ -55,16 +52,14 @@ class NpuActRmsNorm:
             npu.Graph([values, weights], [output], name="mamba_rms_norm_f32"),
             native_dir=native_dir,
         )
-        _validate_group(prepared, RMS_INVOCATION_WORDS, "RMSNorm")
+        prepared.require(_carrier_contract(RMS_INVOCATION_WORDS))
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
         self.inputs = self.program.shared_inputs()
         self.output = self.program.shared_output()
 
-    def run(
-        self, values: object, weight: object, epsilon: float
-    ) -> tuple[np.ndarray, dict[str, float]]:
+    def run(self, values: object, weight: object, epsilon: float) -> tuple[np.ndarray, dict[str, float]]:
         vector = np.asarray(values, dtype=np.float32).reshape(-1)
         scale = np.asarray(weight, dtype=np.float32).reshape(-1)
         if vector.size != scale.size or not 1 <= vector.size <= 1536:
@@ -130,7 +125,7 @@ class NpuActCausalConv1d:
             npu.Graph([dynamic, model], [output], name="mamba_causal_conv1d_f32"),
             native_dir=native_dir,
         )
-        _validate_group(prepared, CONV_INVOCATION_WORDS, "causal convolution")
+        prepared.require(_carrier_contract(CONV_INVOCATION_WORDS))
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
@@ -164,12 +159,8 @@ class NpuActCausalConv1d:
             model_words[replica, :3] = (CONV_MAGIC, 1, count)
             dynamic_pack[replica, HEADER_WORDS : HEADER_WORDS + count] = vector[begin:end]
             state_begin = HEADER_WORDS + count
-            dynamic_pack[replica, state_begin : state_begin + count * CONV_WIDTH] = state[
-                begin:end
-            ].reshape(-1)
-            model_pack[replica, HEADER_WORDS : HEADER_WORDS + count * CONV_WIDTH] = kernels[
-                begin:end
-            ].reshape(-1)
+            dynamic_pack[replica, state_begin : state_begin + count * CONV_WIDTH] = state[begin:end].reshape(-1)
+            model_pack[replica, HEADER_WORDS : HEADER_WORDS + count * CONV_WIDTH] = kernels[begin:end].reshape(-1)
             bias_begin = HEADER_WORDS + count * CONV_WIDTH
             model_pack[replica, bias_begin : bias_begin + count] = biases[begin:end]
         started = perf_counter()
@@ -190,15 +181,19 @@ class NpuActCausalConv1d:
                 raise RuntimeError("ACT convolution output metadata is invalid")
             result[begin:end] = chunks[replica, HEADER_WORDS : HEADER_WORDS + count]
             state_begin = HEADER_WORDS + count
-            final_state[begin:end] = chunks[
-                replica, state_begin : state_begin + count * CONV_WIDTH
-            ].reshape(count, CONV_WIDTH)
+            final_state[begin:end] = chunks[replica, state_begin : state_begin + count * CONV_WIDTH].reshape(
+                count, CONV_WIDTH
+            )
         download_ms = (perf_counter() - started) * 1000.0
-        return result.reshape(1, -1), final_state, {
-            "upload_ms": upload_ms,
-            "execution_wall_ms": execution_wall_ms,
-            "download_ms": download_ms,
-        }
+        return (
+            result.reshape(1, -1),
+            final_state,
+            {
+                "upload_ms": upload_ms,
+                "execution_wall_ms": execution_wall_ms,
+                "download_ms": download_ms,
+            },
+        )
 
     def close(self) -> None:
         self.program.close()

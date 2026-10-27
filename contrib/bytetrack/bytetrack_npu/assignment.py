@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import json
 from pathlib import Path
 from time import perf_counter
 from typing import Protocol
@@ -16,7 +15,6 @@ CHUNK_ELEMENTS = 288
 GRAPH_REPLICAS = 4
 ACT_TARGETS = 4
 LOGICAL_ELEMENTS = GRAPH_REPLICAS * CHUNK_ELEMENTS
-DESCRIPTOR_ELEMENTS = ACT_TARGETS * CHUNK_ELEMENTS
 INPUT_MAGIC = 372041
 OUTPUT_MAGIC = 372042
 FORMAT_VERSION = 1
@@ -61,8 +59,7 @@ def _normalize_problem(
     rows, columns = matrix.shape
     if rows > MAX_ROWS or columns > MAX_COLUMNS:
         raise ValueError(
-            f"assignment shape {matrix.shape!r} exceeds the supported "
-            f"{MAX_ROWS}x{MAX_COLUMNS} capacity"
+            f"assignment shape {matrix.shape!r} exceeds the supported " f"{MAX_ROWS}x{MAX_COLUMNS} capacity"
         )
     limit = np.float32(threshold)
     if not np.isfinite(limit) or limit < 0:
@@ -95,14 +92,8 @@ def _decode_assignments(
         matches[:, 1] = row_to_column[matched_rows]
     unmatched_rows = np.flatnonzero(row_to_column < 0).astype(np.int32)
     unmatched_columns = np.flatnonzero(column_to_row < 0).astype(np.int32)
-    match_cost = float(
-        np.sum(costs[matches[:, 0], matches[:, 1]], dtype=np.float64)
-        if matches.size
-        else 0.0
-    )
-    augmented_cost = match_cost + float(
-        np.float64(rows + columns - 2 * len(matches)) * np.float64(threshold) * 0.5
-    )
+    match_cost = float(np.sum(costs[matches[:, 0], matches[:, 1]], dtype=np.float64) if matches.size else 0.0)
+    augmented_cost = match_cost + float(np.float64(rows + columns - 2 * len(matches)) * np.float64(threshold) * 0.5)
     return AssignmentResult(
         matches=matches,
         unmatched_rows=unmatched_rows,
@@ -138,9 +129,7 @@ def _validate_solution(
         if (costs[matches[:, 0], matches[:, 1]] > threshold).any():
             raise RuntimeError("assignment backend selected an above-threshold association")
     expected_rows = np.setdiff1d(np.arange(rows, dtype=np.int32), matches[:, 0], assume_unique=True)
-    expected_columns = np.setdiff1d(
-        np.arange(columns, dtype=np.int32), matches[:, 1], assume_unique=True
-    )
+    expected_columns = np.setdiff1d(np.arange(columns, dtype=np.int32), matches[:, 1], assume_unique=True)
     if not np.array_equal(result.unmatched_rows, expected_rows) or not np.array_equal(
         result.unmatched_columns, expected_columns
     ):
@@ -262,9 +251,7 @@ def _pack_problem(
             axis=1,
             dtype=np.uint32,
         )
-    cost_view = chunk[INPUT_COST_OFFSET : INPUT_COST_OFFSET + MAX_ROWS * MAX_COLUMNS].reshape(
-        MAX_ROWS, MAX_COLUMNS
-    )
+    cost_view = chunk[INPUT_COST_OFFSET : INPUT_COST_OFFSET + MAX_ROWS * MAX_COLUMNS].reshape(MAX_ROWS, MAX_COLUMNS)
     cost_view[: matrix.shape[0], : matrix.shape[1]] = matrix
     packed[1:] = chunk
     return packed.reshape(1, LOGICAL_ELEMENTS)
@@ -293,12 +280,10 @@ def _decode_npu_output(
         raise RuntimeError(f"ACT assignment kernel rejected the input with status {int(words[2])}")
     if words[3] != rows or words[4] != columns:
         raise RuntimeError("ACT assignment output shape does not match the request")
-    row_to_column = words[
-        OUTPUT_ROW_ASSIGNMENT_OFFSET : OUTPUT_ROW_ASSIGNMENT_OFFSET + rows
-    ].view(np.int32).tolist()
-    column_to_row = words[
-        OUTPUT_COLUMN_ASSIGNMENT_OFFSET : OUTPUT_COLUMN_ASSIGNMENT_OFFSET + columns
-    ].view(np.int32).tolist()
+    row_to_column = words[OUTPUT_ROW_ASSIGNMENT_OFFSET : OUTPUT_ROW_ASSIGNMENT_OFFSET + rows].view(np.int32).tolist()
+    column_to_row = (
+        words[OUTPUT_COLUMN_ASSIGNMENT_OFFSET : OUTPUT_COLUMN_ASSIGNMENT_OFFSET + columns].view(np.int32).tolist()
+    )
     matches = []
     unmatched_rows = []
     unmatched_columns = []
@@ -323,9 +308,7 @@ def _decode_npu_output(
         elif row < 0 or row >= rows or row_to_column[row] != column:
             raise RuntimeError("ACT assignment column and row mappings are inconsistent")
     match_array = np.asarray(matches, dtype=np.int32).reshape(-1, 2)
-    augmented_cost = match_cost + float(
-        np.float64(rows + columns - 2 * len(matches)) * np.float64(threshold) * 0.5
-    )
+    augmented_cost = match_cost + float(np.float64(rows + columns - 2 * len(matches)) * np.float64(threshold) * 0.5)
     result = AssignmentResult(
         matches=match_array,
         unmatched_rows=np.asarray(unmatched_rows, dtype=np.int32),
@@ -334,8 +317,10 @@ def _decode_npu_output(
         augmented_cost=augmented_cost,
         timings=timings,
     )
-    if words[5] != len(result.matches) or words[6] != len(result.unmatched_rows) or words[7] != len(
-        result.unmatched_columns
+    if (
+        words[5] != len(result.matches)
+        or words[6] != len(result.unmatched_rows)
+        or words[7] != len(result.unmatched_columns)
     ):
         raise RuntimeError("ACT assignment output counters are inconsistent")
     match_cost_error = abs(float(chunk[OUTPUT_MATCH_COST_OFFSET]) - result.match_cost)
@@ -379,27 +364,32 @@ class NpuAssignment:
             native_dir=native_dir,
             timeout_ms=timeout_ms,
         )
-        if len(prepared.groups) != 1:
-            raise RuntimeError(
-                f"assignment carrier exposed {len(prepared.groups)} ACT groups, expected one"
+        prepared.require(
+            npu.CarrierContract(
+                (
+                    npu.ActGroupContract(
+                        ("f32", "f32"),
+                        "f32",
+                        (CHUNK_ELEMENTS, CHUNK_ELEMENTS),
+                        CHUNK_ELEMENTS,
+                        ACT_TARGETS,
+                    ),
+                ),
+                mapping_indices=((0,),),
             )
-        group = prepared.groups[0]
-        if (
-            group.input_dtypes != ("f32", "f32")
-            or group.output_dtype != "f32"
-            or group.element_count != DESCRIPTOR_ELEMENTS
-            or group.per_invocation_input_element_counts != (CHUNK_ELEMENTS, CHUNK_ELEMENTS)
-            or group.per_invocation_output_element_count != CHUNK_ELEMENTS
-            or len(group.targets) != ACT_TARGETS
-        ):
-            raise RuntimeError(
-                "assignment carrier contract changed: "
-                f"inputs={group.per_invocation_input_element_counts!r}, "
-                f"output={group.per_invocation_output_element_count!r}, "
-                f"targets={len(group.targets)}"
-            )
+        )
         started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+        self.program = prepared.build(movi_dll_dir=movi_dll_dir).require(
+            npu.ProgramContract(
+                inputs=(
+                    ("assignment_payload", (1, LOGICAL_ELEMENTS), "f32"),
+                    ("assignment_guard", (1, LOGICAL_ELEMENTS), "f32"),
+                ),
+                outputs=(("assignment_result", (1, LOGICAL_ELEMENTS), "f32"),),
+                patch_count=1,
+                targets_per_patch=(ACT_TARGETS,),
+            )
+        )
         self.build_ms = (perf_counter() - started) * 1000.0
         self.carrier_explanation = prepared.explain()
         self.shared = bool(shared)
@@ -413,19 +403,16 @@ class NpuAssignment:
             self.shared_input = None
             self.shared_guard = None
         self.packed_input = (
-            self.shared_input
-            if self.shared_input is not None
-            else np.empty((1, LOGICAL_ELEMENTS), dtype=np.float32)
+            self.shared_input if self.shared_input is not None else np.empty((1, LOGICAL_ELEMENTS), dtype=np.float32)
         )
         self.shared_output = self.program.shared_output() if self.shared else None
-        self.target_count = len(group.targets)
+        self.target_count = ACT_TARGETS
         self.source_sha256 = hashlib.sha256(source).hexdigest()
 
     @property
     def patch_evidence(self) -> dict[str, object]:
-        if len(self.program.patch_reports) != 1:
-            raise RuntimeError("assignment program has an unexpected patch-report count")
-        return json.loads(self.program.patch_reports[0].decode("utf-8"))
+        report = self.program.patch_evidence[0]
+        return {**report.summary(), "targets": [dict(target) for target in report.targets]}
 
     def assign(
         self,
@@ -448,9 +435,7 @@ class NpuAssignment:
                 unmatched_rows=np.arange(rows, dtype=np.int32),
                 unmatched_columns=np.arange(columns, dtype=np.int32),
                 match_cost=0.0,
-                augmented_cost=float(
-                    np.float64(rows + columns) * np.float64(limit) * 0.5
-                ),
+                augmented_cost=float(np.float64(rows + columns) * np.float64(limit) * 0.5),
                 timings={fast_path: (perf_counter() - started) * 1000.0},
             )
         started = perf_counter()

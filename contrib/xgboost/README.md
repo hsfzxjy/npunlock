@@ -13,6 +13,9 @@ a deterministic train/test split. It supports two useful styles:
 `XGBoostRuntime` selects the validated single-stage or connected two-part
 runtime automatically, balances each graph chunk across four independent
 invocation-local spans, and splits larger host batches while preserving order.
+Its optional cache is the shared `npunlock` program cache: artifacts are keyed
+by exact compiler inputs and accepted only after provenance, tensor-contract,
+patch-report, and final-graph validation.
 
 ```python
 from xgboost_npu import XGBoostRuntime

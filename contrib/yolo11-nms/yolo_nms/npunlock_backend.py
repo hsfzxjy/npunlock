@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from time import perf_counter
-import json
 
 import numpy as np
 import npunlock as npu
 
 from .packing import (
     NMS_CHUNK_WORDS,
-    NMS_LOGICAL_WORDS,
     pack_candidates,
     unpack_detections,
     validate_ranked_candidates,
@@ -45,24 +43,20 @@ class NpuNms:
             build_flags="NPU_TILES=1",
             timeout_ms=timeout_ms,
         )
-        if len(prepared.groups) != 1:
-            raise RuntimeError(f"NMS carrier exposed {len(prepared.groups)} ACT groups, expected one")
-        group = prepared.groups[0]
-        if len(group.targets) != 2 or group.element_count != NMS_LOGICAL_WORDS:
-            raise RuntimeError(
-                "NMS carrier partition contract changed: "
-                f"targets={len(group.targets)}, descriptor_elements={group.element_count}"
+        prepared.require(
+            npu.CarrierContract(
+                (
+                    npu.ActGroupContract(
+                        ("f16",),
+                        "f16",
+                        (NMS_CHUNK_WORDS,),
+                        NMS_CHUNK_WORDS,
+                        2,
+                    ),
+                ),
+                mapping_indices=((0,),),
             )
-        if group.per_invocation_input_element_counts != (NMS_CHUNK_WORDS,):
-            raise RuntimeError(
-                "NMS carrier input contract changed: "
-                f"{group.per_invocation_input_element_counts!r}"
-            )
-        if group.per_invocation_output_element_count != NMS_CHUNK_WORDS:
-            raise RuntimeError(
-                "NMS carrier output contract changed: "
-                f"{group.per_invocation_output_element_count!r}"
-            )
+        )
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
@@ -72,17 +66,7 @@ class NpuNms:
 
     @property
     def patch_evidence(self) -> dict[str, object]:
-        report = json.loads(self.program.patch_reports[0].decode("utf-8"))
-        return {
-            "schema": report["schema"],
-            "input_graph_sha256": report["input_graph_sha256"],
-            "shave_elf_sha256": report["shave_elf_sha256"],
-            "output_graph_sha256": report["output_graph_sha256"],
-            "graph_contract": report["graph_contract"],
-            "append": report["append"],
-            "validation": report["validation"],
-            "patched_target_count": len(report["targets"]),
-        }
+        return self.program.patch_evidence[0].summary()
 
     def run(
         self,

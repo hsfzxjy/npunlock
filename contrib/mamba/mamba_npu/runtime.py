@@ -44,21 +44,20 @@ class NpuSelectiveScan:
             native_dir=native_dir,
             timeout_ms=timeout_ms,
         )
-        if len(prepared.groups) != 1:
-            raise RuntimeError(f"Mamba carrier exposed {len(prepared.groups)} ACT groups, expected one")
-        group = prepared.groups[0]
-        if (
-            group.input_dtypes != ("f32", "f32")
-            or group.output_dtype != "f32"
-            or len(group.targets) != REPLICAS
-            or group.per_invocation_input_element_counts != (INVOCATION_WORDS, INVOCATION_WORDS)
-            or group.per_invocation_output_element_count != INVOCATION_WORDS
-        ):
-            raise RuntimeError(
-                "Mamba carrier partition contract changed: "
-                f"inputs={group.per_invocation_input_element_counts!r}, "
-                f"output={group.per_invocation_output_element_count!r}, targets={len(group.targets)}"
+        prepared.require(
+            npu.CarrierContract(
+                (
+                    npu.ActGroupContract(
+                        ("f32", "f32"),
+                        "f32",
+                        (INVOCATION_WORDS, INVOCATION_WORDS),
+                        INVOCATION_WORDS,
+                        REPLICAS,
+                    ),
+                ),
+                mapping_indices=((0,),),
             )
+        )
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
@@ -97,11 +96,15 @@ class NpuSelectiveScan:
         started = perf_counter()
         sequence, state = unpack_output(self.shared_output, layout)
         download_ms = (perf_counter() - started) * 1000.0
-        return sequence, state, {
-            "upload_ms": upload_ms,
-            "execution_wall_ms": execution_wall_ms,
-            "download_ms": download_ms,
-        }
+        return (
+            sequence,
+            state,
+            {
+                "upload_ms": upload_ms,
+                "execution_wall_ms": execution_wall_ms,
+                "download_ms": download_ms,
+            },
+        )
 
     def run_sequence(
         self,

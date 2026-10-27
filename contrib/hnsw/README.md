@@ -10,6 +10,11 @@ answers. It does not choose or repair the NPU search path. Host verification is
 enabled by default and can be disabled only after a caller has completed its
 own acceptance checks.
 
+The backend declares its ACT layout and executable tensor contract through the
+public `npunlock` contract API. Its optional persistent cache is the shared
+provenance- and content-bound core cache; this contribution contains no native
+blob parser or cache implementation of its own.
+
 ## Try it
 
 Create the environment from the repository root:

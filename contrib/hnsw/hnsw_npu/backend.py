@@ -9,7 +9,6 @@ from time import perf_counter
 import numpy as np
 import npunlock as npu
 
-from .cache import ProgramCache, provenance_identity
 from .index import HnswIndex, SearchStats, search_index
 from .packing import (
     CHUNK_ELEMENTS,
@@ -69,55 +68,6 @@ class SearchBatch:
         return results
 
 
-def _validate_program(program: npu.Program, *, logical_elements: int) -> None:
-    expected_inputs = (
-        ("hnsw_query_vectors", (1, logical_elements), "f32"),
-        ("hnsw_adjacency", (1, logical_elements), "f32"),
-    )
-    actual_inputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.input_contracts)
-    if actual_inputs != expected_inputs:
-        raise RuntimeError(f"HNSW program input contract changed: {actual_inputs!r}")
-    expected_outputs = (("hnsw_results", (1, logical_elements), "f32"),)
-    actual_outputs = tuple((contract.name, contract.shape, contract.dtype) for contract in program.output_contracts)
-    if actual_outputs != expected_outputs:
-        raise RuntimeError(f"HNSW program output contract changed: {actual_outputs!r}")
-    if len(program.patch_reports) != 1:
-        raise RuntimeError(f"HNSW program has {len(program.patch_reports)} patch reports, expected one")
-    try:
-        report = json.loads(program.patch_reports[0].decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RuntimeError("HNSW patch report is invalid") from error
-    graph_contract = report.get("graph_contract")
-    targets = report.get("targets")
-    validation = report.get("validation")
-    if (
-        report.get("schema") != "npunlock.patchblob.v1"
-        or not isinstance(graph_contract, dict)
-        or graph_contract.get("compiler") != "8.3"
-        or graph_contract.get("npu") != "3720"
-        or not isinstance(targets, list)
-        or len(targets) != REPLICAS
-        or not isinstance(validation, dict)
-        or validation.get("section_contents_preserved") is not True
-        or validation.get("mutation_set_preserved") is not True
-    ):
-        raise RuntimeError("HNSW patch report contract changed")
-    for index, target in enumerate(targets):
-        invocation_elements = logical_elements // REPLICAS
-        if (
-            not isinstance(target, dict)
-            or target.get("invocation_index") != index
-            or target.get("range_index") != index
-            or target.get("input_count") != 2
-            or target.get("element_count") != invocation_elements
-            or target.get("span_bytes") != invocation_elements * 4
-            or target.get("contract_flags") != 0x3B
-        ):
-            raise RuntimeError(f"HNSW patch target {index} contract changed")
-    if report.get("output_graph_sha256") != hashlib.sha256(program.graph_blob).hexdigest():
-        raise RuntimeError("HNSW final graph hash does not match its patch report")
-
-
 class NpuHnsw:
     """Execute bounded, complete HNSW query traversal on ACT-SHAVE."""
 
@@ -159,74 +109,44 @@ class NpuHnsw:
             _name="hnsw_results",
         )
         graph_definition = npu.Graph([query, graph], [output], name=f"hnsw_l2_search_{batch_capacity}q")
-        cache_started = perf_counter()
-        cache = ProgramCache(
-            cache_dir,
-            source=self.source,
-            logical_elements=self.logical_elements,
-            movi_dll_dir=movi_dll_dir,
+        result = npu.compile_cached(
+            graph_definition,
+            cache_dir=cache_dir,
+            carrier_contract=npu.CarrierContract(
+                (
+                    npu.ActGroupContract(
+                        ("f32", "f32"),
+                        "f32",
+                        (self.invocation_elements, self.invocation_elements),
+                        self.invocation_elements,
+                        REPLICAS,
+                        invocation_indices=tuple(range(REPLICAS)),
+                        range_indices=tuple(range(REPLICAS)),
+                    ),
+                ),
+                mapping_indices=((0,),),
+            ),
+            program_contract=npu.ProgramContract(
+                inputs=(
+                    ("hnsw_query_vectors", (1, self.logical_elements), "f32"),
+                    ("hnsw_adjacency", (1, self.logical_elements), "f32"),
+                ),
+                outputs=(("hnsw_results", (1, self.logical_elements), "f32"),),
+                patch_count=1,
+                targets_per_patch=(REPLICAS,),
+            ),
             native_dir=native_dir,
+            movi_dll_dir=movi_dll_dir,
             timeout_ms=timeout_ms,
         )
-        self.program = cache.load()
-        if self.program is not None:
-            try:
-                _validate_program(self.program, logical_elements=self.logical_elements)
-            except Exception as error:
-                self.program.close()
-                self.program = None
-                cache.status = "invalid"
-                cache.diagnostic = str(error)
-        self.cache_load_ms = (perf_counter() - cache_started) * 1000.0 if cache.enabled else 0.0
-        if self.program is None:
-            hash_task = cache.start_dependency_hashes()
-            try:
-                prepared = npu.prepare(
-                    graph_definition,
-                    native_dir=native_dir,
-                    timeout_ms=timeout_ms,
-                    libraries=cache.libraries,
-                )
-                if len(prepared.groups) != 1:
-                    raise RuntimeError(f"HNSW carrier exposed {len(prepared.groups)} ACT groups, expected one")
-                group = prepared.groups[0]
-                if group.input_dtypes != ("f32", "f32") or group.output_dtype != "f32":
-                    raise RuntimeError(
-                        "HNSW carrier dtype changed: " f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
-                    )
-                if (
-                    group.per_invocation_input_element_counts != (self.invocation_elements, self.invocation_elements)
-                    or group.per_invocation_output_element_count != self.invocation_elements
-                    or len(group.targets) != REPLICAS
-                ):
-                    raise RuntimeError(
-                        "HNSW carrier contract changed: "
-                        f"inputs={group.per_invocation_input_element_counts!r}, "
-                        f"output={group.per_invocation_output_element_count!r}, "
-                        f"targets={len(group.targets)}"
-                    )
-                started = perf_counter()
-                self.program = prepared.build(movi_dll_dir=movi_dll_dir)
-                self.build_ms = (perf_counter() - started) * 1000.0
-                _validate_program(self.program, logical_elements=self.logical_elements)
-                self.carrier_explanation = prepared.explain()
-                cache.store(self.program, hash_task)
-            except BaseException:
-                if hash_task is not None:
-                    hash_task[0].shutdown(wait=True)
-                if self.program is not None:
-                    self.program.close()
-                raise
-        else:
-            self.build_ms = 0.0
-            self.carrier_explanation = "loaded validated HNSW program from cache"
-        self.cache_status = cache.status
-        self.cache_diagnostic = cache.diagnostic
-        self._runtime_provenance = (
-            cache.provenance
-            if cache.provenance is not None
-            else provenance_identity(self.program.ir_provenance) if self.program.ir_provenance is not None else None
-        )
+        self.program = result.program
+        self.build_ms = result.build_ms
+        self.carrier_explanation = result.explanation
+        self.cache_load_ms = result.cache.load_ms
+        self.cache_status = result.cache.state
+        self.cache_diagnostic = result.cache.diagnostic
+        provenance = self.program.provenance
+        self._runtime_provenance = None if provenance is None else provenance.to_json()
         self.shared_inputs = self.program.shared_inputs()
         self.shared_output = self.program.shared_output()
         started = perf_counter()
@@ -239,18 +159,8 @@ class NpuHnsw:
 
     @property
     def patch_evidence(self) -> dict[str, object]:
-        report = json.loads(self.program.patch_reports[0].decode("utf-8"))
-        return {
-            "schema": report["schema"],
-            "input_graph_sha256": report["input_graph_sha256"],
-            "shave_elf_sha256": report["shave_elf_sha256"],
-            "output_graph_sha256": report["output_graph_sha256"],
-            "graph_contract": report["graph_contract"],
-            "append": report["append"],
-            "targets": report["targets"],
-            "validation": report["validation"],
-            "patched_target_count": len(report["targets"]),
-        }
+        report = self.program.patch_evidence[0]
+        return {**report.summary(), "targets": [dict(target) for target in report.targets]}
 
     @property
     def build_manifest(self) -> dict[str, object] | None:

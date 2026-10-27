@@ -44,26 +44,19 @@ class NpuActLinear:
             npu.Graph([activation, weights], [output], name="mamba_act_linear_f32"),
             native_dir=native_dir,
         )
-        if len(prepared.groups) != REPLICAS // GROUP_REPLICAS:
-            raise RuntimeError(
-                f"ACT linear carrier exposed {len(prepared.groups)} groups, "
-                f"expected {REPLICAS // GROUP_REPLICAS}"
+        group_contract = npu.ActGroupContract(
+            ("f32", "f32"),
+            "f32",
+            (INVOCATION_WORDS, INVOCATION_WORDS),
+            INVOCATION_WORDS,
+            GROUP_REPLICAS,
+        )
+        prepared.require(
+            npu.CarrierContract(
+                (group_contract,) * (REPLICAS // GROUP_REPLICAS),
+                mapping_indices=(tuple(range(REPLICAS // GROUP_REPLICAS)),),
             )
-        for group in prepared.groups:
-            if (
-                group.input_dtypes != ("f32", "f32")
-                or group.output_dtype != "f32"
-                or len(group.targets) != GROUP_REPLICAS
-                or group.per_invocation_input_element_counts
-                != (INVOCATION_WORDS, INVOCATION_WORDS)
-                or group.per_invocation_output_element_count != INVOCATION_WORDS
-            ):
-                raise RuntimeError(
-                    "ACT linear carrier partition contract changed: "
-                    f"inputs={group.per_invocation_input_element_counts!r}, "
-                    f"output={group.per_invocation_output_element_count!r}, "
-                    f"targets={len(group.targets)}"
-                )
+        )
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
@@ -99,9 +92,7 @@ class NpuActLinear:
         norm_weight = None if rms_weight is None else np.asarray(rms_weight, dtype=np.float32).reshape(-1)
         if norm_weight is not None and (norm_weight.size != values.shape[1] or rms_epsilon <= 0.0):
             raise ValueError("RMSNorm weight must match the activation and epsilon must be positive")
-        flags = (FLAG_RESIDUAL if residual_value is not None else 0) | (
-            FLAG_RMS_NORM if norm_weight is not None else 0
-        )
+        flags = (FLAG_RESIDUAL if residual_value is not None else 0) | (FLAG_RMS_NORM if norm_weight is not None else 0)
         result, _, _, timing = self._run(
             values,
             matrix,
@@ -205,21 +196,13 @@ class NpuActLinear:
         final_state = None
         convolution_output = None
         flat_values = values.reshape(-1)
-        flat_convolution_state = (
-            None if convolution_state is None else convolution_state.reshape(-1)
-        )
-        flat_convolution_weight = (
-            None if convolution_weight is None else convolution_weight.reshape(-1)
-        )
+        flat_convolution_state = None if convolution_state is None else convolution_state.reshape(-1)
+        flat_convolution_weight = None if convolution_weight is None else convolution_weight.reshape(-1)
 
         def pack_submission(inputs: object, begin: int) -> tuple[list[int], float]:
             started = perf_counter()
-            activation_pack = np.asarray(inputs["linear_activation"]).reshape(
-                REPLICAS, INVOCATION_WORDS
-            )
-            weight_pack = np.asarray(inputs["linear_weights"]).reshape(
-                REPLICAS, INVOCATION_WORDS
-            )
+            activation_pack = np.asarray(inputs["linear_activation"]).reshape(REPLICAS, INVOCATION_WORDS)
+            weight_pack = np.asarray(inputs["linear_weights"]).reshape(REPLICAS, INVOCATION_WORDS)
             awords = activation_pack.view(np.uint32)
             wwords = weight_pack.view(np.uint32)
             awords[:, 0] = MAGIC
@@ -234,9 +217,7 @@ class NpuActLinear:
             activation_pack[:, HEADER_WORDS : HEADER_WORDS + values.size] = flat_values
             common_auxiliary_offset = HEADER_WORDS + values.size
             if residual is None and rms_weight is not None:
-                activation_pack[
-                    :, common_auxiliary_offset : common_auxiliary_offset + input_count
-                ] = rms_weight
+                activation_pack[:, common_auxiliary_offset : common_auxiliary_offset + input_count] = rms_weight
             if residual is None and convolution_state is not None:
                 cursor = common_auxiliary_offset
                 activation_pack[:, cursor : cursor + input_count * 4] = flat_convolution_state
@@ -247,11 +228,7 @@ class NpuActLinear:
             counts = []
             for replica in range(REPLICAS):
                 replica_begin = begin + replica * capacity
-                count = (
-                    max(0, min(capacity, matrix.shape[1] - replica_begin))
-                    if replica < active_replicas
-                    else 0
-                )
+                count = max(0, min(capacity, matrix.shape[1] - replica_begin)) if replica < active_replicas else 0
                 counts.append(count)
                 awords[replica, 3] = count
                 wwords[replica, 3] = count
@@ -260,9 +237,7 @@ class NpuActLinear:
                 cursor = HEADER_WORDS + values.size
                 if residual is not None and count:
                     residual_chunk = residual[:, replica_begin : replica_begin + count]
-                    activation_pack[replica, cursor : cursor + residual_chunk.size] = (
-                        residual_chunk.reshape(-1)
-                    )
+                    activation_pack[replica, cursor : cursor + residual_chunk.size] = residual_chunk.reshape(-1)
                     cursor += residual_chunk.size
                 if rms_weight is not None:
                     if residual is not None:
@@ -272,13 +247,9 @@ class NpuActLinear:
                     if residual is None:
                         cursor += input_count * 9
                     else:
-                        activation_pack[replica, cursor : cursor + input_count * 4] = (
-                            flat_convolution_state
-                        )
+                        activation_pack[replica, cursor : cursor + input_count * 4] = flat_convolution_state
                         cursor += input_count * 4
-                        activation_pack[replica, cursor : cursor + input_count * 4] = (
-                            flat_convolution_weight
-                        )
+                        activation_pack[replica, cursor : cursor + input_count * 4] = flat_convolution_weight
                         cursor += input_count * 4
                         activation_pack[replica, cursor : cursor + input_count] = convolution_bias
                         cursor += input_count
@@ -286,14 +257,12 @@ class NpuActLinear:
                     raise ValueError("linear auxiliary data exceeds the validated invocation span")
                 cursor = (cursor + 3) & ~3
                 if weight_rows:
-                    weight_pack[
-                        replica, HEADER_WORDS : HEADER_WORDS + weight_rows * input_count
-                    ] = matrix[:, replica_begin : replica_begin + weight_rows].T.reshape(-1)
+                    weight_pack[replica, HEADER_WORDS : HEADER_WORDS + weight_rows * input_count] = matrix[
+                        :, replica_begin : replica_begin + weight_rows
+                    ].T.reshape(-1)
                 activation_rows = count - weight_rows
                 if activation_rows:
-                    activation_pack[
-                        replica, cursor : cursor + activation_rows * input_count
-                    ] = matrix[
+                    activation_pack[replica, cursor : cursor + activation_rows * input_count] = matrix[
                         :,
                         replica_begin + weight_rows : replica_begin + count,
                     ].T.reshape(-1)
@@ -315,9 +284,7 @@ class NpuActLinear:
             if submission_index + 1 < len(begins):
                 next_inputs = self._buffer_sets[buffer_index ^ 1][0]
                 try:
-                    next_counts, upload_ms = pack_submission(
-                        next_inputs, begins[submission_index + 1]
-                    )
+                    next_counts, upload_ms = pack_submission(next_inputs, begins[submission_index + 1])
                     total_upload += upload_ms
                 except BaseException:
                     future.result()
@@ -346,9 +313,9 @@ class NpuActLinear:
                     :active_replicas,
                     HEADER_WORDS : HEADER_WORDS + sequence_length * count,
                 ].reshape(active_replicas, sequence_length, count)
-                result[:, begin : begin + active_replicas * count] = payload.transpose(
-                    1, 0, 2
-                ).reshape(sequence_length, active_replicas * count)
+                result[:, begin : begin + active_replicas * count] = payload.transpose(1, 0, 2).reshape(
+                    sequence_length, active_replicas * count
+                )
             else:
                 for replica, count in enumerate(counts):
                     replica_begin = begin + replica * capacity
@@ -356,22 +323,31 @@ class NpuActLinear:
                         replica, HEADER_WORDS : HEADER_WORDS + sequence_length * count
                     ].reshape(sequence_length, count)
             if convolution_state is not None:
-                final_state = chunks[
-                    0, STATE_OUTPUT_OFFSET : STATE_OUTPUT_OFFSET + input_count * 4
-                ].copy().reshape(input_count, 4)
-                convolution_output = chunks[
-                    0, CONV_OUTPUT_OFFSET : CONV_OUTPUT_OFFSET + sequence_length * input_count
-                ].copy().reshape(sequence_length, input_count)
+                final_state = (
+                    chunks[0, STATE_OUTPUT_OFFSET : STATE_OUTPUT_OFFSET + input_count * 4]
+                    .copy()
+                    .reshape(input_count, 4)
+                )
+                convolution_output = (
+                    chunks[0, CONV_OUTPUT_OFFSET : CONV_OUTPUT_OFFSET + sequence_length * input_count]
+                    .copy()
+                    .reshape(sequence_length, input_count)
+                )
             total_download += (perf_counter() - started) * 1000.0
             submissions += 1
             if next_counts is not None:
                 counts = next_counts
-        return result, convolution_output, final_state, {
-            "upload_ms": total_upload,
-            "execution_wall_ms": total_execution,
-            "download_ms": total_download,
-            "submissions": float(submissions),
-        }
+        return (
+            result,
+            convolution_output,
+            final_state,
+            {
+                "upload_ms": total_upload,
+                "execution_wall_ms": total_execution,
+                "download_ms": total_download,
+                "submissions": float(submissions),
+            },
+        )
 
     def run_scan(
         self,
@@ -390,33 +366,31 @@ class NpuActLinear:
         if model_layout != layout:
             raise ValueError("selective-scan model and dynamic layouts differ")
         started = perf_counter()
-        activation_pack = np.asarray(self.inputs["linear_activation"]).reshape(
-            REPLICAS, INVOCATION_WORDS
-        )
+        activation_pack = np.asarray(self.inputs["linear_activation"]).reshape(REPLICAS, INVOCATION_WORDS)
         weight_pack = np.asarray(self.inputs["linear_weights"]).reshape(REPLICAS, INVOCATION_WORDS)
         activation_pack[:, :SCAN_INVOCATION_WORDS] = 0.0
         weight_pack[:, :SCAN_INVOCATION_WORDS] = 0.0
-        activation_pack[:SCAN_REPLICAS, :SCAN_INVOCATION_WORDS] = dynamic.reshape(
-            SCAN_REPLICAS, SCAN_INVOCATION_WORDS
-        )
-        weight_pack[:SCAN_REPLICAS, :SCAN_INVOCATION_WORDS] = model.reshape(
-            SCAN_REPLICAS, SCAN_INVOCATION_WORDS
-        )
+        activation_pack[:SCAN_REPLICAS, :SCAN_INVOCATION_WORDS] = dynamic.reshape(SCAN_REPLICAS, SCAN_INVOCATION_WORDS)
+        weight_pack[:SCAN_REPLICAS, :SCAN_INVOCATION_WORDS] = model.reshape(SCAN_REPLICAS, SCAN_INVOCATION_WORDS)
         upload_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
         self.program.run(self.inputs, outputs={"linear_output": self.output})
         execution_wall_ms = (perf_counter() - started) * 1000.0
         started = perf_counter()
-        scan_output = np.asarray(self.output).reshape(REPLICAS, INVOCATION_WORDS)[
-            :SCAN_REPLICAS, :SCAN_INVOCATION_WORDS
-        ].copy()
+        scan_output = (
+            np.asarray(self.output).reshape(REPLICAS, INVOCATION_WORDS)[:SCAN_REPLICAS, :SCAN_INVOCATION_WORDS].copy()
+        )
         sequence, final_state = unpack_output(scan_output, layout)
         download_ms = (perf_counter() - started) * 1000.0
-        return sequence, final_state, {
-            "upload_ms": upload_ms,
-            "execution_wall_ms": execution_wall_ms,
-            "download_ms": download_ms,
-        }
+        return (
+            sequence,
+            final_state,
+            {
+                "upload_ms": upload_ms,
+                "execution_wall_ms": execution_wall_ms,
+                "download_ms": download_ms,
+            },
+        )
 
     def run_scan_projected_delta(
         self,
@@ -432,12 +406,7 @@ class NpuActLinear:
         initial_state: object | None = None,
     ) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
         a_value = np.asarray(a, dtype=np.float32)
-        if (
-            a_value.ndim != 2
-            or not 1 <= a_value.shape[0] <= 1536
-            or a_value.shape[1] == 0
-            or a_value.shape[1] > 16
-        ):
+        if a_value.ndim != 2 or not 1 <= a_value.shape[0] <= 1536 or a_value.shape[1] == 0 or a_value.shape[1] > 16:
             raise ValueError("a must have shape (channels, 1..16 state dimensions)")
         channels, state_size = a_value.shape
         d_value = np.asarray(d, dtype=np.float32).reshape(-1)
@@ -468,9 +437,7 @@ class NpuActLinear:
             state = np.asarray(initial_state, dtype=np.float32)
             if state.shape != (channels, state_size):
                 raise ValueError("initial_state must have shape (channels, state dimensions)")
-        dynamic_pack = np.asarray(self.inputs["linear_activation"]).reshape(
-            REPLICAS, INVOCATION_WORDS
-        )
+        dynamic_pack = np.asarray(self.inputs["linear_activation"]).reshape(REPLICAS, INVOCATION_WORDS)
         model_pack = np.asarray(self.inputs["linear_weights"]).reshape(REPLICAS, INVOCATION_WORDS)
         dynamic_words = dynamic_pack.view(np.uint32)
         model_words = model_pack.view(np.uint32)
@@ -488,8 +455,7 @@ class NpuActLinear:
             if (
                 HEADER_WORDS + shared_words + count * dynamic_stride > INVOCATION_WORDS
                 or HEADER_WORDS + count * model_stride > INVOCATION_WORDS
-                or HEADER_WORDS
-                + count * (output_stride + (sequence_length if sequence_length > 1 else 0))
+                or HEADER_WORDS + count * (output_stride + (sequence_length if sequence_length > 1 else 0))
                 > INVOCATION_WORDS
             ):
                 raise ValueError("projected selective scan exceeds the invocation capacity")
@@ -511,15 +477,15 @@ class NpuActLinear:
             cursor += b_value.size
             dynamic_pack[replica, cursor : cursor + c_value.size] = c_value.reshape(-1)
             cursor += c_value.size
-            dynamic_records = dynamic_pack[
-                replica, cursor : cursor + count * dynamic_stride
-            ].reshape(count, dynamic_stride)
+            dynamic_records = dynamic_pack[replica, cursor : cursor + count * dynamic_stride].reshape(
+                count, dynamic_stride
+            )
             dynamic_records[:, :sequence_length] = u_value[begin:end]
             dynamic_records[:, sequence_length : sequence_length * 2] = z_value[begin:end]
             dynamic_records[:, sequence_length * 2 :] = state[begin:end]
-            model_records = model_pack[
-                replica, HEADER_WORDS : HEADER_WORDS + count * model_stride
-            ].reshape(count, model_stride)
+            model_records = model_pack[replica, HEADER_WORDS : HEADER_WORDS + count * model_stride].reshape(
+                count, model_stride
+            )
             model_records[:, :time_rank] = delta_matrix[:, begin:end].T
             model_records[:, time_rank : time_rank + state_size] = a_value[begin:end]
             model_records[:, time_rank + state_size] = d_value[begin:end]
@@ -547,17 +513,19 @@ class NpuActLinear:
             )
             if tuple(int(value) for value in words[replica, :7]) != expected:
                 raise RuntimeError("projected selective-scan output metadata is invalid")
-            records = chunks[
-                replica, HEADER_WORDS : HEADER_WORDS + count * output_stride
-            ].reshape(count, output_stride)
+            records = chunks[replica, HEADER_WORDS : HEADER_WORDS + count * output_stride].reshape(count, output_stride)
             sequence[channel_slice] = records[:, :sequence_length]
             final_state[channel_slice] = records[:, sequence_length:]
         download_ms = (perf_counter() - started) * 1000.0
-        return sequence, final_state, {
-            "upload_ms": upload_ms,
-            "execution_wall_ms": execution_wall_ms,
-            "download_ms": download_ms,
-        }
+        return (
+            sequence,
+            final_state,
+            {
+                "upload_ms": upload_ms,
+                "execution_wall_ms": execution_wall_ms,
+                "download_ms": download_ms,
+            },
+        )
 
     def close(self) -> None:
         self._executor.shutdown(wait=True)

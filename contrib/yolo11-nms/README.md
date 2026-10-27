@@ -13,7 +13,9 @@ Two npunlock paths are included:
 
 The single-graph path is deliberately tied to the reviewed YOLO11n model and
 the recorded NPU compiler/driver stack. It fails closed when those hashes or
-contracts do not match.
+contracts do not match. The versioned binding is consumed through
+`ReviewedPatchBinding`/`prepare_ir`; the contribution does not call private
+native wrappers or manage Level Zero allocations itself.
 
 ## Try it
 

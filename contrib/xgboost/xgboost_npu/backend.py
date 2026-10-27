@@ -51,22 +51,20 @@ class NpuXGBoost:
             build_flags="NPU_TILES=1" if self.transport.name == "f16" else "",
             timeout_ms=timeout_ms,
         )
-        if len(prepared.groups) != 1:
-            raise RuntimeError(f"XGBoost carrier exposed {len(prepared.groups)} ACT groups, expected one")
-        group = prepared.groups[0]
-        if group.input_dtypes != (self.transport.dtype,) or group.output_dtype != self.transport.dtype:
-            raise RuntimeError(
-                "XGBoost carrier dtype changed: "
-                f"inputs={group.input_dtypes!r}, output={group.output_dtype!r}"
+        prepared.require(
+            npu.CarrierContract(
+                (
+                    npu.ActGroupContract(
+                        (self.transport.dtype,),
+                        self.transport.dtype,
+                        (self.transport.chunk_elements,),
+                        self.transport.chunk_elements,
+                        self.transport.logical_elements // self.transport.chunk_elements,
+                    ),
+                ),
+                mapping_indices=((0,),),
             )
-        if group.per_invocation_input_element_counts != (self.transport.chunk_elements,) or (
-            group.per_invocation_output_element_count != self.transport.chunk_elements
-        ):
-            raise RuntimeError(
-                "XGBoost carrier contract changed: "
-                f"inputs={group.per_invocation_input_element_counts!r}, "
-                f"output={group.per_invocation_output_element_count!r}"
-            )
+        )
         started = perf_counter()
         self.program = prepared.build(movi_dll_dir=movi_dll_dir)
         self.build_ms = (perf_counter() - started) * 1000.0
@@ -76,17 +74,7 @@ class NpuXGBoost:
 
     @property
     def patch_evidence(self) -> dict[str, object]:
-        report = json.loads(self.program.patch_reports[0].decode("utf-8"))
-        return {
-            "schema": report["schema"],
-            "input_graph_sha256": report["input_graph_sha256"],
-            "shave_elf_sha256": report["shave_elf_sha256"],
-            "output_graph_sha256": report["output_graph_sha256"],
-            "graph_contract": report["graph_contract"],
-            "append": report["append"],
-            "validation": report["validation"],
-            "patched_target_count": len(report["targets"]),
-        }
+        return self.program.patch_evidence[0].summary()
 
     @property
     def build_manifest(self) -> dict[str, object] | None:

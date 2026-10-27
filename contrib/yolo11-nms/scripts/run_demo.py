@@ -220,8 +220,7 @@ def main() -> int:
             "same_shape": same_embedded_shape,
             "max_abs": float(embedded_delta.max()) if embedded_delta is not None else None,
             "allclose_rtol_0_atol_0_01": bool(
-                same_embedded_shape
-                and np.allclose(embedded_npu_output[0], embedded_cpu_output[0], rtol=0.0, atol=0.01)
+                same_embedded_shape and np.allclose(embedded_npu_output[0], embedded_cpu_output[0], rtol=0.0, atol=0.01)
             ),
         }
 
@@ -301,9 +300,7 @@ def main() -> int:
                     iou_threshold=args.iou,
                     max_detections=args.max_det,
                 )
-            single_components = {
-                key: [] for key in ("upload_ms", "execution_wall_ms", "download_ms", "unpack_ms")
-            }
+            single_components = {key: [] for key in ("upload_ms", "execution_wall_ms", "download_ms", "unpack_ms")}
             for _ in range(args.runs):
                 single_graph_detections, timings = single_graph.run(
                     input_data,
@@ -332,8 +329,7 @@ def main() -> int:
                 "intermediate_detection_transfer": "none",
                 "serialize_ms": single_graph.serialize_ms,
                 "ir_compile_ms": single_graph.ir_compile_ms,
-                "shave_compile_ms": single_graph.shave_compile_ms,
-                "patch_ms": single_graph.patch_ms,
+                "kernel_build_ms": single_graph.kernel_build_ms,
                 "session_create_ms": single_graph.session_create_ms,
                 "components_ms": {key: summary(values) for key, values in single_components.items()},
                 "complete_end_to_end_ms": summary(single_end_to_end_times),
@@ -360,10 +356,14 @@ def main() -> int:
         "same_source_indices": bool(same_shape and np.array_equal(cpu_detections.indices, npu_detections.indices)),
         "same_class_order": bool(same_shape and np.array_equal(cpu_detections.classes, npu_detections.classes)),
         "max_box_delta_network_pixels": (
-            float(np.max(np.abs(cpu_detections.boxes - npu_detections.boxes))) if same_shape and len(cpu_detections) else None
+            float(np.max(np.abs(cpu_detections.boxes - npu_detections.boxes)))
+            if same_shape and len(cpu_detections)
+            else None
         ),
         "max_confidence_delta": (
-            float(np.max(np.abs(cpu_detections.scores - npu_detections.scores))) if same_shape and len(cpu_detections) else None
+            float(np.max(np.abs(cpu_detections.scores - npu_detections.scores)))
+            if same_shape and len(cpu_detections)
+            else None
         ),
     }
     config_a = detection_json(cpu_detections, names, letterbox_info)
