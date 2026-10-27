@@ -3466,6 +3466,26 @@ class ContribFoundationTests(unittest.TestCase):
             )
         self.assertEqual(fake.compile_ir_count, 1)
 
+        class MisreportingNative(ContractNative):
+            def patch_graph(self, graph_blob: bytes, shave_elf: bytes, targets: object) -> npu.PatchResult:
+                result = super().patch_graph(graph_blob, shave_elf, targets)
+                report = json.loads(result.report_json)
+                report["targets"][0]["invocation_index"] = 99
+                return npu.PatchResult(
+                    result.graph_blob,
+                    json.dumps(report, sort_keys=True).encode("utf-8"),
+                )
+
+        misreporting = MisreportingNative()
+        exact = npu.prepare_ir(
+            serialized.xml,
+            serialized.weights,
+            binding=binding,
+            libraries=misreporting,  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(RuntimeError, "selectors"):
+            exact.build(npu.KernelSpec(b"kernel"), movi_dll_dir="movi")
+
     def test_program_cache_rejects_corruption_and_reloads_valid_bundle(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
@@ -3522,6 +3542,8 @@ class ContribFoundationTests(unittest.TestCase):
         movi = root / "movi"
         native = root / "native"
         cache = root / "cache"
+        ir_worker = root / "workers" / "ir-worker.exe"
+        movi_worker = root / "workers" / "movi-worker.exe"
         dependencies = {
             movi / "bin" / "moviCompile64.dll": b"compile",
             movi / "bin" / "moviAsm64.dll": b"assemble",
@@ -3529,6 +3551,8 @@ class ContribFoundationTests(unittest.TestCase):
             movi / "lib" / "mlibm.a": b"math",
             native / "npunlock.dll": b"native",
             native / "npunlock_worker.exe": b"worker",
+            ir_worker: b"ir-worker-v1",
+            movi_worker: b"movi-worker-v1",
         }
         for path, contents in dependencies.items():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -3542,6 +3566,8 @@ class ContribFoundationTests(unittest.TestCase):
                 program_contract=program_contract,
                 movi_dll_dir=movi,
                 native_dir=native,
+                ir_worker=str(ir_worker),
+                movi_worker=str(movi_worker),
                 libraries=fake,  # type: ignore[arg-type]
             )
             second = npu.compile_cached(
@@ -3551,15 +3577,88 @@ class ContribFoundationTests(unittest.TestCase):
                 program_contract=program_contract,
                 movi_dll_dir=movi,
                 native_dir=native,
+                ir_worker=str(ir_worker),
+                movi_worker=str(movi_worker),
+                libraries=fake,  # type: ignore[arg-type]
+            )
+            ir_worker.write_bytes(b"ir-worker-v2")
+            third = npu.compile_cached(
+                graph,
+                cache_dir=cache,
+                carrier_contract=carrier,
+                program_contract=program_contract,
+                movi_dll_dir=movi,
+                native_dir=native,
+                ir_worker=str(ir_worker),
+                movi_worker=str(movi_worker),
                 libraries=fake,  # type: ignore[arg-type]
             )
             self.assertEqual(first.cache.state, "stored")
             self.assertEqual(second.cache.state, "hit")
-            self.assertEqual(fake.compile_ir_count, 1)
-            self.assertEqual(len(fake.shave_calls), 1)
+            self.assertEqual(third.cache.state, "stored")
+            self.assertEqual(fake.compile_ir_count, 2)
+            self.assertEqual(len(fake.shave_calls), 2)
         finally:
             first.program.close() if "first" in locals() else None
             second.program.close() if "second" in locals() else None
+            third.program.close() if "third" in locals() else None
+            for path in sorted(root.rglob("*"), reverse=True):
+                path.unlink() if path.is_file() else path.rmdir()
+            root.rmdir()
+
+    def test_compile_cached_rejects_dependency_drift_before_publication(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", _name="y")
+        graph = npu.Graph([x], [y], name="drifting-cache")
+        carrier = npu.CarrierContract(
+            (npu.ActGroupContract(("f16",), "f16", (32,), 32, 1),),
+            mapping_indices=((0,),),
+        )
+        contract = npu.ProgramContract(
+            inputs=(("x", (1, 32), "f16"),),
+            outputs=(("y", (1, 32), "f16"),),
+            patch_count=1,
+            targets_per_patch=(1,),
+        )
+        root = ROOT / "build" / "python-compile-cache-drift-test"
+        movi = root / "movi"
+        native = root / "native"
+        worker = root / "custom-worker.exe"
+        dependencies = {
+            movi / "bin" / "moviCompile64.dll": b"compile",
+            movi / "bin" / "moviAsm64.dll": b"assemble",
+            movi / "bin" / "moviLLD64.dll": b"link",
+            movi / "lib" / "mlibm.a": b"math",
+            native / "npunlock.dll": b"native",
+            native / "npunlock_worker.exe": b"worker",
+            worker: b"custom-worker-v1",
+        }
+        for path, contents in dependencies.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+
+        class MutatingNative(ContractNative):
+            def compile_shave(self, source: bytes, **kwargs: object) -> bytes:
+                result = super().compile_shave(source, **kwargs)
+                worker.write_bytes(b"custom-worker-v2")
+                return result
+
+        try:
+            fake = MutatingNative()
+            with self.assertRaisesRegex(RuntimeError, "dependencies changed"):
+                npu.compile_cached(
+                    graph,
+                    cache_dir=root / "cache",
+                    carrier_contract=carrier,
+                    program_contract=contract,
+                    movi_dll_dir=movi,
+                    native_dir=native,
+                    ir_worker=str(worker),
+                    movi_worker=str(worker),
+                    libraries=fake,  # type: ignore[arg-type]
+                )
+            self.assertFalse(any((root / "cache").glob("request-*.json")))
+        finally:
             for path in sorted(root.rglob("*"), reverse=True):
                 path.unlink() if path.is_file() else path.rmdir()
             root.rmdir()

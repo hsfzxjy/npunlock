@@ -54,6 +54,20 @@ def native_runtime_identity(root: str | Path) -> list[dict[str, object]]:
     return dependency_identity(root, _NATIVE_FILES)
 
 
+def worker_identity(worker: str | os.PathLike[str] | None) -> dict[str, object]:
+    """Identify an exact caller worker without making its local path portable state."""
+
+    if worker is None:
+        return {"source": "bundled"}
+    value = os.fspath(worker)
+    if not value:
+        raise ValueError("worker executable path must not be empty")
+    path = Path(value).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"worker executable not found: {path}")
+    return {"source": "caller", **_hash_file_stable(path)}
+
+
 def canonical_sha256(value: object) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()

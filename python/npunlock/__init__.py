@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from math import prod
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -42,7 +42,7 @@ from .contracts import (
     PatchReport,
     ProgramContract,
 )
-from .cache import CacheStatus, ProgramCache, movitools_identity, native_runtime_identity
+from .cache import CacheStatus, ProgramCache, movitools_identity, native_runtime_identity, worker_identity
 from .external import ReviewedPatchBinding
 from .graph import Graph, Node, constant, custom, input, op
 from .ir import SerializedIR, serialize_ir
@@ -1227,8 +1227,18 @@ class PreparedIr:
         baseline_hash = hashlib.sha256(self.ir_provenance.graph_blob).hexdigest()
         if report.input_graph_sha256 != baseline_hash:
             raise RuntimeError("patch report input hash does not match the reviewed native graph")
+        if report.output_graph_sha256 != hashlib.sha256(patched.graph_blob).hexdigest():
+            raise RuntimeError("patch report output hash does not match the patched native graph")
+        if report.shave_elf_sha256 != compiled.elf_sha256:
+            raise RuntimeError("patch report ELF hash does not match the compiled kernel")
         if len(report.targets) != len(self.binding.targets):
             raise RuntimeError("patch report target count does not match the reviewed binding")
+        report_selectors = tuple(
+            (target.get("invocation_index"), target.get("range_index")) for target in report.targets
+        )
+        binding_selectors = tuple((target.invocation_index, target.range_index) for target in self.binding.targets)
+        if report_selectors != binding_selectors:
+            raise RuntimeError("patch report selectors do not match the reviewed binding")
         inputs = tuple(TensorContract(name, shape, dtype) for name, shape, dtype in self.binding.inputs)
         outputs = tuple(TensorContract(name, shape, dtype) for name, shape, dtype in self.binding.outputs)
         program = Program(
@@ -3088,6 +3098,22 @@ def _kernel_cache_json(kernel: KernelSpec | CompiledKernel) -> dict[str, object]
     }
 
 
+def _cache_dependency_json(
+    runtime_root: Path,
+    movi_root: str | Path | None,
+    ir_worker: str | None,
+    movi_worker: str | None,
+) -> dict[str, object]:
+    return {
+        "native_runtime": native_runtime_identity(runtime_root),
+        "movitools": None if movi_root is None else movitools_identity(movi_root),
+        "workers": {
+            "ir": worker_identity(ir_worker),
+            "movi": None if movi_root is None else worker_identity(movi_worker),
+        },
+    }
+
+
 def compile_cached(
     graph: Graph,
     *,
@@ -3145,9 +3171,15 @@ def compile_cached(
             (perf_counter() - started) * 1000.0,
             plan.explain(),
         )
+    runtime_root = _native_directory(native_dir)
+    dependencies = _cache_dependency_json(
+        runtime_root,
+        resolved_movi,
+        ir_worker,
+        movi_worker,
+    )
     provenance_result = native.query_ir_provenance(timeout_ms=timeout_ms, worker=ir_worker)
     provenance = NpuProvenance.from_ir_result(provenance_result)
-    runtime_root = _native_directory(native_dir)
     request: dict[str, object] = {
         "schema": "npunlock.compilation-request.v1",
         "ir": {
@@ -3157,8 +3189,7 @@ def compile_cached(
         },
         "kernels": [_kernel_cache_json(kernel) for kernel in resolved_kernels],
         "provenance": provenance.to_json(),
-        "native_runtime": native_runtime_identity(runtime_root),
-        "movitools": None if resolved_movi is None else movitools_identity(resolved_movi),
+        **dependencies,
         "carrier_contract": carrier_contract.to_json(),
         "program_contract": program_contract.to_json(),
     }
@@ -3185,5 +3216,18 @@ def compile_cached(
     plan = prepared.plan(kernels=kernel_overrides)
     program = plan.build(movi_dll_dir=resolved_movi, movi_worker=movi_worker).require(program_contract)
     build_ms = (perf_counter() - started) * 1000.0
+    try:
+        current_dependencies = _cache_dependency_json(
+            runtime_root,
+            resolved_movi,
+            ir_worker,
+            movi_worker,
+        )
+    except Exception:
+        program.close()
+        raise
+    if current_dependencies != dependencies:
+        program.close()
+        raise RuntimeError("compiler/runtime dependencies changed during cached compilation")
     cache.store(request, program)
     return CachedCompileResult(program, cache.status, build_ms, plan.explain())

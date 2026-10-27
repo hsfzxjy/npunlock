@@ -680,10 +680,11 @@ JSON in application code.
 
 Contributions that rebuild the same model-independent program can use
 `npu.compile_cached(...)` with the same carrier and program contracts. The core
-cache binds the artifact to exact IR and kernel inputs, MoviTools and native
-runtime contents, live driver/compiler provenance, tensor contracts, and patch
-evidence. A corrupt or stale entry is a safe miss. Pass `cache_dir=None` to use
-the same validated build path without persistence.
+cache binds the artifact to exact IR and kernel inputs, MoviTools, native
+runtime and caller-supplied worker contents, live driver/compiler provenance,
+tensor contracts, and patch evidence. Dependencies must also remain unchanged
+through compilation. A corrupt or stale entry is a safe miss. Pass
+`cache_dir=None` to use the same validated build path without persistence.
 
 An advanced integration may serialize IR with another library only when it has
 an exact reviewed binding. `ReviewedPatchBinding` records the XML/weights and
