@@ -691,7 +691,7 @@ class ActGroupCoverage:
 @dataclass(frozen=True, slots=True)
 class InferenceInput:
     selector: int | str
-    data: bytes
+    data: bytes | bytearray | memoryview
 
     def __post_init__(self) -> None:
         if isinstance(self.selector, bool) or not isinstance(self.selector, (int, str)):
@@ -700,8 +700,11 @@ class InferenceInput:
             raise ValueError("inference argument index must fit uint32")
         if isinstance(self.selector, str) and not self.selector:
             raise ValueError("inference argument name must not be empty")
-        if not isinstance(self.data, bytes) or not self.data:
-            raise ValueError("inference input data must be non-empty bytes")
+        if not isinstance(self.data, (bytes, bytearray, memoryview)):
+            raise TypeError("inference input data must be bytes-like")
+        view = memoryview(self.data)
+        if view.nbytes == 0 or not view.c_contiguous:
+            raise ValueError("inference input data must be non-empty and C-contiguous")
 
 
 @dataclass(frozen=True, slots=True)
@@ -921,11 +924,18 @@ class InferenceSession:
             pass
 
 
-def _owned_view(data: bytes) -> tuple[_View, object | None]:
-    if not data:
+def _owned_view(data: bytes | bytearray | memoryview) -> tuple[_View, object | None]:
+    view = memoryview(data)
+    if view.nbytes == 0:
         return _View(None, 0), None
-    owner = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
-    return _View(ctypes.cast(owner, ctypes.POINTER(ctypes.c_uint8)), len(data)), owner
+    byte_view = view.cast("B")
+    if byte_view.readonly:
+        owner = (ctypes.c_uint8 * byte_view.nbytes).from_buffer_copy(byte_view)
+        pointer = ctypes.cast(owner, ctypes.POINTER(ctypes.c_uint8))
+    else:
+        owner = ctypes.c_uint8.from_buffer(byte_view)
+        pointer = ctypes.pointer(owner)
+    return _View(pointer, byte_view.nbytes), (byte_view, owner)
 
 
 def _buffer_bytes(buffer: _Buffer) -> bytes:

@@ -256,8 +256,8 @@ class ReviewedBinding:
 
 class InferenceInput:
     selector: int | str
-    data: bytes
-    def __init__(self, selector: int | str, data: bytes) -> None: ...
+    data: bytes | bytearray | memoryview
+    def __init__(self, selector: int | str, data: bytes | bytearray | memoryview) -> None: ...
 
 class InferenceOutput:
     argument_index: int

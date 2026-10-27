@@ -590,6 +590,28 @@ class Program:
     _saved_outputs: tuple[TensorContract, ...] = field(default=(), repr=False, compare=False)
     artifact_manifest: bytes | None = field(default=None, repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        if self.graph is None:
+            return
+        if not self._saved_inputs:
+            inputs: list[TensorContract] = []
+            for tensor in self.graph.inputs:
+                if tensor.name is None:
+                    raise ValueError("all graph inputs must have names")
+                inputs.append(TensorContract(tensor.name, tensor.shape, tensor.dtype))
+            object.__setattr__(self, "_saved_inputs", tuple(inputs))
+        if not self._saved_outputs:
+            node_indices = {node: index for index, node in enumerate(self.graph.nodes)}
+            outputs: list[TensorContract] = []
+            for result_index, tensor in enumerate(self.graph.outputs):
+                name = tensor.name
+                if name is None and len(tensor.producer.outputs) > 1:
+                    producer = tensor.producer
+                    producer_name = producer.name or f"{producer.op}_{node_indices[producer]}"
+                    name = f"{producer_name}.{tensor.output_index}"
+                outputs.append(TensorContract(name or f"Result_{result_index}", tensor.shape, tensor.dtype))
+            object.__setattr__(self, "_saved_outputs", tuple(outputs))
+
     @property
     def input_contracts(self) -> tuple[TensorContract, ...]:
         if self._saved_inputs:
@@ -807,7 +829,7 @@ class Program:
                 raise ValueError(f"input {name!r} requires shape {tensor.shape!r} and dtype {expected_dtype}")
             if not array.flags.c_contiguous:
                 array = np.ascontiguousarray(array)
-            native_inputs.append(InferenceInput(name, array.tobytes(order="C")))
+            native_inputs.append(InferenceInput(name, memoryview(array).cast("B")))
         session = self._execution_state.get_session(self._libraries, self.graph_blob, self._timeout_ms)
         inferred = session.infer_copied(native_inputs)
         if len(inferred.outputs) != len(output_contracts):

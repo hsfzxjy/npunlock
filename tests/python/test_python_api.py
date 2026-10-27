@@ -916,6 +916,8 @@ class CompilationFlowTests(unittest.TestCase):
         result = program.run({"x": np.zeros((1, 32), dtype=np.float16)})
         np.testing.assert_array_equal(result["Result_0"], np.ones((1, 32), dtype=np.float16))
         self.assertEqual(fake.infer_args[1][0].selector, "x")
+        self.assertIsInstance(fake.infer_args[1][0].data, memoryview)
+        self.assertFalse(fake.infer_args[1][0].data.readonly)
 
     def test_compile_accepts_source_free_compiled_kernel(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
