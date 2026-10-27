@@ -53,7 +53,17 @@ class NpuActRmsNorm:
         )
         prepared.require(_carrier_contract(RMS_INVOCATION_WORDS))
         started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+        self.program = prepared.build(movi_dll_dir=movi_dll_dir).require(
+            npu.ProgramContract(
+                inputs=(
+                    ("rms_values", (1, RMS_LOGICAL_WORDS), "f32"),
+                    ("rms_weights", (1, RMS_LOGICAL_WORDS), "f32"),
+                ),
+                outputs=(("rms_output", (1, RMS_LOGICAL_WORDS), "f32"),),
+                patch_count=1,
+                targets_per_patch=(REPLICAS,),
+            )
+        )
         self.build_ms = (perf_counter() - started) * 1000.0
         self.inputs = self.program.shared_inputs()
         self.output = self.program.shared_output()
@@ -125,7 +135,17 @@ class NpuActCausalConv1d:
         )
         prepared.require(_carrier_contract(CONV_INVOCATION_WORDS))
         started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+        self.program = prepared.build(movi_dll_dir=movi_dll_dir).require(
+            npu.ProgramContract(
+                inputs=(
+                    ("conv_dynamic", (1, CONV_LOGICAL_WORDS), "f32"),
+                    ("conv_model", (1, CONV_LOGICAL_WORDS), "f32"),
+                ),
+                outputs=(("conv_output", (1, CONV_LOGICAL_WORDS), "f32"),),
+                patch_count=1,
+                targets_per_patch=(REPLICAS,),
+            )
+        )
         self.build_ms = (perf_counter() - started) * 1000.0
         self.inputs = self.program.shared_inputs()
         self.output = self.program.shared_output()

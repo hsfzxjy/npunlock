@@ -58,7 +58,17 @@ class NpuSelectiveScan:
             )
         )
         started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+        self.program = prepared.build(movi_dll_dir=movi_dll_dir).require(
+            npu.ProgramContract(
+                inputs=(
+                    ("mamba_dynamic", (1, LOGICAL_WORDS), "f32"),
+                    ("mamba_model", (1, LOGICAL_WORDS), "f32"),
+                ),
+                outputs=(("mamba_scan_output", (1, LOGICAL_WORDS), "f32"),),
+                patch_count=1,
+                targets_per_patch=(REPLICAS,),
+            )
+        )
         self.build_ms = (perf_counter() - started) * 1000.0
         self.carrier_explanation = prepared.explain()
         self.shared_inputs = self.program.shared_inputs()

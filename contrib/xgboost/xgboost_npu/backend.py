@@ -64,7 +64,14 @@ class NpuXGBoost:
             )
         )
         started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+        self.program = prepared.build(movi_dll_dir=movi_dll_dir).require(
+            npu.ProgramContract(
+                inputs=(("xgboost_input", (1, self.transport.logical_elements), self.transport.dtype),),
+                outputs=(("xgboost_output", (1, self.transport.logical_elements), self.transport.dtype),),
+                patch_count=1,
+                targets_per_patch=(self.transport.logical_elements // self.transport.chunk_elements,),
+            )
+        )
         self.build_ms = (perf_counter() - started) * 1000.0
         self.carrier_explanation = prepared.explain()
         self.shared_input = self.program.shared_input()

@@ -57,7 +57,14 @@ class NpuNms:
             )
         )
         started = perf_counter()
-        self.program = prepared.build(movi_dll_dir=movi_dll_dir)
+        self.program = prepared.build(movi_dll_dir=movi_dll_dir).require(
+            npu.ProgramContract(
+                inputs=(("nms_input", (2, NMS_CHUNK_WORDS), "f16"),),
+                outputs=(("nms_output", (2, NMS_CHUNK_WORDS), "f16"),),
+                patch_count=1,
+                targets_per_patch=(2,),
+            )
+        )
         self.build_ms = (perf_counter() - started) * 1000.0
         self.carrier_explanation = prepared.explain()
         self.shared_input = self.program.shared_input()
