@@ -279,7 +279,10 @@ def _decode_npu_output(
 ) -> AssignmentResult:
     chunks = np.asarray(output, dtype=np.float32).reshape(GRAPH_REPLICAS, CHUNK_ELEMENTS)
     replica_words = chunks[:, :OUTPUT_WORDS].view(np.uint32)
-    if not np.all(replica_words[1:] == replica_words[0]):
+    if not np.array_equal(
+        replica_words[1:],
+        np.broadcast_to(replica_words[0], replica_words[1:].shape),
+    ):
         raise RuntimeError("ACT assignment replicas returned different output bytes")
     chunk = chunks[0]
     words = chunk.view(np.uint32)
@@ -335,11 +338,11 @@ def _decode_npu_output(
         result.unmatched_columns
     ):
         raise RuntimeError("ACT assignment output counters are inconsistent")
-    if not np.isclose(chunk[OUTPUT_MATCH_COST_OFFSET], result.match_cost, rtol=2e-6, atol=2e-6):
+    match_cost_error = abs(float(chunk[OUTPUT_MATCH_COST_OFFSET]) - result.match_cost)
+    if not match_cost_error <= 2e-6 + 2e-6 * abs(result.match_cost):
         raise RuntimeError("ACT assignment output cost does not match its assignments")
-    if not np.isclose(
-        chunk[OUTPUT_AUGMENTED_COST_OFFSET], result.augmented_cost, rtol=2e-6, atol=2e-6
-    ):
+    augmented_cost_error = abs(float(chunk[OUTPUT_AUGMENTED_COST_OFFSET]) - result.augmented_cost)
+    if not augmented_cost_error <= 2e-6 + 2e-6 * abs(result.augmented_cost):
         raise RuntimeError("ACT assignment augmented cost does not match its assignments")
     return result
 

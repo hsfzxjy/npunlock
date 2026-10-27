@@ -106,7 +106,7 @@ and identity persistence.
 
 On the recorded Core Ultra 5 125H system with graph compiler 8.3, OpenVINO
 2026.3.1, and the repository's current native runtime, median complete NPU
-calls were 0.57 ms for 1 by 1, 0.58 ms for 8 by 8, and 0.80 ms for 16 by 16.
+calls were 0.51 ms for 1 by 1, 0.50 ms for 8 by 8, and 0.75 ms for 16 by 16.
 The benchmark also includes empty contracts plus 1 by 16, 4 by 16, 8 by 16,
 16 by 4, and 16 by 8 problems. Median SciPy and LAPJV calls were about
 0.10-0.12 ms. The NPU result
@@ -122,6 +122,13 @@ output copy. Complete decode-to-annotated-frame work took 19.11 ms median.
 Persistent identities included tracks visible for 289 and 282 frames. The
 tracker also uses an SPD Cholesky solve for its 4 by 4 Kalman updates. These are
 one-system measurements, not general performance claims.
+
+The copied execution path passes contiguous NumPy input storage directly to
+the synchronous native call instead of first cloning it into Python `bytes`,
+and caches immutable graph tensor contracts. Bit-exact replica comparison and
+scalar cost-tolerance checks reduced assignment result validation from 0.15 to
+about 0.10 ms median in two follow-up 300-frame runs; both retained 300/300
+CPU/NPU tracker agreement.
 
 The CPU reference NMS used by this combined demo computes each selected box's
 remaining IoUs as one FP64 NumPy batch while preserving score/index ordering,
