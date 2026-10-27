@@ -38,7 +38,6 @@ class NpuActRmsNorm:
     """FP32 Mamba RMSNorm, with the full reduction replicated on each ACT invocation."""
 
     def __init__(self, *, movi_dll_dir: str | Path, native_dir: str | Path | None = None):
-        npu.configure(movi_dll_dir=movi_dll_dir)
         values = npu.input("rms_values", shape=(1, RMS_LOGICAL_WORDS), dtype="f32")
         weights = npu.input("rms_weights", shape=(1, RMS_LOGICAL_WORDS), dtype="f32")
         output = npu.custom(
@@ -111,7 +110,6 @@ class NpuActCausalConv1d:
     """One-token depthwise width-4 convolution, SiLU, and explicit cache update."""
 
     def __init__(self, *, movi_dll_dir: str | Path, native_dir: str | Path | None = None):
-        npu.configure(movi_dll_dir=movi_dll_dir)
         dynamic = npu.input("conv_dynamic", shape=(1, CONV_LOGICAL_WORDS), dtype="f32")
         model = npu.input("conv_model", shape=(1, CONV_LOGICAL_WORDS), dtype="f32")
         output = npu.custom(

@@ -97,7 +97,6 @@ class NpuHnsw:
         self.movi_dll_dir = Path(movi_dll_dir).resolve()
         self.source = KERNEL_PATH.read_bytes()
         self.packed_graph = pack_graph(index, query_capacity=batch_capacity)
-        npu.configure(movi_dll_dir=movi_dll_dir)
         query = npu.input("hnsw_query_vectors", shape=(1, self.logical_elements), dtype="f32")
         graph = npu.input("hnsw_adjacency", shape=(1, self.logical_elements), dtype="f32")
         output = npu.custom(

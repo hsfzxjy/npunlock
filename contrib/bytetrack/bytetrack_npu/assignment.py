@@ -349,7 +349,6 @@ class NpuAssignment:
         if kernel_path is None:
             kernel_path = Path(__file__).resolve().parents[1] / "kernels" / "assignment.c"
         source = Path(kernel_path).read_bytes()
-        npu.configure(movi_dll_dir=movi_dll_dir)
         payload = npu.input("assignment_payload", shape=(1, LOGICAL_ELEMENTS), dtype="f32")
         guard = npu.input("assignment_guard", shape=(1, LOGICAL_ELEMENTS), dtype="f32")
         output = npu.custom(

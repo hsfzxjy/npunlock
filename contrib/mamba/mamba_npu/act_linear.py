@@ -30,7 +30,6 @@ KERNEL_PATH = Path(__file__).resolve().parents[1] / "kernels" / "linear_f32.c"
 
 class NpuActLinear:
     def __init__(self, *, movi_dll_dir: str | Path, native_dir: str | Path | None = None):
-        npu.configure(movi_dll_dir=movi_dll_dir)
         activation = npu.input("linear_activation", shape=(1, LOGICAL_WORDS), dtype="f32")
         weights = npu.input("linear_weights", shape=(1, LOGICAL_WORDS), dtype="f32")
         output = npu.custom(

@@ -29,7 +29,6 @@ class NpuSelectiveScan:
         a_value = np.asarray(a, dtype=np.float32)
         self.model_input, _ = pack_model(a_value, d, delta_bias)
         self.channels, self.state_size = a_value.shape
-        npu.configure(movi_dll_dir=movi_dll_dir)
         dynamic = npu.input("mamba_dynamic", shape=(1, LOGICAL_WORDS), dtype="f32")
         model = npu.input("mamba_model", shape=(1, LOGICAL_WORDS), dtype="f32")
         output = npu.custom(

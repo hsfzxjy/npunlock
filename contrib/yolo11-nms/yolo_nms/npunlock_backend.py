@@ -27,7 +27,6 @@ class NpuNms:
         timeout_ms: int = 20_000,
     ):
         source = Path(kernel_path).read_bytes()
-        npu.configure(movi_dll_dir=movi_dll_dir)
         # Compiler 8.3 maps these two rows to two full 2,048-word ACT targets.
         # The former flat shape exposed four replicated targets for the same data.
         input_tensor = npu.input("nms_input", shape=(2, NMS_CHUNK_WORDS), dtype="f16")

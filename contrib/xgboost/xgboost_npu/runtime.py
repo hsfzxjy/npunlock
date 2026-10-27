@@ -1075,7 +1075,6 @@ class RuntimeNpuXGBoost:
         started = perf_counter()
         self.packed_model = pack_runtime_model(self.ensemble)
         self.model_pack_ms = (perf_counter() - started) * 1000.0
-        npu.configure(movi_dll_dir=movi_dll_dir)
         features = npu.input(
             "xgboost_features",
             shape=(1, RUNTIME_LOGICAL_ELEMENTS),
@@ -1320,7 +1319,6 @@ class ConnectedRuntimeNpuXGBoost:
             started = perf_counter()
             self.packed_models = tuple(pack_runtime_model(partition) for partition in self.partitions)
             self.model_pack_ms = (perf_counter() - started) * 1000.0
-            npu.configure(movi_dll_dir=movi_dll_dir)
             features = npu.input(
                 "xgboost_features",
                 shape=(1, RUNTIME_LOGICAL_ELEMENTS),

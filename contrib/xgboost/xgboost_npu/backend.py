@@ -32,7 +32,6 @@ class NpuXGBoost:
         self.ensemble = model if isinstance(model, Ensemble) else load_ensemble(model)
         self.transport = transport_spec(transport)
         self.source = generate_kernel_source(self.ensemble, transport=self.transport)
-        npu.configure(movi_dll_dir=movi_dll_dir)
         input_tensor = npu.input(
             "xgboost_input",
             shape=(1, self.transport.logical_elements),

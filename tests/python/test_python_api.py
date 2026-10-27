@@ -32,6 +32,7 @@ class SymbolicTests(unittest.TestCase):
             "artifact_manifest",
             "compile_ir",
             "compile_shave",
+            "configure",
             "ir_provenance",
             "patch_graph",
             "patch_reports",
