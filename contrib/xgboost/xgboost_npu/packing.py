@@ -6,6 +6,7 @@ import numpy as np
 
 HEADER_WORDS = 4
 OUTPUT_WORDS_PER_SAMPLE = 3
+SPECIALIZED_ACT_TARGETS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,9 +67,7 @@ def pack_features(
         raise ValueError("features may contain finite values or NaN, but not infinity")
     capacity = batch_capacity(feature_count, transport=spec)
     if values.shape[0] > capacity:
-        raise ValueError(
-            f"batch size {values.shape[0]} exceeds {spec.name} invocation capacity {capacity}"
-        )
+        raise ValueError(f"batch size {values.shape[0]} exceeds {spec.name} invocation capacity {capacity}")
     quantized = values.astype(spec.numpy_dtype)
     if np.isinf(quantized).any():
         raise ValueError(f"a feature overflows the {spec.name.upper()} transport")
@@ -99,9 +98,9 @@ def unpack_predictions(
     expected_header = (expected_samples, feature_count, OUTPUT_WORDS_PER_SAMPLE)
     if header[:3] != expected_header:
         raise ValueError(f"kernel output header {header[:3]!r} does not match {expected_header!r}")
-    records = first[
-        HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE
-    ].reshape(expected_samples, OUTPUT_WORDS_PER_SAMPLE)
+    records = first[HEADER_WORDS : HEADER_WORDS + expected_samples * OUTPUT_WORDS_PER_SAMPLE].reshape(
+        expected_samples, OUTPUT_WORDS_PER_SAMPLE
+    )
     classes = records[:, 2].astype(np.int32)
     if not np.isin(classes, (0, 1)).all():
         raise ValueError("kernel produced a non-binary class")

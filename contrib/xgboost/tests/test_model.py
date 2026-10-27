@@ -6,7 +6,12 @@ import numpy as np
 
 from xgboost_npu.generate import generate_kernel_source
 from xgboost_npu.model import load_ensemble
-from xgboost_npu.packing import FP16_TRANSPORT, FP32_TRANSPORT, pack_features
+from xgboost_npu.packing import (
+    FP16_TRANSPORT,
+    FP32_TRANSPORT,
+    SPECIALIZED_ACT_TARGETS,
+    pack_features,
+)
 from xgboost_npu.runtime import (
     RUNTIME_CHUNK_ELEMENTS,
     RUNTIME_REPLICAS,
@@ -65,6 +70,12 @@ def stump_model() -> dict[str, object]:
 
 
 class ModelTests(unittest.TestCase):
+    def test_specialized_target_count_is_not_tensor_replica_count(self) -> None:
+        self.assertEqual(SPECIALIZED_ACT_TARGETS, 4)
+        for transport in (FP16_TRANSPORT, FP32_TRANSPORT):
+            with self.subTest(transport=transport.name):
+                self.assertEqual(transport.logical_elements // transport.chunk_elements, 2)
+
     def test_threshold_and_missing_value_routing(self) -> None:
         ensemble = load_ensemble(stump_model())
         features = np.asarray([[0.5, 0.0], [1.0, 0.0], [np.nan, 0.0]], dtype=np.float32)

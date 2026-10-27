@@ -10,6 +10,7 @@ from .generate import generate_kernel_source
 from .model import Ensemble, load_ensemble
 from .packing import (
     Predictions,
+    SPECIALIZED_ACT_TARGETS,
     TransportSpec,
     pack_features,
     transport_spec,
@@ -57,7 +58,7 @@ class NpuXGBoost:
                         self.transport.dtype,
                         (self.transport.chunk_elements,),
                         self.transport.chunk_elements,
-                        self.transport.logical_elements // self.transport.chunk_elements,
+                        SPECIALIZED_ACT_TARGETS,
                     ),
                 ),
                 mapping_indices=((0,),),
@@ -69,7 +70,7 @@ class NpuXGBoost:
                 inputs=(("xgboost_input", (1, self.transport.logical_elements), self.transport.dtype),),
                 outputs=(("xgboost_output", (1, self.transport.logical_elements), self.transport.dtype),),
                 patch_count=1,
-                targets_per_patch=(self.transport.logical_elements // self.transport.chunk_elements,),
+                targets_per_patch=(SPECIALIZED_ACT_TARGETS,),
             )
         )
         self.build_ms = (perf_counter() - started) * 1000.0
