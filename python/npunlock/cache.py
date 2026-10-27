@@ -50,6 +50,18 @@ def movitools_identity(root: str | Path) -> list[dict[str, object]]:
     return dependency_identity(root, _MOVITOOLS_FILES)
 
 
+def movitools_manifest(root: str | Path) -> dict[str, dict[str, object]]:
+    """Return stable, path-free identities for the required MoviTools files."""
+
+    result: dict[str, dict[str, object]] = {}
+    for entry in movitools_identity(root):
+        result[str(entry["name"])] = {
+            "size": entry["size"],
+            "sha256": entry["sha256"],
+        }
+    return result
+
+
 def native_runtime_identity(root: str | Path) -> list[dict[str, object]]:
     return dependency_identity(root, _NATIVE_FILES)
 

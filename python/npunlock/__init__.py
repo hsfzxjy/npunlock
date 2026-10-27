@@ -42,7 +42,14 @@ from .contracts import (
     PatchReport,
     ProgramContract,
 )
-from .cache import CacheStatus, ProgramCache, movitools_identity, native_runtime_identity, worker_identity
+from .cache import (
+    CacheStatus,
+    ProgramCache,
+    movitools_identity,
+    movitools_manifest,
+    native_runtime_identity,
+    worker_identity,
+)
 from .external import ReviewedPatchBinding
 from .graph import Graph, Node, constant, custom, input, op
 from .ir import SerializedIR, serialize_ir
@@ -107,6 +114,7 @@ __all__ = [
     "load_native_file",
     "load_prepared",
     "load",
+    "movitools_manifest",
     "op",
     "prepare",
     "prepare_ir",

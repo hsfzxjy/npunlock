@@ -689,6 +689,11 @@ tensor contracts, and patch evidence. Dependencies must also remain unchanged
 through compilation. A corrupt or stale entry is a safe miss. Pass
 `cache_dir=None` to use the same validated build path without persistence.
 
+Use `npu.movitools_manifest(mvc_depend_root)` when an application report needs
+the size and SHA-256 identity of the required compiler, assembler, linker, and
+math archive. The result contains stable relative names and no machine-local
+root path; applications should not reproduce the MVC_DEPEND layout themselves.
+
 An advanced integration may serialize IR with another library only when it has
 an exact reviewed binding. `ReviewedPatchBinding` records the XML/weights and
 native-graph hashes, build flags, NPU provenance, explicit V2 targets, and I/O

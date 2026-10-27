@@ -40,7 +40,11 @@ class SymbolicTests(unittest.TestCase):
         }
         violations: list[str] = []
         for path in sorted((ROOT / "contrib").glob("**/*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+            for filename in ("moviCompile64.dll", "moviAsm64.dll", "moviLLD64.dll", "mlibm.a"):
+                if filename in source:
+                    violations.append(f"{path.relative_to(ROOT)}: hard-codes MoviTools file {filename}")
             aliases: set[str] = set()
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
@@ -3653,6 +3657,27 @@ class ContribFoundationTests(unittest.TestCase):
             path.write_bytes(contents)
         fake = ContractNative()
         try:
+            self.assertEqual(
+                npu.movitools_manifest(movi),
+                {
+                    "bin/moviCompile64.dll": {
+                        "size": len(b"compile"),
+                        "sha256": hashlib.sha256(b"compile").hexdigest(),
+                    },
+                    "bin/moviAsm64.dll": {
+                        "size": len(b"assemble"),
+                        "sha256": hashlib.sha256(b"assemble").hexdigest(),
+                    },
+                    "bin/moviLLD64.dll": {
+                        "size": len(b"link"),
+                        "sha256": hashlib.sha256(b"link").hexdigest(),
+                    },
+                    "lib/mlibm.a": {
+                        "size": len(b"math"),
+                        "sha256": hashlib.sha256(b"math").hexdigest(),
+                    },
+                },
+            )
             first = npu.compile_cached(
                 graph,
                 cache_dir=cache,

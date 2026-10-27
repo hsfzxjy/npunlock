@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hashlib
 from pathlib import Path
 from time import perf_counter
 
@@ -169,16 +168,7 @@ class NpuHnsw:
 
     @property
     def movi_toolchain(self) -> dict[str, dict[str, object]]:
-        result: dict[str, dict[str, object]] = {}
-        for relative in (
-            "bin/moviCompile64.dll",
-            "bin/moviAsm64.dll",
-            "bin/moviLLD64.dll",
-            "lib/mlibm.a",
-        ):
-            data = (self.movi_dll_dir / Path(relative)).read_bytes()
-            result[relative] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
-        return result
+        return npu.movitools_manifest(self.movi_dll_dir)
 
     def search_many(
         self,
