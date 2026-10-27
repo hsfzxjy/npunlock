@@ -356,7 +356,7 @@ class NpuAssignment:
             guard,
             source=source,
             carrier="Subtract",
-            _name="assignment_result",
+            name="assignment_result",
         )
         prepared = npu.prepare(
             npu.Graph([payload, guard], [output], name="bytetrack_linear_assignment"),

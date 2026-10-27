@@ -134,7 +134,7 @@ void controlled_act(unsigned layerParams) {
 """
 
 x = npu.input("x", shape=(1, 32), dtype="f16")
-y = npu.custom(x, source=kernel_c, carrier="Abs", _name="y")
+y = npu.custom(x, source=kernel_c, carrier="Abs", name="y")
 graph = npu.Graph([x], [y], name="first_custom_kernel")
 program = npu.compile(graph)
 
@@ -271,7 +271,7 @@ environment:
 shape = (1, 32)
 a = npu.input("a", shape=shape, dtype="f16")
 b = npu.input("b", shape=shape, dtype="f16")
-y = npu.custom(a, b, source=kernel_c, carrier="Maximum", _name="y")
+y = npu.custom(a, b, source=kernel_c, carrier="Maximum", name="y")
 program = npu.compile(npu.Graph([a, b], [y], name="weighted_mix"))
 ```
 
@@ -558,7 +558,7 @@ y = npu.custom(
     source=kernel_c,
     carrier="Convert",
     destination_type="f32",
-    _name="y",
+    name="y",
 )
 
 prepared = npu.prepare(npu.Graph([x], [y], name="u8_to_f32"))
@@ -606,7 +606,7 @@ compiled = npu.compile_kernel(kernel_c)
 compiled.save("affine.elf")
 
 x = npu.input("x", shape=(1, 32), dtype="f16")
-y = npu.custom(x, kernel=compiled, carrier="Abs", _name="y")
+y = npu.custom(x, kernel=compiled, carrier="Abs", name="y")
 program = npu.compile(npu.Graph([x], [y]))
 ```
 

@@ -1090,7 +1090,7 @@ class RuntimeNpuXGBoost:
             forest,
             source=kernel_source,
             carrier="Subtract",
-            _name="xgboost_output",
+            name="xgboost_output",
         )
         graph = npu.Graph(
             [features, forest],
@@ -1339,14 +1339,14 @@ class ConnectedRuntimeNpuXGBoost:
                 forest_a,
                 source=RUNTIME_CONNECTED_FIRST_KERNEL_SOURCE,
                 carrier="Subtract",
-                _name="xgboost_partial",
+                name="xgboost_partial",
             )
             output = npu.custom(
                 partial,
                 forest_b,
                 source=RUNTIME_CHAIN_KERNEL_SOURCE,
                 carrier="Subtract",
-                _name="xgboost_output",
+                name="xgboost_output",
             )
             graph = npu.Graph(
                 [features, forest_a, forest_b],

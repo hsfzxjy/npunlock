@@ -687,6 +687,7 @@ def custom(
     _shape: object | None = ...,
     _dtype: object | None = ...,
     _outputs: Sequence[TensorSpec] | None = ...,
+    name: str | None = ...,
     _name: str | None = ...,
     _patch_targets: Sequence[PatchTarget | PatchTargetV2] | None = ...,
     **attributes: object,

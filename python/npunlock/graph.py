@@ -440,6 +440,7 @@ def custom(
     _shape: object | None = None,
     _dtype: object | None = None,
     _outputs: Sequence[TensorSpec] | None = None,
+    name: str | None = None,
     _name: str | None = None,
     _patch_targets: Sequence[object] | None = None,
     **attributes: object,
@@ -454,6 +455,10 @@ def custom(
         raise ValueError("custom() accepts source or kernel, not both")
     if kernel is not None and not isinstance(kernel, (KernelSpec, CompiledKernel)):
         raise TypeError("custom() kernel must be a KernelSpec or CompiledKernel")
+    if name is not None and _name is not None:
+        raise ValueError("custom() accepts name or _name, not both")
+    if name is not None and not isinstance(name, str):
+        raise TypeError("custom() name must be a string or None")
 
     carrier_name = _validate_operator_name(carrier)
     if any(not isinstance(value, Tensor) for value in inputs):
@@ -461,7 +466,7 @@ def custom(
     metadata: dict[str, object] = {
         "_kernel": kernel if kernel is not None else source,
         "_carrier": carrier_name,
-        "_name": _name,
+        "_name": name if name is not None else _name,
     }
     if _outputs is not None:
         metadata["_outputs"] = _outputs

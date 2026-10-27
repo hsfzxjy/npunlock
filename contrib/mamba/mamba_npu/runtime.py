@@ -36,7 +36,7 @@ class NpuSelectiveScan:
             model,
             source=KERNEL_PATH.read_bytes(),
             carrier="Subtract",
-            _name="mamba_scan_output",
+            name="mamba_scan_output",
         )
         prepared = npu.prepare(
             npu.Graph([dynamic, model], [output], name="mamba1_selective_scan"),

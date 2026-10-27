@@ -64,6 +64,15 @@ class SymbolicTests(unittest.TestCase):
                     or (isinstance(node.value, ast.Name) and node.value.id in aliases and node.attr.startswith("_"))
                 ):
                     violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: accesses {ast.unparse(node)}")
+                elif (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in aliases
+                    and node.func.attr == "custom"
+                    and any(keyword.arg == "_name" for keyword in node.keywords)
+                ):
+                    violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: uses legacy npu.custom(_name=...)")
 
         self.assertEqual(violations, [])
 
@@ -587,6 +596,18 @@ class SerializationTests(unittest.TestCase):
         self.assertNotIn(b'type="Abs"', candidate.xml)
         self.assertEqual(candidate.weights, baseline.weights)
         self.assertEqual(y.producer.metadata["_carrier"], "Abs")
+
+    def test_custom_accepts_a_public_name(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs", name="named_custom")
+
+        self.assertEqual(y.name, "named_custom")
+        self.assertEqual(y.producer.name, "named_custom")
+        self.assertIn(b'name="named_custom"', npu.serialize_ir(npu.Graph([x], [y])).xml)
+        with self.assertRaisesRegex(ValueError, "name or _name"):
+            npu.custom(x, source=b"kernel", carrier="Abs", name="public", _name="legacy")
+        with self.assertRaisesRegex(TypeError, "name must be a string"):
+            npu.custom(x, source=b"kernel", carrier="Abs", name=1)  # type: ignore[arg-type]
 
     def test_custom_carrier_override_rejects_unrelated_nodes(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

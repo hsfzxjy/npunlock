@@ -41,7 +41,7 @@ class NpuXGBoost:
             input_tensor,
             source=self.source,
             carrier="Abs",
-            _name="xgboost_output",
+            name="xgboost_output",
         )
         prepared = npu.prepare(
             npu.Graph([input_tensor], [output_tensor], name="xgboost_binary_classifier"),

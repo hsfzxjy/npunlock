@@ -45,7 +45,7 @@ class NpuActRmsNorm:
             weights,
             source=(KERNEL_DIR / "rms_norm_f32.c").read_bytes(),
             carrier="Subtract",
-            _name="rms_output",
+            name="rms_output",
         )
         prepared = npu.prepare(
             npu.Graph([values, weights], [output], name="mamba_rms_norm_f32"),
@@ -117,7 +117,7 @@ class NpuActCausalConv1d:
             model,
             source=(KERNEL_DIR / "causal_conv1d_f32.c").read_bytes(),
             carrier="Subtract",
-            _name="conv_output",
+            name="conv_output",
         )
         prepared = npu.prepare(
             npu.Graph([dynamic, model], [output], name="mamba_causal_conv1d_f32"),

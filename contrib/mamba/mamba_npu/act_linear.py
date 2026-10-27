@@ -37,7 +37,7 @@ class NpuActLinear:
             weights,
             source=KERNEL_PATH.read_bytes(),
             carrier="Subtract",
-            _name="linear_output",
+            name="linear_output",
         )
         prepared = npu.prepare(
             npu.Graph([activation, weights], [output], name="mamba_act_linear_f32"),

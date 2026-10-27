@@ -34,7 +34,7 @@ class NpuNms:
             input_tensor,
             source=source,
             carrier="Abs",
-            _name="nms_output",
+            name="nms_output",
         )
         prepared = npu.prepare(
             npu.Graph([input_tensor], [output_tensor], name="yolo11_nms"),

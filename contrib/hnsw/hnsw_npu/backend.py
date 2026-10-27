@@ -104,7 +104,7 @@ class NpuHnsw:
             graph,
             source=self.source,
             carrier="Subtract",
-            _name="hnsw_results",
+            name="hnsw_results",
         )
         graph_definition = npu.Graph([query, graph], [output], name=f"hnsw_l2_search_{batch_capacity}q")
         result = npu.compile_cached(
