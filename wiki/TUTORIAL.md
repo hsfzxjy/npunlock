@@ -676,7 +676,10 @@ program = prepared.build().require(
 
 `Program.patch_evidence` returns validated `PatchReport` objects, including
 the preservation decisions and hash chain. Use it instead of parsing report
-JSON in application code.
+JSON in application code. `PatchReport.to_json()` returns the complete
+validated v1/v2 JSON-compatible evidence, including every selected target and
+native changed-field record. `PatchReport.summary()` keeps the smaller
+target-count-only view.
 
 Contributions that rebuild the same model-independent program can use
 `npu.compile_cached(...)` with the same carrier and program contracts. The core

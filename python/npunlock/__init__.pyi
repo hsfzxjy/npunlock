@@ -349,6 +349,7 @@ class ArtifactIdentity:
 
 class PatchReport:
     raw: bytes
+    schema: str
     input_graph_sha256: str
     output_graph_sha256: str
     shave_elf_sha256: str
@@ -360,6 +361,7 @@ class PatchReport:
     validation: Mapping[str, object]
     @classmethod
     def parse(cls, payload: bytes) -> PatchReport: ...
+    def to_json(self) -> dict[str, object]: ...
     def summary(self) -> dict[str, object]: ...
 
 class ActGroupContract:

@@ -102,8 +102,7 @@ class SingleGraphYoloNms:
 
     @property
     def patch_evidence(self) -> dict[str, object]:
-        report = self.patch_report
-        return {**report.summary(), "targets": [dict(target) for target in report.targets]}
+        return self.patch_report.to_json()
 
     def run(
         self,

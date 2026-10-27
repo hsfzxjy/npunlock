@@ -131,6 +131,7 @@ class PatchReport:
     """Validated, typed view of one patchblob preservation report."""
 
     raw: bytes
+    schema: str
     input_graph_sha256: str
     output_graph_sha256: str
     shave_elf_sha256: str
@@ -147,7 +148,11 @@ class PatchReport:
             value = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("patch report is not valid UTF-8 JSON") from exc
-        if not isinstance(value, dict) or value.get("schema") != "npunlock.patchblob.v1":
+        schema = value.get("schema") if isinstance(value, dict) else None
+        if not isinstance(schema, str) or schema not in (
+            "npunlock.patchblob.v1",
+            "npunlock.patchblob.v2",
+        ):
             raise ValueError("patch report schema is unsupported")
         graph_contract = value.get("graph_contract")
         targets = value.get("targets")
@@ -172,6 +177,7 @@ class PatchReport:
             raise ValueError("patch report does not prove preservation")
         return cls(
             bytes(payload),
+            schema,
             _sha256(value.get("input_graph_sha256"), "input graph sha256"),
             _sha256(value.get("output_graph_sha256"), "output graph sha256"),
             _sha256(value.get("shave_elf_sha256"), "SHAVE ELF sha256"),
@@ -183,9 +189,17 @@ class PatchReport:
             validation,
         )
 
+    def to_json(self) -> dict[str, object]:
+        """Return the complete validated report as JSON-compatible values."""
+
+        value = json.loads(self.raw.decode("utf-8"))
+        if not isinstance(value, dict):  # The constructor is intentionally public.
+            raise ValueError("patch report structure is invalid")
+        return value
+
     def summary(self) -> dict[str, object]:
         return {
-            "schema": "npunlock.patchblob.v1",
+            "schema": self.schema,
             "input_graph_sha256": self.input_graph_sha256,
             "shave_elf_sha256": self.shave_elf_sha256,
             "output_graph_sha256": self.output_graph_sha256,

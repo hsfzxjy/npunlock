@@ -158,8 +158,7 @@ class NpuHnsw:
 
     @property
     def patch_evidence(self) -> dict[str, object]:
-        report = self.program.patch_evidence[0]
-        return {**report.summary(), "targets": [dict(target) for target in report.targets]}
+        return self.program.patch_evidence[0].to_json()
 
     @property
     def build_manifest(self) -> dict[str, object]:

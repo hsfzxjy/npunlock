@@ -3491,7 +3491,26 @@ class ContribFoundationTests(unittest.TestCase):
             )
         )
         self.assertEqual(program.patch_evidence[0].graph_contract["tiles"], 1)
-        self.assertEqual(program.patch_evidence[0].summary()["patched_target_count"], 1)
+        report = program.patch_evidence[0]
+        self.assertEqual(report.summary()["patched_target_count"], 1)
+        self.assertNotIn("targets", report.summary())
+        self.assertEqual(
+            report.to_json()["targets"],
+            [{"invocation_index": 0, "range_index": 0}],
+        )
+        v2_document = report.to_json()
+        v2_document["schema"] = "npunlock.patchblob.v2"
+        v2_document["section_table"] = {"old_offset": 100, "new_offset": 132}
+        v2_report = npu.PatchReport.parse(json.dumps(v2_document).encode("utf-8"))
+        self.assertEqual(v2_report.schema, "npunlock.patchblob.v2")
+        self.assertEqual(v2_report.to_json(), v2_document)
+        self.assertNotIn("section_table", v2_report.summary())
+        v2_document["schema"] = "npunlock.patchblob.v3"
+        with self.assertRaisesRegex(ValueError, "schema is unsupported"):
+            npu.PatchReport.parse(json.dumps(v2_document).encode("utf-8"))
+        v2_document["schema"] = []
+        with self.assertRaisesRegex(ValueError, "schema is unsupported"):
+            npu.PatchReport.parse(json.dumps(v2_document).encode("utf-8"))
         with self.assertRaisesRegex(ValueError, "target count"):
             prepared.require(npu.CarrierContract((npu.ActGroupContract(("f16",), "f16", (32,), 32, 2),)))
 
