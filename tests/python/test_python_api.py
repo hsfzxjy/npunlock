@@ -26,6 +26,46 @@ from npunlock.doctor import collect_diagnostics, human_report
 
 
 class SymbolicTests(unittest.TestCase):
+    def test_public_contribs_stay_above_the_npunlock_native_boundary(self) -> None:
+        forbidden_attributes = {
+            "NativeLibraries",
+            "artifact_manifest",
+            "compile_ir",
+            "compile_shave",
+            "ir_provenance",
+            "patch_graph",
+            "patch_reports",
+            "report_json",
+        }
+        violations: list[str] = []
+        for path in sorted((ROOT / "contrib").glob("**/*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            aliases: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "npunlock":
+                            aliases.add(alias.asname or alias.name)
+                        elif alias.name.startswith("npunlock._"):
+                            violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: imports {alias.name}")
+                elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                    if node.module.startswith("npunlock._"):
+                        violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: imports {node.module}")
+                    elif node.module == "npunlock":
+                        for alias in node.names:
+                            if alias.name.startswith("_") or alias.name in forbidden_attributes:
+                                violations.append(
+                                    f"{path.relative_to(ROOT)}:{node.lineno}: imports npunlock.{alias.name}"
+                                )
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and (
+                    node.attr in forbidden_attributes
+                    or (isinstance(node.value, ast.Name) and node.value.id in aliases and node.attr.startswith("_"))
+                ):
+                    violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: accesses {ast.unparse(node)}")
+
+        self.assertEqual(violations, [])
+
     def test_every_explicit_public_export_has_a_stub_declaration(self) -> None:
         tree = ast.parse((ROOT / "python/npunlock/__init__.pyi").read_text(encoding="utf-8"))
         declared: set[str] = set()
