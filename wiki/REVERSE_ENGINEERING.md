@@ -2266,6 +2266,37 @@ invariants with source operations, handle multi-group custom nodes, create a
 `ReviewedBinding`, or alter `PreparedGraph.mappings`. Even a unique result is
 therefore an explanation of the current evidence—not an automatic selector.
 
+## 74. Exact graph-input-to-ACT provenance
+
+On 2026-10-28, network-input DMA records closed one side of the native
+topology without introducing a source-name guess. Inspector schema v25 joins
+a relocation-backed network-input source to an ACT input only when the DMA
+destination matches the ACT CMX symbol, addend, and byte span and its post
+barrier directly intersects the invocation wait mask. A tiled group is exact
+only when every invocation has one direct load or is the unique full-contract
+replica of a multicast destination. Reused tasks, conflicting source symbols,
+overlapping or disjoint source intervals, and unclassified peers all fail
+closed.
+
+The retained connected mixed-precision graph proves raw input symbol 1 into
+ACT group 0. One 128-byte multicast DMA load directly matches the tile-0
+invocation; the tile-1 invocation is its unique full-contract replica under
+the observed `0x200000` CMX translation. The compact relation therefore keeps
+one graph-input-to-ACT edge with evidence count 2.
+
+The same graph exposes the current limit for raw input symbol 2. Its 32-byte
+load directly matches one invocation of ACT group 1, but the peer invocation
+has no direct barrier match and cannot be proven as a full-contract multicast
+replica. Schema v25 reports the attempted cover with
+`INVOCATION_UNCLASSIFIED | REPLICA_UNRESOLVED`, while `exact_relations` omits
+the edge. Inferring engine order or transitive DMA scheduling here would need
+separate evidence; the implementation does not assume it.
+
+These raw input symbols are not Python input names and are not consumed by the
+mapping proposal or patch selector. The result is an exact native provenance
+edge where the current scheduling evidence is complete, plus an explicit
+record of where that proof stops.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

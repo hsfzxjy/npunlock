@@ -186,6 +186,18 @@ read-only projection through `patchblob_inspect_exact_relations()` and
 `PreparedGraph.inspect_exact_relations()`; it is not a source-node map or an
 automatic patch selector.
 
+Schema v25 adds `graph_input_act_cover_observations` and the exact
+`graph_input_to_act_via_dma` relation. The proof begins at a relocation-backed
+network-input DMA task and requires its destination to match one ACT input's
+CMX symbol, addend, byte span, and direct wait/post dependency. For tiled
+groups, every invocation must be either directly loaded or a unique
+full-contract replica of a multicast destination. Direct source intervals
+must form one non-overlapping contiguous span and use the same raw input
+symbol. The detailed observation remains visible when any invocation cannot
+be classified, but only a complete cover becomes an exact relation. Raw input
+symbols and their symbol-table sections are native identities and are not
+Python input names.
+
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
 

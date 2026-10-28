@@ -1714,8 +1714,9 @@ class NativeLibraries:
                 4: "act_to_dpu_via_dma",
                 5: "act_to_act_via_dma",
                 6: "dpu_to_act",
+                7: "graph_input_to_act_via_dma",
             }
-            endpoint_kinds = {1: "act_group", 2: "dpu_invariant", 3: "graph_output"}
+            endpoint_kinds = {1: "act_group", 2: "dpu_invariant", 3: "graph_output", 4: "graph_input"}
 
             def endpoint(source: _PatchRelationEndpoint) -> GraphRelationEndpoint:
                 if source.struct_size < ctypes.sizeof(_PatchRelationEndpoint) or source.kind not in endpoint_kinds:

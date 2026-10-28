@@ -303,7 +303,8 @@ typedef struct patchblob_dma_act_group_coverage_result {
 typedef enum patchblob_relation_endpoint_kind {
   PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP = 1u,
   PATCHBLOB_RELATION_ENDPOINT_DPU_INVARIANT = 2u,
-  PATCHBLOB_RELATION_ENDPOINT_GRAPH_OUTPUT = 3u
+  PATCHBLOB_RELATION_ENDPOINT_GRAPH_OUTPUT = 3u,
+  PATCHBLOB_RELATION_ENDPOINT_GRAPH_INPUT = 4u
 } patchblob_relation_endpoint_kind;
 
 typedef enum patchblob_exact_relation_kind {
@@ -312,15 +313,18 @@ typedef enum patchblob_exact_relation_kind {
   PATCHBLOB_RELATION_ACT_TO_DPU = 3u,
   PATCHBLOB_RELATION_ACT_TO_DPU_VIA_DMA = 4u,
   PATCHBLOB_RELATION_ACT_TO_ACT_VIA_DMA = 5u,
-  PATCHBLOB_RELATION_DPU_TO_ACT = 6u
+  PATCHBLOB_RELATION_DPU_TO_ACT = 6u,
+  PATCHBLOB_RELATION_GRAPH_INPUT_TO_ACT_VIA_DMA = 7u
 } patchblob_exact_relation_kind;
 
 /*
  * One endpoint in a fail-closed exact native routing relation. For an ACT
  * endpoint, primary_index is the positional ACT group and secondary_index is
  * PATCHBLOB_UNUSED_INDEX. For a DPU endpoint, the indices identify its ELF
- * section and invariant record. For a graph output, primary_index is the raw
- * output symbol and secondary_index is PATCHBLOB_UNUSED_INDEX.
+ * section and invariant record. For a graph input, primary_index is the raw
+ * input symbol and secondary_index is its symbol-table section. For a graph
+ * output, primary_index is the raw output symbol and secondary_index is
+ * PATCHBLOB_UNUSED_INDEX.
  */
 typedef struct patchblob_relation_endpoint {
   uint32_t struct_size;

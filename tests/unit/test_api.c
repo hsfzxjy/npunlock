@@ -68,7 +68,11 @@ _Static_assert(sizeof(patchblob_dma_act_group_coverage_result) == 64,
                "DMA/ACT group-coverage result ABI changed");
 _Static_assert(PATCHBLOB_RELATION_ACT_TO_OUTPUT == 1u, "exact-relation kind ABI changed");
 _Static_assert(PATCHBLOB_RELATION_DPU_TO_ACT == 6u, "exact-relation kind ABI changed");
+_Static_assert(PATCHBLOB_RELATION_GRAPH_INPUT_TO_ACT_VIA_DMA == 7u,
+               "exact-relation kind ABI changed");
 _Static_assert(PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP == 1u, "exact-relation endpoint ABI changed");
+_Static_assert(PATCHBLOB_RELATION_ENDPOINT_GRAPH_INPUT == 4u,
+               "exact-relation endpoint ABI changed");
 _Static_assert(sizeof(patchblob_relation_endpoint) == 16, "exact-relation endpoint ABI changed");
 _Static_assert(sizeof(patchblob_exact_relation) == 44, "exact-relation record ABI changed");
 _Static_assert(sizeof(patchblob_exact_relation_result) == 64, "exact-relation result ABI changed");

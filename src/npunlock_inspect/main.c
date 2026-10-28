@@ -169,6 +169,8 @@ static const char *relation_kind_name(uint32_t kind) {
     return "act_to_act_via_dma";
   case PATCHBLOB_RELATION_DPU_TO_ACT:
     return "dpu_to_act";
+  case PATCHBLOB_RELATION_GRAPH_INPUT_TO_ACT_VIA_DMA:
+    return "graph_input_to_act_via_dma";
   default:
     return "unknown";
   }
@@ -182,6 +184,8 @@ static const char *relation_endpoint_kind_name(uint32_t kind) {
     return "dpu_invariant";
   case PATCHBLOB_RELATION_ENDPOINT_GRAPH_OUTPUT:
     return "graph_output";
+  case PATCHBLOB_RELATION_ENDPOINT_GRAPH_INPUT:
+    return "graph_input";
   default:
     return "unknown";
   }
@@ -200,7 +204,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v24\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v25\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -556,6 +560,26 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ], \"graph_input_act_cover_observations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < routing->graph_input_act_cover_count; ++index) {
+    const npunlock_graph_input_act_cover_observation *cover =
+        &routing->graph_input_act_covers[index];
+    if (fprintf(stream,
+                "%s    {\"act_group_index\": %u, \"act_tensor_record_index\": %u, "
+                "\"input_symbol_table_index\": %u, \"input_symbol_raw\": %u, "
+                "\"invocation_count\": %u, \"direct_dma_task_count\": %u, "
+                "\"replica_invocation_count\": %u, \"source_span_bytes\": %" PRIu64
+                ", \"exact_cover\": %s, \"unresolved_flags\": %u}",
+                index == 0 ? "" : ",\n", cover->act_group_index, cover->act_tensor_record_index,
+                cover->input_symbol_table_index, cover->input_symbol_raw, cover->invocation_count,
+                cover->direct_dma_task_count, cover->replica_invocation_count,
+                cover->source_span_bytes, cover->exact_cover ? "true" : "false",
+                cover->unresolved_flags) < 0) {
+      return 0;
+    }
+  }
   if (fprintf(stream, "\n  ], \"act_dma_act_input_candidates\": [\n") < 0) {
     return 0;
   }
@@ -827,9 +851,12 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   }
   return fprintf(stream,
                  "\n  ],\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
-                 "network-output DMA, and raw DMA-task contract; DMA endpoints "
+                 "network-input/output DMA, and raw DMA-task contract; DMA endpoints "
                  "come from validated relocations, while transfer geometry and scheduling "
-                 "fields remain raw observations; ACT/DMA source candidates require an exact "
+                 "fields remain raw observations; graph-input/ACT covers require a unique "
+                 "network-input DMA load, direct scheduling, and either a direct task or a "
+                 "full-contract multicast replica classification for every invocation; "
+                 "ACT/DMA source candidates require an exact "
                  "CMX interval and direct schedule match; fan-in observations additionally "
                  "require unique source tasks, an exact non-overlapping DDR union, and one "
                  "scheduled DDR-to-multicast-CMX task; ACT/DMA/ACT input covers require an "

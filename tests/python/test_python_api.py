@@ -835,6 +835,12 @@ class FakeNative:
         )
         self.exact_relations = (
             npu.ExactGraphRelation(
+                "graph_input_to_act_via_dma",
+                npu.GraphRelationEndpoint("graph_input", 1, 24),
+                npu.GraphRelationEndpoint("act_group", 0),
+                2,
+            ),
+            npu.ExactGraphRelation(
                 "act_to_output",
                 npu.GraphRelationEndpoint("act_group", 0),
                 npu.GraphRelationEndpoint("graph_output", 1),
@@ -1244,8 +1250,11 @@ class CompilationFlowTests(unittest.TestCase):
 
         self.assertEqual(relations, fake.exact_relations)
         self.assertEqual(fake.exact_relations_blob, b"native")
-        self.assertEqual(relations[0].source.secondary_index, None)
-        self.assertEqual(relations[0].destination.kind, "graph_output")
+        self.assertEqual(relations[0].source.kind, "graph_input")
+        self.assertEqual(relations[0].source.secondary_index, 24)
+        self.assertEqual(relations[0].destination.kind, "act_group")
+        self.assertEqual(relations[1].source.secondary_index, None)
+        self.assertEqual(relations[1].destination.kind, "graph_output")
 
     def test_native_topology_proposal_uses_positive_reachability_without_selecting(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

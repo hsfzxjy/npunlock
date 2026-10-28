@@ -4780,6 +4780,226 @@ static bool replica_contracts_match(const npunlock_invocation_routing_observatio
   return true;
 }
 
+static bool graph_input_dma_matches(const npunlock_invocation_routing_observation *invocation,
+                                    size_t tensor_index, const npunlock_dma_task_observation *dma) {
+  const patchblob_tensor_contract_v2 *tensor = &invocation->target.tensors[tensor_index];
+  const npunlock_tensor_routing_observation *routing = &invocation->tensors[tensor_index];
+  uint64_t barrier_intersection = dma->post_mask_raw & invocation->wait_mask_raw;
+  bool direct_cmx =
+      dma->destination.relocation_type == R_VPU_64 && dma->destination_value_raw == 0u;
+  bool multicast_cmx = dma->destination.relocation_type == R_VPU_64_OR &&
+                       dma->destination_value_raw == UINT64_C(0xc00000);
+  return tensor->role == PATCHBLOB_TENSOR_ROLE_INPUT_V2 && tensor->span_bytes != 0u &&
+         tensor->span_bytes <= UINT32_MAX && routing->data_addend >= 0 &&
+         dma_task_is_simple_contiguous(dma) &&
+         dma->source.memory_kind == NPUNLOCK_DMA_ENDPOINT_NETWORK_INPUT &&
+         dma->source.relocation_type == R_VPU_64 && dma->source_value_raw == 0u &&
+         dma->source.addend_raw >= 0 && dma->destination.memory_kind == NPUNLOCK_DMA_ENDPOINT_CMX &&
+         (direct_cmx || multicast_cmx) && dma->destination.symbol_raw == routing->data_symbol &&
+         dma->destination.addend_raw == routing->data_addend &&
+         dma->length_bytes == (uint32_t)tensor->span_bytes && barrier_intersection != 0u;
+}
+
+static bool dma_task_is_multicast_cmx(const npunlock_dma_task_observation *dma) {
+  return dma->destination.memory_kind == NPUNLOCK_DMA_ENDPOINT_CMX &&
+         dma->destination.relocation_type == R_VPU_64_OR &&
+         dma->destination_value_raw == UINT64_C(0xc00000);
+}
+
+npunlock_status npunlock_derive_graph_input_act_covers(
+    const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
+    size_t group_count, const npunlock_dma_task_observation *dma_tasks, size_t dma_task_count,
+    npunlock_graph_input_act_cover_observation **covers, size_t *cover_count,
+    npunlock_diagnostic *diagnostic) {
+  npunlock_graph_input_act_cover_observation *result = NULL;
+  const npunlock_dma_task_observation **selected_tasks = NULL;
+  output_byte_interval *intervals = NULL;
+  size_t result_capacity;
+  size_t result_count = 0u;
+  size_t allocation_size;
+  size_t group_index;
+  if (covers == NULL || cover_count == NULL || diagnostic == NULL ||
+      (invocations == NULL && invocation_count != 0u) ||
+      (dma_tasks == NULL && dma_task_count != 0u)) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *covers = NULL;
+  *cover_count = 0u;
+  if (group_count > UINT32_MAX || invocation_count > UINT32_MAX) {
+    return unsupported(diagnostic, "graph-input/ACT cover indices exceed their ABI width");
+  }
+  if (!npunlock_checked_mul_size(group_count, PATCHBLOB_TARGET_V2_MAX_TENSORS - 1u,
+                                 &result_capacity) ||
+      !npunlock_checked_mul_size(invocation_count, dma_task_count, &allocation_size) ||
+      allocation_size > ACT_EDGE_MAX_COMPARISONS ||
+      !npunlock_checked_mul_size(result_capacity, sizeof(*result), &allocation_size)) {
+    return unsupported(diagnostic, "graph-input/ACT cover analysis exceeds its work bound");
+  }
+  result = (npunlock_graph_input_act_cover_observation *)calloc(1u, allocation_size);
+  if (!npunlock_checked_mul_size(invocation_count, sizeof(*selected_tasks), &allocation_size)) {
+    free(result);
+    return unsupported(diagnostic, "graph-input/ACT task allocation overflows");
+  }
+  selected_tasks = (const npunlock_dma_task_observation **)calloc(1u, allocation_size);
+  if (!npunlock_checked_mul_size(invocation_count, sizeof(*intervals), &allocation_size)) {
+    free(selected_tasks);
+    free(result);
+    return unsupported(diagnostic, "graph-input/ACT interval allocation overflows");
+  }
+  intervals = (output_byte_interval *)calloc(1u, allocation_size);
+  if ((result_capacity != 0u && result == NULL) ||
+      (invocation_count != 0u && (selected_tasks == NULL || intervals == NULL))) {
+    free(intervals);
+    free(selected_tasks);
+    free(result);
+    return npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                   "patchblob.inspect_routing",
+                                   "could not allocate graph-input/ACT cover observations");
+  }
+
+  for (group_index = 0; group_index < group_count; ++group_index) {
+    const npunlock_invocation_routing_observation *reference = NULL;
+    size_t tensor_index;
+    size_t invocation_index;
+    for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
+      if (invocations[invocation_index].group_index == group_index) {
+        reference = &invocations[invocation_index];
+        break;
+      }
+    }
+    if (reference == NULL || reference->target.tensor_count < 2u) {
+      continue;
+    }
+    for (tensor_index = 0; tensor_index + 1u < reference->target.tensor_count; ++tensor_index) {
+      npunlock_graph_input_act_cover_observation *cover;
+      size_t group_invocation_count = 0u;
+      size_t direct_count = 0u;
+      size_t replica_count = 0u;
+      size_t interval_count = 0u;
+      uint32_t initial_unresolved_flags = 0u;
+      bool source_initialized = false;
+      bool has_overlap = false;
+      memset(selected_tasks, 0, invocation_count * sizeof(*selected_tasks));
+      for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
+        const npunlock_invocation_routing_observation *invocation = &invocations[invocation_index];
+        const npunlock_dma_task_observation *selected = NULL;
+        size_t local_count = 0u;
+        size_t dma_index;
+        if (invocation->group_index != group_index) {
+          continue;
+        }
+        ++group_invocation_count;
+        if (tensor_index + 1u >= invocation->target.tensor_count ||
+            invocation->target.tensors[tensor_index].role != PATCHBLOB_TENSOR_ROLE_INPUT_V2) {
+          continue;
+        }
+        for (dma_index = 0; dma_index < dma_task_count; ++dma_index) {
+          if (graph_input_dma_matches(invocation, tensor_index, &dma_tasks[dma_index])) {
+            selected = &dma_tasks[dma_index];
+            ++local_count;
+          }
+        }
+        if (local_count == 1u) {
+          selected_tasks[invocation_index] = selected;
+          ++direct_count;
+        } else if (local_count > 1u) {
+          initial_unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_INPUT_AMBIGUOUS;
+        }
+      }
+      if (direct_count == 0u) {
+        continue;
+      }
+      if (result_count >= result_capacity) {
+        free(intervals);
+        free(selected_tasks);
+        free(result);
+        return unsupported(diagnostic, "graph-input/ACT cover count exceeded its allocation");
+      }
+      cover = &result[result_count++];
+      cover->act_group_index = (uint32_t)group_index;
+      cover->act_tensor_record_index = (uint32_t)tensor_index;
+      cover->invocation_count = (uint32_t)group_invocation_count;
+      cover->direct_dma_task_count = (uint32_t)direct_count;
+      cover->unresolved_flags = initial_unresolved_flags;
+
+      for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
+        const npunlock_dma_task_observation *task = selected_tasks[invocation_index];
+        size_t prior;
+        uint64_t start;
+        if (invocations[invocation_index].group_index != group_index) {
+          continue;
+        }
+        if (task == NULL) {
+          size_t match_count = 0u;
+          size_t direct_index;
+          for (direct_index = 0; direct_index < invocation_count; ++direct_index) {
+            const npunlock_dma_task_observation *direct_task = selected_tasks[direct_index];
+            int64_t translation;
+            int64_t translated_addend;
+            if (direct_task == NULL || !dma_task_is_multicast_cmx(direct_task) ||
+                !replica_contracts_match(&invocations[invocation_index], &invocations[direct_index],
+                                         &translation) ||
+                !checked_add_i64(invocations[direct_index].tensors[tensor_index].data_addend,
+                                 translation, &translated_addend) ||
+                translated_addend !=
+                    invocations[invocation_index].tensors[tensor_index].data_addend) {
+              continue;
+            }
+            ++match_count;
+          }
+          if (match_count == 1u) {
+            ++replica_count;
+          } else {
+            cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_REPLICA_UNRESOLVED;
+          }
+          continue;
+        }
+        for (prior = 0; prior < invocation_index; ++prior) {
+          if (selected_tasks[prior] == task) {
+            cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_DMA_TASK_REUSED;
+          }
+        }
+        if (!source_initialized) {
+          cover->input_symbol_table_index = task->source.symbol_table_index;
+          cover->input_symbol_raw = task->source.symbol_raw;
+          source_initialized = true;
+        } else if (cover->input_symbol_table_index != task->source.symbol_table_index ||
+                   cover->input_symbol_raw != task->source.symbol_raw) {
+          cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_SOURCE_MISMATCH;
+        }
+        start = (uint64_t)task->source.addend_raw;
+        if (start > UINT64_MAX - task->length_bytes) {
+          cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_SOURCE_COVER_UNRESOLVED;
+        } else {
+          intervals[interval_count].start = start;
+          intervals[interval_count].end = start + task->length_bytes;
+          ++interval_count;
+        }
+      }
+      cover->replica_invocation_count = (uint32_t)replica_count;
+      if (direct_count + replica_count != group_invocation_count) {
+        cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_INVOCATION_UNCLASSIFIED;
+      }
+      if (interval_count == 0u) {
+        cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_SOURCE_COVER_UNRESOLVED;
+      } else {
+        size_t merged_count = merge_output_byte_intervals(intervals, interval_count, &has_overlap);
+        if (has_overlap || merged_count != 1u || intervals[0].end < intervals[0].start) {
+          cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_SOURCE_COVER_UNRESOLVED;
+        } else {
+          cover->source_span_bytes = intervals[0].end - intervals[0].start;
+        }
+      }
+      cover->exact_cover = cover->unresolved_flags == 0u;
+    }
+  }
+  free(intervals);
+  free(selected_tasks);
+  *covers = result;
+  *cover_count = result_count;
+  return NPUNLOCK_STATUS_OK;
+}
+
 static const npunlock_invocation_routing_observation *
 find_group_tile_invocation(const npunlock_invocation_routing_observation *invocations,
                            size_t invocation_count, uint32_t group_index, uint32_t tile_index,
@@ -5493,6 +5713,7 @@ void npunlock_graph_routing_observations_release(
   free(observations->dma_tasks);
   free(observations->act_dma_source_candidates);
   free(observations->act_dma_fanin_observations);
+  free(observations->graph_input_act_covers);
   free(observations->act_dma_act_input_candidates);
   free(observations->act_dma_act_input_covers);
   free(observations->act_dma_dpu_input_candidates);
@@ -5618,7 +5839,11 @@ npunlock_compare_graph_routing_observations(const npunlock_graph_routing_observa
       !observation_arrays_equal(
           baseline->act_dma_fanin_observations, baseline->act_dma_fanin_observation_count,
           candidate->act_dma_fanin_observations, candidate->act_dma_fanin_observation_count,
-          sizeof(*baseline->act_dma_fanin_observations))) {
+          sizeof(*baseline->act_dma_fanin_observations)) ||
+      !observation_arrays_equal(
+          baseline->graph_input_act_covers, baseline->graph_input_act_cover_count,
+          candidate->graph_input_act_covers, candidate->graph_input_act_cover_count,
+          sizeof(*baseline->graph_input_act_covers))) {
     comparison->mismatch_flags |= NPUNLOCK_COMPARE_ACT_DMA_RELATIONS_CHANGED;
   }
   if (!observation_arrays_equal(
@@ -5722,6 +5947,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   npunlock_dma_task_observation *dma_tasks = NULL;
   npunlock_act_dma_source_candidate_observation *act_dma_source_candidates = NULL;
   npunlock_act_dma_fanin_observation *act_dma_fanin_observations = NULL;
+  npunlock_graph_input_act_cover_observation *graph_input_act_covers = NULL;
   npunlock_act_dma_act_input_candidate_observation *act_dma_act_input_candidates = NULL;
   npunlock_act_dma_act_input_cover_observation *act_dma_act_input_covers = NULL;
   npunlock_act_dma_dpu_input_candidate_observation *act_dma_dpu_input_candidates = NULL;
@@ -5746,6 +5972,7 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   size_t dma_task_count = 0;
   size_t act_dma_source_candidate_count = 0;
   size_t act_dma_fanin_observation_count = 0;
+  size_t graph_input_act_cover_count = 0;
   size_t act_dma_act_input_candidate_count = 0;
   size_t act_dma_act_input_cover_count = 0;
   size_t act_dma_dpu_input_candidate_count = 0;
@@ -5882,6 +6109,12 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto fail;
   }
+  status = npunlock_derive_graph_input_act_covers(
+      invocations, invocation_count, group_count, dma_tasks, dma_task_count,
+      &graph_input_act_covers, &graph_input_act_cover_count, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto fail;
+  }
   status = npunlock_derive_act_dma_act_input_observations(
       invocations, invocation_count, group_count, dma_tasks, dma_task_count,
       act_dma_source_candidates, act_dma_source_candidate_count, &act_dma_act_input_candidates,
@@ -5973,6 +6206,8 @@ npunlock_status npunlock_inspect_graph_routing(npunlock_view graph_blob,
   observations->act_dma_source_candidate_count = act_dma_source_candidate_count;
   observations->act_dma_fanin_observations = act_dma_fanin_observations;
   observations->act_dma_fanin_observation_count = act_dma_fanin_observation_count;
+  observations->graph_input_act_covers = graph_input_act_covers;
+  observations->graph_input_act_cover_count = graph_input_act_cover_count;
   observations->act_dma_act_input_candidates = act_dma_act_input_candidates;
   observations->act_dma_act_input_candidate_count = act_dma_act_input_candidate_count;
   observations->act_dma_act_input_covers = act_dma_act_input_covers;
@@ -6014,6 +6249,7 @@ fail:
   free(dma_tasks);
   free(act_dma_source_candidates);
   free(act_dma_fanin_observations);
+  free(graph_input_act_covers);
   free(act_dma_act_input_candidates);
   free(act_dma_act_input_covers);
   free(act_dma_dpu_input_candidates);

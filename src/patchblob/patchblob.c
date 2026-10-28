@@ -994,6 +994,7 @@ npunlock_status patchblob_inspect_exact_relations(npunlock_view graph_blob,
       !npunlock_checked_add_size(capacity, observations.act_dma_act_input_candidate_count,
                                  &capacity) ||
       !npunlock_checked_add_size(capacity, observations.dpu_act_input_candidate_count, &capacity) ||
+      !npunlock_checked_add_size(capacity, observations.graph_input_act_cover_count, &capacity) ||
       !npunlock_checked_mul_size(capacity, sizeof(*result->relations), &allocation_size)) {
     status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OVERFLOW,
                                      "patchblob.inspect_exact_relations",
@@ -1144,6 +1145,28 @@ npunlock_status patchblob_inspect_exact_relations(npunlock_view graph_blob,
                                    candidate->dpu_section_index, candidate->dpu_invariant_index,
                                    PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP,
                                    candidate->consumer_group_index, PATCHBLOB_UNUSED_INDEX, 1u);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto cleanup;
+    }
+  }
+
+  for (index = 0; index < observations.graph_input_act_cover_count; ++index) {
+    const npunlock_graph_input_act_cover_observation *cover =
+        &observations.graph_input_act_covers[index];
+    if (!cover->exact_cover) {
+      continue;
+    }
+    if (cover->act_group_index >= observations.group_count || cover->invocation_count == 0u) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact graph-input relation is inconsistent");
+      goto cleanup;
+    }
+    status = append_exact_relation(
+        result, capacity, &relation_count, PATCHBLOB_RELATION_GRAPH_INPUT_TO_ACT_VIA_DMA,
+        PATCHBLOB_RELATION_ENDPOINT_GRAPH_INPUT, cover->input_symbol_raw,
+        cover->input_symbol_table_index, PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP,
+        cover->act_group_index, PATCHBLOB_UNUSED_INDEX, cover->invocation_count);
     if (status != NPUNLOCK_STATUS_OK) {
       goto cleanup;
     }

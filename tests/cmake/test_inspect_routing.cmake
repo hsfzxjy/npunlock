@@ -22,13 +22,14 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v24\""
+    "\"schema\": \"npunlock.porting.inspect.v25\""
     "\"dma\""
     "\"tasks\""
     "\"transfer_observation\""
     "\"scheduling_observation\""
     "\"act_source_candidates\""
     "\"act_fanin_observations\""
+    "\"graph_input_act_cover_observations\""
     "\"act_dma_act_input_candidates\""
     "\"act_dma_act_input_cover_observations\""
     "\"act_dma_dpu_input_candidates\""

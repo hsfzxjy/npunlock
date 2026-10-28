@@ -473,8 +473,10 @@ for relation in prepared.inspect_exact_relations():
 ```
 
 Only unique complete covers appear. The endpoint indices are native ACT
-groups, DPU invariants, or raw graph outputs—not Python node identities—and
-the result is never consumed as an automatic patch selector.
+groups, DPU invariants, or raw graph inputs/outputs—not Python node
+identities—and the result is never consumed as an automatic patch selector.
+A `graph_input` endpoint contains the native raw symbol and symbol-table
+section, not the name of an `npu.input()` object.
 
 To see whether those relations distinguish the custom nodes without changing
 any binding, request a proposal:

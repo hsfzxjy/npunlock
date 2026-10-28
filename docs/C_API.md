@@ -340,12 +340,14 @@ source-label evidence. Release the separate result with
 
 `patchblob_inspect_dma_act_group_coverage()` reports the independently
 validated ACT-to-DDR-to-ACT path. `patchblob_inspect_exact_relations()` then
-projects all complete, uniquely covered routes into endpoint pairs: ACT group
-to graph output, ACT group to ACT group, ACT group to DPU invariant, and DPU
-invariant to ACT group, with DMA-mediated forms kept distinct. The endpoint
+projects all complete, uniquely covered routes into endpoint pairs: graph
+input to ACT group, ACT group to graph output, ACT group to ACT group, ACT
+group to DPU invariant, and DPU invariant to ACT group, with DMA-mediated
+forms kept distinct. Graph-input endpoints use a raw input symbol plus its
+symbol-table section; they are not source-level input names. All endpoint
 indices are native identities, not source-node identities. This read-only
-topology result must not be treated as an automatic patch selector. Release it
-with `patchblob_exact_relation_result_release()`.
+topology result must not be treated as an automatic patch selector. Release
+it with `patchblob_exact_relation_result_release()`.
 
 The additive version 2 API describes every tensor record independently:
 

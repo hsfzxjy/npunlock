@@ -814,6 +814,7 @@ into an exact native topology. A relation is emitted only after the relevant
 invocations or inputs form a unique, complete cover. The currently represented
 routes are:
 
+- graph input to ACT group through a validated DMA load;
 - ACT group to graph output;
 - direct ACT group to ACT group;
 - direct ACT group to DPU invariant;
@@ -822,9 +823,17 @@ routes are:
 - DPU invariant to ACT group.
 
 ACT endpoints are positional native group indices. DPU endpoints are ELF
-section/invariant pairs. Graph-output endpoints retain the raw native output
-symbol. Multiple tile observations may collapse into the same endpoint pair;
-the record keeps their count. Direct and DMA-mediated routes remain distinct.
+section/invariant pairs. Graph-input endpoints retain the raw native input
+symbol and its symbol-table section; graph-output endpoints retain the raw
+native output symbol. Multiple tile observations may collapse into the same
+endpoint pair; the record keeps their count. Direct and DMA-mediated routes
+remain distinct.
+
+The graph-input relation requires one relocation-backed network-input DMA
+source, an equal-span CMX destination at the ACT input address, and a direct
+barrier dependency. Every invocation in a tiled group must be either directly
+loaded or a unique full-contract replica of a multicast destination. Raw input
+symbols are native identities, not source-level input names.
 
 This projection deliberately omits ambiguous or incomplete candidates. It
 describes native scheduling and byte-interval connectivity, not semantic graph
