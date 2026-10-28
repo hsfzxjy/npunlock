@@ -686,6 +686,12 @@ class NativeLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(_native._PatchComparisonResult), 72)
         self.assertEqual(ctypes.sizeof(_native._PatchGroupCompleteness), 36)
         self.assertEqual(ctypes.sizeof(_native._PatchGroupCompletenessResult), 64)
+        self.assertEqual(ctypes.sizeof(_native._PatchRelationEndpoint), 16)
+        self.assertEqual(ctypes.sizeof(_native._PatchExactRelation), 44)
+        self.assertEqual(ctypes.sizeof(_native._PatchExactRelationResult), 64)
+        self.assertEqual(ctypes.sizeof(_native._PatchRelationEndpoint), 16)
+        self.assertEqual(ctypes.sizeof(_native._PatchExactRelation), 44)
+        self.assertEqual(ctypes.sizeof(_native._PatchExactRelationResult), 64)
         self.assertEqual(ctypes.sizeof(_native._InferOptions), 16)
         self.assertEqual(ctypes.sizeof(_native._InferInput), 40)
         self.assertEqual(ctypes.sizeof(_native._InferOutput), 104)
@@ -827,6 +833,14 @@ class FakeNative:
                 0,
             ),
         )
+        self.exact_relations = (
+            npu.ExactGraphRelation(
+                "act_to_output",
+                npu.GraphRelationEndpoint("act_group", 0),
+                npu.GraphRelationEndpoint("graph_output", 1),
+                1,
+            ),
+        )
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.compile_ir_count += 1
@@ -874,6 +888,10 @@ class FakeNative:
     def inspect_group_coverage(self, graph_blob: bytes) -> tuple[npu.ActGroupCoverage, ...]:
         self.coverage_blob = graph_blob
         return self.coverage
+
+    def inspect_exact_relations(self, graph_blob: bytes) -> tuple[npu.ExactGraphRelation, ...]:
+        self.exact_relations_blob = graph_blob
+        return self.exact_relations
 
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
@@ -1211,6 +1229,23 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(coverage[0].dpu_consumer_unresolved_names, ())
         self.assertEqual(coverage[0].dma_dpu_consumer_unresolved_names, ())
         self.assertEqual(coverage[0].dma_act_consumer_unresolved_names, ())
+
+    def test_prepared_exact_relations_are_read_only_topology_evidence(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        relations = prepared.inspect_exact_relations()
+
+        self.assertEqual(relations, fake.exact_relations)
+        self.assertEqual(fake.exact_relations_blob, b"native")
+        self.assertEqual(relations[0].source.secondary_index, None)
+        self.assertEqual(relations[0].destination.kind, "graph_output")
 
     def test_reviewed_binding_accepts_complete_dma_dpu_coverage(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")

@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v23\""
+    "\"schema\": \"npunlock.porting.inspect.v24\""
     "\"dma\""
     "\"tasks\""
     "\"transfer_observation\""
@@ -87,6 +87,10 @@ foreach(required
     "\"act_dpu_output_cover_observations\""
     "\"dpu_act_input_candidates\""
     "\"dpu_act_input_cover_observations\""
+    "\"exact_relations\""
+    "\"kind\": \"act_to_output\""
+    "\"source\": {\"kind\": \"act_group\", \"primary_index\": 0"
+    "\"destination\": {\"kind\": \"graph_output\", \"primary_index\": 1"
     "candidates do not classify unrouted invocations as replicas")
   if(NOT first_output MATCHES "${required}")
     message(FATAL_ERROR "routing inspection omitted required observation: ${required}")

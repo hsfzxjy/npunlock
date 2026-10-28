@@ -338,6 +338,15 @@ selects a patch target; callers must combine complete coverage with separate
 source-label evidence. Release the separate result with
 `patchblob_dma_dpu_group_coverage_result_release()`.
 
+`patchblob_inspect_dma_act_group_coverage()` reports the independently
+validated ACT-to-DDR-to-ACT path. `patchblob_inspect_exact_relations()` then
+projects all complete, uniquely covered routes into endpoint pairs: ACT group
+to graph output, ACT group to ACT group, ACT group to DPU invariant, and DPU
+invariant to ACT group, with DMA-mediated forms kept distinct. The endpoint
+indices are native identities, not source-node identities. This read-only
+topology result must not be treated as an automatic patch selector. Release it
+with `patchblob_exact_relation_result_release()`.
+
 The additive version 2 API describes every tensor record independently:
 
 ```text

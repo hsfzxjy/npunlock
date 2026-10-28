@@ -155,13 +155,52 @@ static const char *dma_endpoint_kind_name(uint32_t kind) {
   }
 }
 
+static const char *relation_kind_name(uint32_t kind) {
+  switch (kind) {
+  case PATCHBLOB_RELATION_ACT_TO_OUTPUT:
+    return "act_to_output";
+  case PATCHBLOB_RELATION_ACT_TO_ACT:
+    return "act_to_act";
+  case PATCHBLOB_RELATION_ACT_TO_DPU:
+    return "act_to_dpu";
+  case PATCHBLOB_RELATION_ACT_TO_DPU_VIA_DMA:
+    return "act_to_dpu_via_dma";
+  case PATCHBLOB_RELATION_ACT_TO_ACT_VIA_DMA:
+    return "act_to_act_via_dma";
+  case PATCHBLOB_RELATION_DPU_TO_ACT:
+    return "dpu_to_act";
+  default:
+    return "unknown";
+  }
+}
+
+static const char *relation_endpoint_kind_name(uint32_t kind) {
+  switch (kind) {
+  case PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP:
+    return "act_group";
+  case PATCHBLOB_RELATION_ENDPOINT_DPU_INVARIANT:
+    return "dpu_invariant";
+  case PATCHBLOB_RELATION_ENDPOINT_GRAPH_OUTPUT:
+    return "graph_output";
+  default:
+    return "unknown";
+  }
+}
+
+static int write_relation_endpoint(FILE *stream, const patchblob_relation_endpoint *endpoint) {
+  return fprintf(stream, "{\"kind\": \"%s\", \"primary_index\": %u, \"secondary_index\": %u}",
+                 relation_endpoint_kind_name(endpoint->kind), endpoint->primary_index,
+                 endpoint->secondary_index) >= 0;
+}
+
 static int write_report(FILE *stream, const char *graph_path, const file_buffer *graph,
-                        const npunlock_graph_routing_observations *routing) {
+                        const npunlock_graph_routing_observations *routing,
+                        const patchblob_exact_relation_result *exact_relations) {
   char graph_hash[65];
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v23\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v24\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -772,8 +811,22 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
       return 0;
     }
   }
+  if (fprintf(stream, "\n  ]},\n  \"exact_relations\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < exact_relations->relation_count; ++index) {
+    const patchblob_exact_relation *relation = &exact_relations->relations[index];
+    if (fprintf(stream, "%s    {\"kind\": \"%s\", \"source\": ", index == 0 ? "" : ",\n",
+                relation_kind_name(relation->kind)) < 0 ||
+        !write_relation_endpoint(stream, &relation->source) ||
+        fprintf(stream, ", \"destination\": ") < 0 ||
+        !write_relation_endpoint(stream, &relation->destination) ||
+        fprintf(stream, ", \"evidence_count\": %u}", relation->evidence_count) < 0) {
+      return 0;
+    }
+  }
   return fprintf(stream,
-                 "\n  ]},\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
+                 "\n  ],\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
                  "network-output DMA, and raw DMA-task contract; DMA endpoints "
                  "come from validated relocations, while transfer geometry and scheduling "
                  "fields remain raw observations; ACT/DMA source candidates require an exact "
@@ -807,7 +860,10 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "DPU CMX "
                  "relocations and dense tensor extents identify architectural fields and byte "
                  "intervals; candidates do not classify unrouted invocations as replicas; "
-                 "discovery is not proof of execution compatibility\"\n}\n") >= 0;
+                 "exact_relations contains only endpoint pairs whose observed native intervals "
+                 "and scheduling form a complete unique cover; it is topology evidence, not a "
+                 "source-node mapping or patch selector; discovery is not proof of execution "
+                 "compatibility\"\n}\n") >= 0;
 }
 
 static int write_mismatch_names(FILE *stream, uint32_t flags) {
@@ -903,6 +959,7 @@ int main(int argc, char **argv) {
   npunlock_graph_routing_observations routing = {0};
   npunlock_graph_routing_observations compare_routing = {0};
   npunlock_graph_routing_comparison comparison = {0};
+  patchblob_exact_relation_result exact_relations = {0};
   npunlock_diagnostic diagnostic = {0};
   npunlock_status status;
   FILE *report = stdout;
@@ -965,6 +1022,13 @@ int main(int argc, char **argv) {
       print_diagnostic(&diagnostic);
       goto cleanup;
     }
+  } else {
+    status = patchblob_inspect_exact_relations((npunlock_view){graph.data, graph.size},
+                                               &exact_relations);
+    if (status != NPUNLOCK_STATUS_OK) {
+      print_diagnostic(&exact_relations.diagnostic);
+      goto cleanup;
+    }
   }
   if (report_path != NULL) {
 #ifdef _WIN32
@@ -979,7 +1043,7 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
   }
-  if (!(compare_path == NULL ? write_report(report, graph_path, &graph, &routing)
+  if (!(compare_path == NULL ? write_report(report, graph_path, &graph, &routing, &exact_relations)
                              : write_comparison_report(report, graph_path, &graph, compare_path,
                                                        &compare_graph, &comparison)) ||
       fflush(report) != 0) {
@@ -1002,6 +1066,7 @@ cleanup:
     fclose(report);
   }
   npunlock_graph_routing_observations_release(&routing);
+  patchblob_exact_relation_result_release(&exact_relations);
   npunlock_graph_routing_observations_release(&compare_routing);
   npunlock_graph_routing_comparison_release(&comparison);
   npunlock_diagnostic_release(&diagnostic);

@@ -300,6 +300,56 @@ typedef struct patchblob_dma_act_group_coverage_result {
   npunlock_diagnostic diagnostic;
 } patchblob_dma_act_group_coverage_result;
 
+typedef enum patchblob_relation_endpoint_kind {
+  PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP = 1u,
+  PATCHBLOB_RELATION_ENDPOINT_DPU_INVARIANT = 2u,
+  PATCHBLOB_RELATION_ENDPOINT_GRAPH_OUTPUT = 3u
+} patchblob_relation_endpoint_kind;
+
+typedef enum patchblob_exact_relation_kind {
+  PATCHBLOB_RELATION_ACT_TO_OUTPUT = 1u,
+  PATCHBLOB_RELATION_ACT_TO_ACT = 2u,
+  PATCHBLOB_RELATION_ACT_TO_DPU = 3u,
+  PATCHBLOB_RELATION_ACT_TO_DPU_VIA_DMA = 4u,
+  PATCHBLOB_RELATION_ACT_TO_ACT_VIA_DMA = 5u,
+  PATCHBLOB_RELATION_DPU_TO_ACT = 6u
+} patchblob_exact_relation_kind;
+
+/*
+ * One endpoint in a fail-closed exact native routing relation. For an ACT
+ * endpoint, primary_index is the positional ACT group and secondary_index is
+ * PATCHBLOB_UNUSED_INDEX. For a DPU endpoint, the indices identify its ELF
+ * section and invariant record. For a graph output, primary_index is the raw
+ * output symbol and secondary_index is PATCHBLOB_UNUSED_INDEX.
+ */
+typedef struct patchblob_relation_endpoint {
+  uint32_t struct_size;
+  uint32_t kind;
+  uint32_t primary_index;
+  uint32_t secondary_index;
+} patchblob_relation_endpoint;
+
+/*
+ * Relations are emitted only when the corresponding group/input cover is
+ * exact. evidence_count is the number of invocation/input observations
+ * collapsed into this endpoint pair. This is read-only topology evidence, not
+ * a source-node mapping or patch selector.
+ */
+typedef struct patchblob_exact_relation {
+  uint32_t struct_size;
+  uint32_t kind;
+  patchblob_relation_endpoint source;
+  patchblob_relation_endpoint destination;
+  uint32_t evidence_count;
+} patchblob_exact_relation;
+
+typedef struct patchblob_exact_relation_result {
+  uint32_t struct_size;
+  patchblob_exact_relation *relations;
+  size_t relation_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_exact_relation_result;
+
 NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
@@ -335,6 +385,10 @@ NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_dma_act_group_coverage(
     npunlock_view graph_blob, patchblob_dma_act_group_coverage_result *result);
 NPUNLOCK_PATCHBLOB_API void
 patchblob_dma_act_group_coverage_result_release(patchblob_dma_act_group_coverage_result *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_exact_relations(
+    npunlock_view graph_blob, patchblob_exact_relation_result *result);
+NPUNLOCK_PATCHBLOB_API void
+patchblob_exact_relation_result_release(patchblob_exact_relation_result *result);
 
 #ifdef __cplusplus
 }

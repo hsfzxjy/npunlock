@@ -66,6 +66,12 @@ _Static_assert(sizeof(patchblob_dma_act_group_coverage) == 48,
                "DMA/ACT group-coverage record ABI changed");
 _Static_assert(sizeof(patchblob_dma_act_group_coverage_result) == 64,
                "DMA/ACT group-coverage result ABI changed");
+_Static_assert(PATCHBLOB_RELATION_ACT_TO_OUTPUT == 1u, "exact-relation kind ABI changed");
+_Static_assert(PATCHBLOB_RELATION_DPU_TO_ACT == 6u, "exact-relation kind ABI changed");
+_Static_assert(PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP == 1u, "exact-relation endpoint ABI changed");
+_Static_assert(sizeof(patchblob_relation_endpoint) == 16, "exact-relation endpoint ABI changed");
+_Static_assert(sizeof(patchblob_exact_relation) == 44, "exact-relation record ABI changed");
+_Static_assert(sizeof(patchblob_exact_relation_result) == 64, "exact-relation result ABI changed");
 
 static int check_diagnostic(const npunlock_diagnostic *diagnostic, const char *status) {
   return diagnostic->struct_size == sizeof(*diagnostic) && diagnostic->json.data != NULL &&
@@ -94,6 +100,7 @@ int main(void) {
   patchblob_group_completeness_result completeness_result = {0};
   patchblob_group_coverage_result coverage_result = {0};
   patchblob_dma_act_group_coverage_result dma_act_coverage_result = {0};
+  patchblob_exact_relation_result exact_relation_result = {0};
   graphinfer_options infer_options = {0};
   graphinfer_input infer_input = {0};
   graphinfer_result infer_result = {0};
@@ -197,6 +204,12 @@ int main(void) {
   CHECK(check_diagnostic(&dma_act_coverage_result.diagnostic, "invalid_argument"));
   patchblob_dma_act_group_coverage_result_release(&dma_act_coverage_result);
   patchblob_dma_act_group_coverage_result_release(&dma_act_coverage_result);
+
+  CHECK(patchblob_inspect_exact_relations((npunlock_view){NULL, 1}, &exact_relation_result) ==
+        NPUNLOCK_STATUS_INVALID_ARGUMENT);
+  CHECK(check_diagnostic(&exact_relation_result.diagnostic, "invalid_argument"));
+  patchblob_exact_relation_result_release(&exact_relation_result);
+  patchblob_exact_relation_result_release(&exact_relation_result);
 
   infer_options.struct_size = sizeof(infer_options);
   infer_options.driver_index = GRAPHINFER_AUTO_INDEX;

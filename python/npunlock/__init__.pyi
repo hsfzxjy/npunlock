@@ -227,6 +227,17 @@ class ActGroupCoverage:
     @property
     def dma_act_consumer_unresolved_names(self) -> tuple[str, ...]: ...
 
+class GraphRelationEndpoint:
+    kind: str
+    primary_index: int
+    secondary_index: int | None
+
+class ExactGraphRelation:
+    kind: str
+    source: GraphRelationEndpoint
+    destination: GraphRelationEndpoint
+    evidence_count: int
+
 class CarrierProbe:
     output: Tensor
     baseline_carrier: str
@@ -441,6 +452,7 @@ class NativeLibraries:
     def discover_patch_targets_v2(self, graph_blob: bytes) -> tuple[tuple[PatchTargetV2, ...], ...]: ...
     def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> GraphComparison: ...
     def inspect_group_completeness(self, graph_blob: bytes) -> tuple[ActGroupCompleteness, ...]: ...
+    def inspect_exact_relations(self, graph_blob: bytes) -> tuple[ExactGraphRelation, ...]: ...
     def inspect_group_coverage(self, graph_blob: bytes) -> tuple[ActGroupCoverage, ...]: ...
     def query_ir_provenance(
         self,
@@ -580,6 +592,7 @@ class PreparedGraph:
         ir_worker: str | None = ...,
     ) -> CarrierProbeReport: ...
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
+    def inspect_exact_relations(self) -> tuple[ExactGraphRelation, ...]: ...
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]: ...
     def probe_binding(
         self,

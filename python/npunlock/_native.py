@@ -324,6 +324,34 @@ class _PatchDmaActGroupCoverageResult(ctypes.Structure):
     ]
 
 
+class _PatchRelationEndpoint(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("kind", ctypes.c_uint32),
+        ("primary_index", ctypes.c_uint32),
+        ("secondary_index", ctypes.c_uint32),
+    ]
+
+
+class _PatchExactRelation(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("kind", ctypes.c_uint32),
+        ("source", _PatchRelationEndpoint),
+        ("destination", _PatchRelationEndpoint),
+        ("evidence_count", ctypes.c_uint32),
+    ]
+
+
+class _PatchExactRelationResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("relations", ctypes.POINTER(_PatchExactRelation)),
+        ("relation_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _InferOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -686,6 +714,21 @@ class ActGroupCoverage:
             for flag, name in _DMA_ACT_CONSUMER_COVERAGE_FLAG_NAMES.items()
             if self.dma_act_consumer_unresolved_flags & flag
         )
+
+
+@dataclass(frozen=True, slots=True)
+class GraphRelationEndpoint:
+    kind: str
+    primary_index: int
+    secondary_index: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExactGraphRelation:
+    kind: str
+    source: GraphRelationEndpoint
+    destination: GraphRelationEndpoint
+    evidence_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -1084,6 +1127,12 @@ class NativeLibraries:
         self.patch.patchblob_dma_act_group_coverage_result_release.argtypes = [
             ctypes.POINTER(_PatchDmaActGroupCoverageResult)
         ]
+        self.patch.patchblob_inspect_exact_relations.argtypes = [
+            _View,
+            ctypes.POINTER(_PatchExactRelationResult),
+        ]
+        self.patch.patchblob_inspect_exact_relations.restype = ctypes.c_int
+        self.patch.patchblob_exact_relation_result_release.argtypes = [ctypes.POINTER(_PatchExactRelationResult)]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -1644,6 +1693,56 @@ class NativeLibraries:
             return tuple(groups)
         finally:
             self.patch.patchblob_dma_act_group_coverage_result_release(ctypes.byref(dma_act_result))
+
+    def inspect_exact_relations(self, graph_blob: bytes) -> tuple[ExactGraphRelation, ...]:
+        if not isinstance(graph_blob, bytes) or not graph_blob:
+            raise ValueError("graph blob must be non-empty bytes")
+        graph_view, graph_owner = _owned_view(graph_blob)
+        _ = graph_owner
+        result = _PatchExactRelationResult()
+        result.struct_size = ctypes.sizeof(_PatchExactRelationResult)
+        status = self.patch.patchblob_inspect_exact_relations(graph_view, ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise("patchblob exact relations", status, result.diagnostic)
+            if result.relation_count and not bool(result.relations):
+                raise RuntimeError("patchblob returned a null exact-relation array")
+            relation_kinds = {
+                1: "act_to_output",
+                2: "act_to_act",
+                3: "act_to_dpu",
+                4: "act_to_dpu_via_dma",
+                5: "act_to_act_via_dma",
+                6: "dpu_to_act",
+            }
+            endpoint_kinds = {1: "act_group", 2: "dpu_invariant", 3: "graph_output"}
+
+            def endpoint(source: _PatchRelationEndpoint) -> GraphRelationEndpoint:
+                if source.struct_size < ctypes.sizeof(_PatchRelationEndpoint) or source.kind not in endpoint_kinds:
+                    raise RuntimeError("patchblob returned an invalid exact-relation endpoint")
+                secondary = None if source.secondary_index == 0xFFFFFFFF else source.secondary_index
+                return GraphRelationEndpoint(endpoint_kinds[source.kind], source.primary_index, secondary)
+
+            relations: list[ExactGraphRelation] = []
+            for index in range(result.relation_count):
+                source = result.relations[index]
+                if (
+                    source.struct_size < ctypes.sizeof(_PatchExactRelation)
+                    or source.kind not in relation_kinds
+                    or source.evidence_count == 0
+                ):
+                    raise RuntimeError("patchblob returned an invalid exact-relation record")
+                relations.append(
+                    ExactGraphRelation(
+                        relation_kinds[source.kind],
+                        endpoint(source.source),
+                        endpoint(source.destination),
+                        source.evidence_count,
+                    )
+                )
+            return tuple(relations)
+        finally:
+            self.patch.patchblob_exact_relation_result_release(ctypes.byref(result))
 
     def infer_graph(
         self,

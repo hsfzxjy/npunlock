@@ -176,6 +176,16 @@ output with equal element/byte extent and a direct post/wait dependency. The
 cover remains native topology evidence only; it is not exposed as a reviewed
 binding coverage kind and does not identify a source operation.
 
+Schema v24 adds a compact top-level `exact_relations` array. It contains only
+endpoint pairs backed by the complete unique-cover checks described above,
+while retaining whether an edge is direct or DMA-mediated. ACT endpoints use
+group indices, DPU endpoints use section/invariant indices, and graph outputs
+retain raw output symbols. Candidate or incomplete routes stay in their
+detailed arrays and are not promoted. The C and Python APIs expose the same
+read-only projection through `patchblob_inspect_exact_relations()` and
+`PreparedGraph.inspect_exact_relations()`; it is not a source-node map or an
+automatic patch selector.
+
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
 
@@ -266,6 +276,17 @@ flags. The last two are obtained from their separate C inspection functions
 and merged only as a Python diagnostic view. Neither API chooses which
 evidence kind is sufficient for a binding, and neither combines coverage with
 a symbolic source label.
+
+For a compact native topology view, inspect only relations that passed a
+complete unique-cover proof:
+
+```python
+for relation in prepared.inspect_exact_relations():
+    print(relation.kind, relation.source, relation.destination)
+```
+
+This omits ambiguous and incomplete candidates by design. The native endpoint
+indices remain diagnostic evidence and do not identify Python graph nodes.
 
 Python callers can make that policy choice explicitly after inspecting both
 reports:

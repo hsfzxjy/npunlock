@@ -845,6 +845,331 @@ void patchblob_dma_act_group_coverage_result_release(
   memset(result, 0, sizeof(*result));
 }
 
+static bool relation_endpoint_equal(const patchblob_relation_endpoint *left,
+                                    const patchblob_relation_endpoint *right) {
+  return left->kind == right->kind && left->primary_index == right->primary_index &&
+         left->secondary_index == right->secondary_index;
+}
+
+static npunlock_status append_exact_relation(patchblob_exact_relation_result *result,
+                                             size_t capacity, size_t *count, uint32_t kind,
+                                             uint32_t source_kind, uint32_t source_primary,
+                                             uint32_t source_secondary, uint32_t destination_kind,
+                                             uint32_t destination_primary,
+                                             uint32_t destination_secondary,
+                                             uint32_t evidence_count) {
+  patchblob_relation_endpoint source;
+  patchblob_relation_endpoint destination;
+  size_t index;
+  memset(&source, 0, sizeof(source));
+  source.struct_size = (uint32_t)sizeof(source);
+  source.kind = source_kind;
+  source.primary_index = source_primary;
+  source.secondary_index = source_secondary;
+  memset(&destination, 0, sizeof(destination));
+  destination.struct_size = (uint32_t)sizeof(destination);
+  destination.kind = destination_kind;
+  destination.primary_index = destination_primary;
+  destination.secondary_index = destination_secondary;
+  for (index = 0; index < *count; ++index) {
+    patchblob_exact_relation *relation = &result->relations[index];
+    if (relation->kind == kind && relation_endpoint_equal(&relation->source, &source) &&
+        relation_endpoint_equal(&relation->destination, &destination)) {
+      if (relation->evidence_count > UINT32_MAX - evidence_count) {
+        return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OVERFLOW,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact relation evidence count overflows");
+      }
+      relation->evidence_count += evidence_count;
+      return NPUNLOCK_STATUS_OK;
+    }
+  }
+  if (*count >= capacity) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                   "patchblob.inspect_exact_relations",
+                                   "exact relation count exceeded its allocation");
+  }
+  result->relations[*count].struct_size = (uint32_t)sizeof(result->relations[*count]);
+  result->relations[*count].kind = kind;
+  result->relations[*count].source = source;
+  result->relations[*count].destination = destination;
+  result->relations[*count].evidence_count = evidence_count;
+  ++*count;
+  return NPUNLOCK_STATUS_OK;
+}
+
+static bool exact_act_consumer_cover(const npunlock_graph_routing_observations *observations,
+                                     uint32_t group_index) {
+  size_t index;
+  for (index = 0; index < observations->act_consumer_cover_count; ++index) {
+    const npunlock_act_consumer_cover_observation *cover =
+        &observations->act_consumer_covers[index];
+    if (cover->producer_group_index == group_index && cover->exact_cover) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool exact_act_dpu_cover(const npunlock_graph_routing_observations *observations,
+                                uint32_t group_index) {
+  size_t index;
+  for (index = 0; index < observations->act_dpu_output_cover_count; ++index) {
+    const npunlock_act_dpu_output_cover_observation *cover =
+        &observations->act_dpu_output_covers[index];
+    if (cover->act_group_index == group_index && cover->exact_cover) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool exact_dma_dpu_cover(const npunlock_graph_routing_observations *observations,
+                                uint32_t group_index) {
+  size_t index;
+  for (index = 0; index < observations->act_dma_dpu_input_cover_count; ++index) {
+    const npunlock_act_dma_dpu_input_cover_observation *cover =
+        &observations->act_dma_dpu_input_covers[index];
+    if (cover->act_group_index == group_index && cover->exact_cover) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool exact_dma_act_cover(const npunlock_graph_routing_observations *observations,
+                                uint32_t group_index) {
+  size_t index;
+  for (index = 0; index < observations->act_dma_act_input_cover_count; ++index) {
+    const npunlock_act_dma_act_input_cover_observation *cover =
+        &observations->act_dma_act_input_covers[index];
+    if (cover->producer_group_index == group_index && cover->exact_cover) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool exact_dpu_act_cover(const npunlock_graph_routing_observations *observations,
+                                uint32_t group_index, uint32_t tensor_record_index) {
+  size_t index;
+  for (index = 0; index < observations->dpu_act_input_cover_count; ++index) {
+    const npunlock_dpu_act_input_cover_observation *cover =
+        &observations->dpu_act_input_covers[index];
+    if (cover->consumer_group_index == group_index &&
+        cover->consumer_tensor_record_index == tensor_record_index && cover->exact_cover) {
+      return true;
+    }
+  }
+  return false;
+}
+
+npunlock_status patchblob_inspect_exact_relations(npunlock_view graph_blob,
+                                                  patchblob_exact_relation_result *result) {
+  npunlock_graph_routing_observations observations = {0};
+  size_t capacity = 0u;
+  size_t allocation_size;
+  size_t relation_count = 0u;
+  size_t index;
+  npunlock_status status;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (!npunlock_view_is_valid(graph_blob) || graph_blob.size == 0u) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.inspect_exact_relations",
+                                   "graph blob view must be non-empty");
+  }
+  status = npunlock_inspect_graph_routing(graph_blob, &observations, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
+  if (!npunlock_checked_add_size(capacity, observations.act_group_completeness_count, &capacity) ||
+      !npunlock_checked_add_size(capacity, observations.act_edge_candidate_count, &capacity) ||
+      !npunlock_checked_add_size(capacity, observations.act_dpu_edge_candidate_count, &capacity) ||
+      !npunlock_checked_add_size(capacity, observations.act_dma_dpu_input_candidate_count,
+                                 &capacity) ||
+      !npunlock_checked_add_size(capacity, observations.act_dma_act_input_candidate_count,
+                                 &capacity) ||
+      !npunlock_checked_add_size(capacity, observations.dpu_act_input_candidate_count, &capacity) ||
+      !npunlock_checked_mul_size(capacity, sizeof(*result->relations), &allocation_size)) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OVERFLOW,
+                                     "patchblob.inspect_exact_relations",
+                                     "exact relation result allocation overflows");
+    goto cleanup;
+  }
+  result->relations = (patchblob_exact_relation *)calloc(1u, allocation_size);
+  if (result->relations == NULL && capacity != 0u) {
+    status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.inspect_exact_relations",
+                                     "could not allocate exact relation results");
+    goto cleanup;
+  }
+
+  for (index = 0; index < observations.act_group_completeness_count; ++index) {
+    const npunlock_act_group_completeness_observation *cover =
+        &observations.act_group_completeness[index];
+    if (!cover->complete) {
+      continue;
+    }
+    if (cover->act_group_index >= observations.group_count || cover->invocation_count == 0u) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact output relation is inconsistent");
+      goto cleanup;
+    }
+    status = append_exact_relation(
+        result, capacity, &relation_count, PATCHBLOB_RELATION_ACT_TO_OUTPUT,
+        PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP, cover->act_group_index, PATCHBLOB_UNUSED_INDEX,
+        PATCHBLOB_RELATION_ENDPOINT_GRAPH_OUTPUT, cover->output_symbol_raw, PATCHBLOB_UNUSED_INDEX,
+        cover->invocation_count);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto cleanup;
+    }
+  }
+
+  for (index = 0; index < observations.act_edge_candidate_count; ++index) {
+    const npunlock_act_edge_candidate_observation *candidate =
+        &observations.act_edge_candidates[index];
+    if (candidate->consumer_candidate_count != 1u ||
+        !exact_act_consumer_cover(&observations, candidate->producer_group_index)) {
+      continue;
+    }
+    if (candidate->producer_group_index >= observations.group_count ||
+        candidate->consumer_group_index >= observations.group_count) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact ACT relation group index is out of range");
+      goto cleanup;
+    }
+    status = append_exact_relation(result, capacity, &relation_count, PATCHBLOB_RELATION_ACT_TO_ACT,
+                                   PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP,
+                                   candidate->producer_group_index, PATCHBLOB_UNUSED_INDEX,
+                                   PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP,
+                                   candidate->consumer_group_index, PATCHBLOB_UNUSED_INDEX, 1u);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto cleanup;
+    }
+  }
+
+  for (index = 0; index < observations.act_dpu_edge_candidate_count; ++index) {
+    const npunlock_act_dpu_edge_candidate_observation *candidate =
+        &observations.act_dpu_edge_candidates[index];
+    if (candidate->direction != NPUNLOCK_ACT_DPU_DIRECTION_ACT_TO_DPU ||
+        candidate->act_candidate_count != 1u ||
+        !exact_act_dpu_cover(&observations, candidate->act_group_index)) {
+      continue;
+    }
+    if (candidate->act_group_index >= observations.group_count) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact ACT/DPU relation group index is out of range");
+      goto cleanup;
+    }
+    status =
+        append_exact_relation(result, capacity, &relation_count, PATCHBLOB_RELATION_ACT_TO_DPU,
+                              PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP, candidate->act_group_index,
+                              PATCHBLOB_UNUSED_INDEX, PATCHBLOB_RELATION_ENDPOINT_DPU_INVARIANT,
+                              candidate->dpu_section_index, candidate->dpu_invariant_index, 1u);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto cleanup;
+    }
+  }
+
+  for (index = 0; index < observations.act_dma_dpu_input_candidate_count; ++index) {
+    const npunlock_act_dma_dpu_input_candidate_observation *candidate =
+        &observations.act_dma_dpu_input_candidates[index];
+    if (candidate->dpu_candidate_count != 1u ||
+        !exact_dma_dpu_cover(&observations, candidate->act_group_index)) {
+      continue;
+    }
+    if (candidate->act_group_index >= observations.group_count) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact DMA/DPU relation group index is out of range");
+      goto cleanup;
+    }
+    status = append_exact_relation(
+        result, capacity, &relation_count, PATCHBLOB_RELATION_ACT_TO_DPU_VIA_DMA,
+        PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP, candidate->act_group_index, PATCHBLOB_UNUSED_INDEX,
+        PATCHBLOB_RELATION_ENDPOINT_DPU_INVARIANT, candidate->dpu_section_index,
+        candidate->dpu_invariant_index, 1u);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto cleanup;
+    }
+  }
+
+  for (index = 0; index < observations.act_dma_act_input_candidate_count; ++index) {
+    const npunlock_act_dma_act_input_candidate_observation *candidate =
+        &observations.act_dma_act_input_candidates[index];
+    if (candidate->consumer_candidate_count != 1u ||
+        !exact_dma_act_cover(&observations, candidate->producer_group_index)) {
+      continue;
+    }
+    if (candidate->producer_group_index >= observations.group_count ||
+        candidate->consumer_group_index >= observations.group_count) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact DMA/ACT relation group index is out of range");
+      goto cleanup;
+    }
+    status = append_exact_relation(
+        result, capacity, &relation_count, PATCHBLOB_RELATION_ACT_TO_ACT_VIA_DMA,
+        PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP, candidate->producer_group_index,
+        PATCHBLOB_UNUSED_INDEX, PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP,
+        candidate->consumer_group_index, PATCHBLOB_UNUSED_INDEX, 1u);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto cleanup;
+    }
+  }
+
+  for (index = 0; index < observations.dpu_act_input_candidate_count; ++index) {
+    const npunlock_dpu_act_input_candidate_observation *candidate =
+        &observations.dpu_act_input_candidates[index];
+    if (candidate->dpu_candidate_count != 1u ||
+        !exact_dpu_act_cover(&observations, candidate->consumer_group_index,
+                             candidate->consumer_tensor_record_index)) {
+      continue;
+    }
+    if (candidate->consumer_group_index >= observations.group_count) {
+      status = npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INTERNAL_ERROR,
+                                       "patchblob.inspect_exact_relations",
+                                       "exact DPU/ACT relation group index is out of range");
+      goto cleanup;
+    }
+    status = append_exact_relation(result, capacity, &relation_count, PATCHBLOB_RELATION_DPU_TO_ACT,
+                                   PATCHBLOB_RELATION_ENDPOINT_DPU_INVARIANT,
+                                   candidate->dpu_section_index, candidate->dpu_invariant_index,
+                                   PATCHBLOB_RELATION_ENDPOINT_ACT_GROUP,
+                                   candidate->consumer_group_index, PATCHBLOB_UNUSED_INDEX, 1u);
+    if (status != NPUNLOCK_STATUS_OK) {
+      goto cleanup;
+    }
+  }
+
+  result->relation_count = relation_count;
+
+cleanup:
+  if (status != NPUNLOCK_STATUS_OK) {
+    free(result->relations);
+    result->relations = NULL;
+    result->relation_count = 0u;
+  }
+  npunlock_graph_routing_observations_release(&observations);
+  return status;
+}
+
+void patchblob_exact_relation_result_release(patchblob_exact_relation_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->relations);
+  npunlock_diagnostic_release(&result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
 void patchblob_result_release(patchblob_result *result) {
   if (result == NULL) {
     return;

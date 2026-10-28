@@ -807,6 +807,30 @@ host oracles. This confirms only the descriptor contract presented by these
 carriers; it does not determine whether row storage is copied or reused, nor
 does it establish other ranks, axes, shapes, or general broadcasting.
 
+## Exact native endpoint relations
+
+The graph parser can conservatively project its detailed routing observations
+into an exact native topology. A relation is emitted only after the relevant
+invocations or inputs form a unique, complete cover. The currently represented
+routes are:
+
+- ACT group to graph output;
+- direct ACT group to ACT group;
+- direct ACT group to DPU invariant;
+- ACT group to DPU invariant through validated DMA tasks;
+- ACT group to ACT group through a validated DDR spill/reload path; and
+- DPU invariant to ACT group.
+
+ACT endpoints are positional native group indices. DPU endpoints are ELF
+section/invariant pairs. Graph-output endpoints retain the raw native output
+symbol. Multiple tile observations may collapse into the same endpoint pair;
+the record keeps their count. Direct and DMA-mediated routes remain distinct.
+
+This projection deliberately omits ambiguous or incomplete candidates. It
+describes native scheduling and byte-interval connectivity, not semantic graph
+operations. It therefore cannot map a source node name to an ACT group and is
+not, by itself, authority to patch that group.
+
 ## How `patchblob` substitutes code
 
 The supported mutation is deliberately narrow:

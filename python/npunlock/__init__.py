@@ -19,6 +19,8 @@ import numpy as np
 from ._native import (
     ActGroupCompleteness,
     ActGroupCoverage,
+    ExactGraphRelation,
+    GraphRelationEndpoint,
     InferenceInput,
     InferenceOutput,
     InferenceResult,
@@ -73,8 +75,10 @@ __all__ = [
     "CachedCompileResult",
     "CustomMapping",
     "DType",
+    "ExactGraphRelation",
     "Graph",
     "GraphComparison",
+    "GraphRelationEndpoint",
     "InferenceInput",
     "InferenceOutput",
     "InferenceResult",
@@ -2229,6 +2233,11 @@ class PreparedGraph:
         """Return independent direct-output, ACT-, DPU-, DMA/DPU-, and DMA/ACT-consumer evidence."""
 
         return self._libraries.inspect_group_coverage(self.ir_provenance.graph_blob)
+
+    def inspect_exact_relations(self) -> tuple[ExactGraphRelation, ...]:
+        """Return only native endpoint relations backed by a unique exact cover."""
+
+        return self._libraries.inspect_exact_relations(self.ir_provenance.graph_blob)
 
     def probe_binding(
         self,

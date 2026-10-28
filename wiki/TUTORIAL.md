@@ -464,6 +464,18 @@ cover unique inputs of a later ACT group. A complete relationship proves
 bounded native invocation coverage, not source identity, and is not an
 automatic patch binding.
 
+When you need the resulting native topology rather than per-group coverage
+states, use the stricter endpoint projection:
+
+```python
+for relation in prepared.inspect_exact_relations():
+    print(relation.kind, relation.source, relation.destination)
+```
+
+Only unique complete covers appear. The endpoint indices are native ACT
+groups, DPU invariants, or raw graph outputs—not Python node identities—and
+the result is never consumed as an automatic patch selector.
+
 The compact helper runs the probes and combines them with coverage only when
 the identified group has exactly one complete route meaning:
 

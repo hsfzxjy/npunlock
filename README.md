@@ -1,5 +1,7 @@
 # npunlock
 
+> **Latest ABI breakthrough — 2026-10-28:** [Exact native endpoint topology now joins validated ACT, DMA, DPU, and graph-output routes without guessing source-node identities.](wiki/REVERSE_ENGINEERING.md#72-exact-native-endpoint-topology)
+
 Intel NPUs contain programmable ACT-SHAVE cores, but the public software stack
 does not expose a workflow for supplying them with custom C kernels. `npunlock`
 fills that gap: it compiles C, places the resulting machine code in a validated

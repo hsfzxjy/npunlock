@@ -2222,6 +2222,29 @@ source-name mapping, a universal tile stride or multicast encoding, or
 automatic patch eligibility. The relation is retained as topology evidence;
 unlike an output coverage kind, it is not accepted by `ReviewedBinding`.
 
+## 72. Exact native endpoint topology
+
+On 2026-10-28, the independently validated routing proofs were combined into
+one read-only endpoint graph. Inspector schema v24 emits an `exact_relations`
+array only when the underlying invocation/input observations have a unique
+complete cover. It retains direct ACT-to-ACT and ACT-to-DPU routes separately
+from their DMA-mediated forms, and also represents ACT-to-output and
+DPU-to-ACT relations.
+
+The retained connected mixed-precision graph produces the complete native
+chain: ACT group 0 reaches ACT group 1 through a DDR spill/reload, group 1
+reaches DPU invariants 0 and 1 in ELF section 14 through DMA fan-in, both DPU
+invariants reach ACT group 2, and group 2 reaches raw graph-output symbol 1.
+The two tiled output observations collapse into one ACT-to-output endpoint
+pair with evidence count 2; tiled DPU invariants remain separate endpoints.
+
+This is the first compact graph-wide representation assembled from the
+route-specific proofs, but it does not solve source mapping. Its endpoints are
+native ACT groups, DPU invariant records, and raw output symbols. Ambiguous or
+incomplete candidates remain visible only in the detailed inspector arrays.
+No relation is consumed by automatic patch selection, and no source-level
+operation name is inferred.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
