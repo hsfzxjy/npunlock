@@ -476,6 +476,19 @@ Only unique complete covers appear. The endpoint indices are native ACT
 groups, DPU invariants, or raw graph outputs—not Python node identities—and
 the result is never consumed as an automatic patch selector.
 
+To see whether those relations distinguish the custom nodes without changing
+any binding, request a proposal:
+
+```python
+proposal = prepared.propose_native_topology_mapping()
+print(proposal.explain())
+```
+
+`unique` means one single-group assignment survived descriptor and positive
+reachability checks. It is still an explanation, not a reviewed binding, and
+`plan()` will not use it. Independent branches often remain `ambiguous`
+because native graph-output symbols do not carry Python output names.
+
 The compact helper runs the probes and combines them with coverage only when
 the identified group has exactly one complete route meaning:
 

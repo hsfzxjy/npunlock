@@ -1,6 +1,6 @@
 # npunlock
 
-> **Latest ABI breakthrough — 2026-10-28:** [Exact native endpoint topology now joins validated ACT, DMA, DPU, and graph-output routes without guessing source-node identities.](wiki/REVERSE_ENGINEERING.md#72-exact-native-endpoint-topology)
+> **Latest ABI breakthrough — 2026-10-28:** [Exact native topology now constrains a read-only symbolic/custom-group assignment while preserving ambiguity when output identities are unknown.](wiki/REVERSE_ENGINEERING.md#73-read-only-symbolicnative-assignment-proposal)
 
 Intel NPUs contain programmable ACT-SHAVE cores, but the public software stack
 does not expose a workflow for supplying them with custom C kernels. `npunlock`

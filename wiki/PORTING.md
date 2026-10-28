@@ -288,6 +288,22 @@ for relation in prepared.inspect_exact_relations():
 This omits ambiguous and incomplete candidates by design. The native endpoint
 indices remain diagnostic evidence and do not identify Python graph nodes.
 
+Python can also ask how far those native relations constrain the custom nodes:
+
+```python
+proposal = prepared.propose_native_topology_mapping()
+print(proposal.status)
+print(proposal.explain())
+```
+
+The initial proposal handles one ACT group per custom node. It filters by the
+observed descriptor contract, requires a complete native path to a graph
+output, and preserves every positive symbolic dependency between custom
+nodes. It reports all remaining injective assignments, capped for diagnostic
+output. `unique` is not patch authority: raw output symbols are unlabeled,
+ordinary native endpoints are not source operations, and `plan()` never
+consumes the proposal.
+
 Python callers can make that policy choice explicitly after inspecting both
 reports:
 

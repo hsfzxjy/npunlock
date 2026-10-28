@@ -1247,6 +1247,72 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(relations[0].source.secondary_index, None)
         self.assertEqual(relations[0].destination.kind, "graph_output")
 
+    def test_native_topology_proposal_uses_positive_reachability_without_selecting(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        first = npu.custom(x, source=b"first", carrier="Abs", _name="first")
+        second = npu.custom(first, source=b"second", carrier="Abs", _name="second")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 64),),
+            (npu.PatchTarget(1, 1, 1, 32, 64),),
+        )
+        fake.exact_relations = (
+            npu.ExactGraphRelation(
+                "act_to_act",
+                npu.GraphRelationEndpoint("act_group", 0),
+                npu.GraphRelationEndpoint("act_group", 1),
+                1,
+            ),
+            npu.ExactGraphRelation(
+                "act_to_output",
+                npu.GraphRelationEndpoint("act_group", 1),
+                npu.GraphRelationEndpoint("graph_output", 1),
+                1,
+            ),
+        )
+        prepared = npu.prepare(
+            npu.Graph([x], [second]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        proposal = prepared.propose_native_topology_mapping()
+
+        self.assertEqual(proposal.status, "unique")
+        self.assertEqual(proposal.unique_group_indices, (0, 1))
+        self.assertEqual(prepared.mappings[0].group_indices, (0,))
+        self.assertIn("one assignment", proposal.explain())
+
+    def test_native_topology_proposal_keeps_unlabeled_outputs_ambiguous(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        left = npu.custom(x, source=b"left", carrier="Abs", _name="left")
+        right = npu.custom(x, source=b"right", carrier="Abs", _name="right")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 64),),
+            (npu.PatchTarget(1, 1, 1, 32, 64),),
+        )
+        fake.exact_relations = tuple(
+            npu.ExactGraphRelation(
+                "act_to_output",
+                npu.GraphRelationEndpoint("act_group", group_index),
+                npu.GraphRelationEndpoint("graph_output", group_index + 1),
+                1,
+            )
+            for group_index in range(2)
+        )
+        prepared = npu.prepare(
+            npu.Graph([x], [left, right]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        proposal = prepared.propose_native_topology_mapping()
+
+        self.assertEqual(proposal.status, "ambiguous")
+        self.assertEqual(set(proposal.assignments), {(0, 1), (1, 0)})
+        self.assertIsNone(proposal.unique_group_indices)
+
     def test_reviewed_binding_accepts_complete_dma_dpu_coverage(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         y = npu.custom(x, source=b"kernel", carrier="Abs")

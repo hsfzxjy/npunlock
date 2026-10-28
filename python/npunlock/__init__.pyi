@@ -238,6 +238,21 @@ class ExactGraphRelation:
     destination: GraphRelationEndpoint
     evidence_count: int
 
+class NativeTopologyProposal:
+    outputs: tuple[Tensor, ...]
+    names: tuple[str, ...]
+    contract_candidates: tuple[tuple[int, ...], ...]
+    viable_candidates: tuple[tuple[int, ...], ...]
+    assignments: tuple[tuple[int, ...], ...]
+    relations: tuple[ExactGraphRelation, ...]
+    reason: str
+    truncated: bool
+    @property
+    def status(self) -> str: ...
+    @property
+    def unique_group_indices(self) -> tuple[int, ...] | None: ...
+    def explain(self) -> str: ...
+
 class CarrierProbe:
     output: Tensor
     baseline_carrier: str
@@ -593,6 +608,7 @@ class PreparedGraph:
     ) -> CarrierProbeReport: ...
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
     def inspect_exact_relations(self) -> tuple[ExactGraphRelation, ...]: ...
+    def propose_native_topology_mapping(self) -> NativeTopologyProposal: ...
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]: ...
     def probe_binding(
         self,

@@ -86,6 +86,7 @@ __all__ = [
     "KernelSpec",
     "NativeError",
     "NativeLibraries",
+    "NativeTopologyProposal",
     "NpuProvenance",
     "Node",
     "PatchResult",
@@ -416,6 +417,45 @@ class CustomMapping:
     status: str
     group_indices: tuple[int, ...]
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativeTopologyProposal:
+    """Read-only candidate assignments constrained by exact native reachability."""
+
+    outputs: tuple[Tensor, ...] = field(repr=False, compare=False)
+    names: tuple[str, ...]
+    contract_candidates: tuple[tuple[int, ...], ...]
+    viable_candidates: tuple[tuple[int, ...], ...]
+    assignments: tuple[tuple[int, ...], ...]
+    relations: tuple[ExactGraphRelation, ...]
+    reason: str
+    truncated: bool = False
+
+    @property
+    def status(self) -> str:
+        if not self.assignments:
+            return "none"
+        if len(self.assignments) == 1 and not self.truncated:
+            return "unique"
+        return "ambiguous"
+
+    @property
+    def unique_group_indices(self) -> tuple[int, ...] | None:
+        return self.assignments[0] if self.status == "unique" else None
+
+    def explain(self) -> str:
+        lines = [f"native topology proposal: {self.status}; assignments={len(self.assignments)}; {self.reason}"]
+        for name, contract, viable in zip(self.names, self.contract_candidates, self.viable_candidates):
+            contract_text = ",".join(str(index) for index in contract) or "none"
+            viable_text = ",".join(str(index) for index in viable) or "none"
+            lines.append(f"  {name}: contract_candidates={contract_text}; viable_candidates={viable_text}")
+        for index, assignment in enumerate(self.assignments):
+            bindings = ", ".join(f"{name}=group[{group}]" for name, group in zip(self.names, assignment))
+            lines.append(f"  assignment[{index}]: {bindings}")
+        if self.truncated:
+            lines.append("  additional assignments were omitted")
+        return "\n".join(lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1572,6 +1612,131 @@ def _automatic_group_indices(
     return tuple(solutions[0][node] for node in custom_nodes), "unique validated multi-group mapping"
 
 
+def _propose_native_topology_mapping(prepared: PreparedGraph) -> NativeTopologyProposal:
+    """Enumerate one-ACT-group candidates without changing the mapping contract."""
+
+    custom_nodes = prepared.serialized_ir.custom_nodes
+    outputs = tuple(node.outputs[0] for node in custom_nodes)
+    names = tuple(node.name or "<unnamed>" for node in custom_nodes)
+    relations = prepared.inspect_exact_relations()
+    contract_candidates = tuple(
+        tuple(
+            group.index
+            for group in prepared.groups
+            if _custom_targets_mismatch(node, group.targets, require_partition_cover=False) is None
+        )
+        for node in custom_nodes
+    )
+    adjacency: dict[GraphRelationEndpoint, set[GraphRelationEndpoint]] = {}
+    for relation in relations:
+        adjacency.setdefault(relation.source, set()).add(relation.destination)
+
+    reachability: dict[GraphRelationEndpoint, set[GraphRelationEndpoint]] = {}
+
+    def reachable_from(start: GraphRelationEndpoint) -> set[GraphRelationEndpoint]:
+        cached = reachability.get(start)
+        if cached is not None:
+            return cached
+        reached: set[GraphRelationEndpoint] = set()
+        pending = list(adjacency.get(start, ()))
+        while pending:
+            endpoint = pending.pop()
+            if endpoint in reached:
+                continue
+            reached.add(endpoint)
+            pending.extend(adjacency.get(endpoint, ()))
+        reachability[start] = reached
+        return reached
+
+    graph_outputs = {
+        endpoint
+        for relation in relations
+        for endpoint in (relation.source, relation.destination)
+        if endpoint.kind == "graph_output"
+    }
+    viable_candidates = tuple(
+        tuple(
+            index for index in candidates if reachable_from(GraphRelationEndpoint("act_group", index)) & graph_outputs
+        )
+        for candidates in contract_candidates
+    )
+
+    ancestors: dict[Node, set[Node]] = {}
+    for node in prepared.graph.nodes:
+        values: set[Node] = set()
+        for tensor in node.inputs:
+            producer = tensor.producer
+            values.add(producer)
+            values.update(ancestors.get(producer, ()))
+        ancestors[node] = values
+
+    assignments: list[tuple[int, ...]] = []
+    truncated = False
+    maximum_assignments = 256
+
+    def visit(node_index: int, selected: list[int], used: set[int]) -> None:
+        nonlocal truncated
+        if truncated:
+            return
+        if node_index == len(custom_nodes):
+            if len(assignments) == maximum_assignments:
+                truncated = True
+                return
+            assignments.append(tuple(selected))
+            return
+        node = custom_nodes[node_index]
+        for group_index in viable_candidates[node_index]:
+            if group_index in used:
+                continue
+            destination = GraphRelationEndpoint("act_group", group_index)
+            compatible = True
+            for prior_index, prior_group_index in enumerate(selected):
+                if custom_nodes[prior_index] not in ancestors[node]:
+                    continue
+                source = GraphRelationEndpoint("act_group", prior_group_index)
+                if destination not in reachable_from(source):
+                    compatible = False
+                    break
+            if not compatible:
+                continue
+            selected.append(group_index)
+            used.add(group_index)
+            visit(node_index + 1, selected, used)
+            used.remove(group_index)
+            selected.pop()
+
+    if custom_nodes and graph_outputs:
+        visit(0, [], set())
+    if not custom_nodes:
+        reason = "the graph has no custom nodes"
+    elif not relations:
+        reason = "the native graph exposes no complete exact relations"
+    elif not graph_outputs:
+        reason = "the exact relation graph exposes no graph-output endpoint"
+    elif any(not candidates for candidates in contract_candidates):
+        missing = ", ".join(name for name, candidates in zip(names, contract_candidates) if not candidates)
+        reason = f"no tensor-contract candidate exists for: {missing}"
+    elif any(not candidates for candidates in viable_candidates):
+        missing = ", ".join(name for name, candidates in zip(names, viable_candidates) if not candidates)
+        reason = f"no candidate has a complete native path to a graph output for: {missing}"
+    elif not assignments:
+        reason = "no injective assignment preserves every positive custom-node dependency"
+    elif len(assignments) == 1 and not truncated:
+        reason = "one assignment satisfies tensor contracts and positive native reachability"
+    else:
+        reason = "multiple assignments remain because native endpoints lack source identities"
+    return NativeTopologyProposal(
+        outputs,
+        names,
+        contract_candidates,
+        viable_candidates,
+        tuple(assignments),
+        relations,
+        reason,
+        truncated,
+    )
+
+
 PatchTargetContract = PatchTarget | PatchTargetV2
 
 
@@ -2238,6 +2403,11 @@ class PreparedGraph:
         """Return only native endpoint relations backed by a unique exact cover."""
 
         return self._libraries.inspect_exact_relations(self.ir_provenance.graph_blob)
+
+    def propose_native_topology_mapping(self) -> NativeTopologyProposal:
+        """Explain single-group assignments allowed by contracts and exact native reachability."""
+
+        return _propose_native_topology_mapping(self)
 
     def probe_binding(
         self,

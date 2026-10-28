@@ -2245,6 +2245,27 @@ incomplete candidates remain visible only in the detailed inspector arrays.
 No relation is consumed by automatic patch selection, and no source-level
 operation name is inferred.
 
+## 73. Read-only symbolic/native assignment proposal
+
+The exact endpoint graph is useful before source identities are solved: it can
+reject candidate placements that do not preserve known source dependencies.
+The first Python proposal enumerates one ACT group per custom node. It filters
+groups by the existing descriptor contract, removes groups without a complete
+native path to a graph output, requires an injective assignment, and preserves
+every positive custom-node ancestor relation through native reachability.
+
+Reloading the retained connected mixed-precision prepared bundle produced one
+proposal: `to_f16` at group 0, `blend_f16` at group 1, and `to_f32` at group 2.
+This agrees with the separately executed oracle and explicit bindings. A
+controlled two-branch graph with interchangeable unary contracts deliberately
+produced both assignments instead: its raw native output symbols do not reveal
+which Python output they represent.
+
+The proposal does not use absent native edges as negative evidence, label DPU
+invariants with source operations, handle multi-group custom nodes, create a
+`ReviewedBinding`, or alter `PreparedGraph.mappings`. Even a unique result is
+therefore an explanation of the current evidence—not an automatic selector.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.
