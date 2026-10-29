@@ -349,6 +349,18 @@ indices are native identities, not source-node identities. This read-only
 topology result must not be treated as an automatic patch selector. Release
 it with `patchblob_exact_relation_result_release()`.
 
+`patchblob_inspect_graph_io_symbols()` returns the validated non-null records
+from the native graph's dedicated input and output symbol tables. Each record
+contains its kind, symbol-table section, raw symbol index, byte size, and a
+borrowed UTF-8 name view. The views remain valid until
+`patchblob_graph_io_symbol_result_release()` releases the owned result. Names
+are observed native metadata and must not replace exact routing or
+tensor-contract evidence.
+
+`patchblob_compare_graphs()` includes these validated records in its strict
+non-code comparison. A changed kind, table/index identity, byte size, or name
+sets `PATCHBLOB_COMPARE_GRAPH_IO_CHANGED` and makes the contract unstable.
+
 The additive version 2 API describes every tensor record independently:
 
 ```text

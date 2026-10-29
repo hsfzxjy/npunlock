@@ -2292,10 +2292,49 @@ replica. Schema v25 reports the attempted cover with
 the edge. Inferring engine order or transitive DMA scheduling here would need
 separate evidence; the implementation does not assume it.
 
-These raw input symbols are not Python input names and are not consumed by the
-mapping proposal or patch selector. The result is an exact native provenance
-edge where the current scheduling evidence is complete, plus an explicit
-record of where that proof stops.
+At this stage the raw input symbols were not yet Python input names and were
+not consumed by the mapping proposal or patch selector. The result was an
+exact native provenance edge where scheduling evidence was complete, plus an
+explicit record of where that proof stopped. Section 75 adds the independently
+validated name bridge.
+
+## 75. Native I/O symbol identities
+
+On 2026-10-29, the raw endpoint symbols were tied to names without assuming
+their order. Compiler 8.3 emits dedicated `.symtab.input` and
+`.symtab.output` sections linked to `.symstrtab`. Their non-null records are
+undefined local symbols with zero values, nonzero tensor byte sizes, and UTF-8
+names. The raw symbol indices are the same identities referenced by the
+network-input/output DMA relocations.
+
+The retained connected mixed-precision graph contains input symbol 1 named
+`data` with size 128, input symbol 2 named `peer` with size 64, and output
+symbol 1 named `to_f32` with size 128. These match the prepared symbolic graph
+exactly. The public conversion fixture independently retains `input` (64
+bytes) and `output` (32 bytes). Inspector schema v26 and the new C/Python
+inspection APIs expose the validated kind, table section, index, size, and
+name.
+
+The same records are now part of strict differential comparison. Renaming the
+public conversion fixture's valid `input` symbol while leaving its native
+routing untouched produces the dedicated `graph_io` mismatch and an unstable
+contract. This closes a gap where code and routing observations alone could
+have accepted a graph whose visible tensor identity changed.
+
+The explanation-only proposal now uses this bridge conservatively. A name
+constrains a candidate only when unique in both the native table and symbolic
+graph, and only through a positive exact input/output relation. A controlled
+two-output graph that previously admitted both swapped assignments becomes
+unique when its native output symbols are named `left` and `right`. The same
+topology remains ambiguous when the native names do not match, proving there
+is no fallback to symbol position. A second controlled case uses distinct
+named input symbols to reject the swapped assignment.
+
+This is a substantial source/native identity result for the confirmed
+compiler contract, but it is still not automatic patch authority. Other
+compiler versions may omit, rewrite, or duplicate names; ordinary operations
+and multi-group custom nodes remain outside this proposal; and every selected
+group still needs its tensor and coverage evidence.
 
 ## What remains deliberately unresolved
 

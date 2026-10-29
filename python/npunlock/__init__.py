@@ -20,6 +20,7 @@ from ._native import (
     ActGroupCompleteness,
     ActGroupCoverage,
     ExactGraphRelation,
+    GraphIOSymbol,
     GraphRelationEndpoint,
     InferenceInput,
     InferenceOutput,
@@ -78,6 +79,7 @@ __all__ = [
     "ExactGraphRelation",
     "Graph",
     "GraphComparison",
+    "GraphIOSymbol",
     "GraphRelationEndpoint",
     "InferenceInput",
     "InferenceOutput",
@@ -429,6 +431,7 @@ class NativeTopologyProposal:
     viable_candidates: tuple[tuple[int, ...], ...]
     assignments: tuple[tuple[int, ...], ...]
     relations: tuple[ExactGraphRelation, ...]
+    io_symbols: tuple[GraphIOSymbol, ...]
     reason: str
     truncated: bool = False
 
@@ -446,6 +449,9 @@ class NativeTopologyProposal:
 
     def explain(self) -> str:
         lines = [f"native topology proposal: {self.status}; assignments={len(self.assignments)}; {self.reason}"]
+        if self.io_symbols:
+            symbols = ", ".join(f"{symbol.kind}[{symbol.symbol_index}]={symbol.name!r}" for symbol in self.io_symbols)
+            lines.append(f"  native_io: {symbols}")
         for name, contract, viable in zip(self.names, self.contract_candidates, self.viable_candidates):
             contract_text = ",".join(str(index) for index in contract) or "none"
             viable_text = ",".join(str(index) for index in viable) or "none"
@@ -1619,6 +1625,7 @@ def _propose_native_topology_mapping(prepared: PreparedGraph) -> NativeTopologyP
     outputs = tuple(node.outputs[0] for node in custom_nodes)
     names = tuple(node.name or "<unnamed>" for node in custom_nodes)
     relations = prepared.inspect_exact_relations()
+    io_symbols = prepared.inspect_graph_io_symbols()
     contract_candidates = tuple(
         tuple(
             group.index
@@ -1648,19 +1655,6 @@ def _propose_native_topology_mapping(prepared: PreparedGraph) -> NativeTopologyP
         reachability[start] = reached
         return reached
 
-    graph_outputs = {
-        endpoint
-        for relation in relations
-        for endpoint in (relation.source, relation.destination)
-        if endpoint.kind == "graph_output"
-    }
-    viable_candidates = tuple(
-        tuple(
-            index for index in candidates if reachable_from(GraphRelationEndpoint("act_group", index)) & graph_outputs
-        )
-        for candidates in contract_candidates
-    )
-
     ancestors: dict[Node, set[Node]] = {}
     for node in prepared.graph.nodes:
         values: set[Node] = set()
@@ -1669,6 +1663,81 @@ def _propose_native_topology_mapping(prepared: PreparedGraph) -> NativeTopologyP
             values.add(producer)
             values.update(ancestors.get(producer, ()))
         ancestors[node] = values
+
+    graph_outputs = {
+        endpoint
+        for relation in relations
+        for endpoint in (relation.source, relation.destination)
+        if endpoint.kind == "graph_output"
+    }
+    graph_inputs = {
+        endpoint
+        for relation in relations
+        for endpoint in (relation.source, relation.destination)
+        if endpoint.kind == "graph_input"
+    }
+
+    native_names: dict[GraphRelationEndpoint, str] = {}
+    native_name_counts: dict[tuple[str, str], int] = {}
+    for symbol in io_symbols:
+        key = (symbol.kind, symbol.name)
+        native_name_counts[key] = native_name_counts.get(key, 0) + 1
+    for symbol in io_symbols:
+        if native_name_counts[(symbol.kind, symbol.name)] != 1:
+            continue
+        endpoint = (
+            GraphRelationEndpoint("graph_input", symbol.symbol_index, symbol.symbol_table_index)
+            if symbol.kind == "input"
+            else GraphRelationEndpoint("graph_output", symbol.symbol_index)
+        )
+        native_names[endpoint] = symbol.name
+
+    symbolic_input_counts: dict[str, int] = {}
+    symbolic_output_counts: dict[str, int] = {}
+    for tensor in prepared.graph.inputs:
+        if tensor.name:
+            symbolic_input_counts[tensor.name] = symbolic_input_counts.get(tensor.name, 0) + 1
+    for tensor in prepared.graph.outputs:
+        if tensor.name:
+            symbolic_output_counts[tensor.name] = symbolic_output_counts.get(tensor.name, 0) + 1
+    known_input_names = {name for name, count in symbolic_input_counts.items() if count == 1}
+    known_output_names = {name for name, count in symbolic_output_counts.items() if count == 1}
+
+    viable_values: list[tuple[int, ...]] = []
+    for node, candidates in zip(custom_nodes, contract_candidates):
+        symbolic_inputs = {
+            ancestor.outputs[0].name
+            for ancestor in ancestors[node]
+            if ancestor.op == "Parameter" and ancestor.outputs[0].name in known_input_names
+        }
+        symbolic_outputs = {
+            tensor.name
+            for tensor in prepared.graph.outputs
+            if tensor.name in known_output_names and (tensor.producer is node or node in ancestors[tensor.producer])
+        }
+        viable: list[int] = []
+        for index in candidates:
+            group = GraphRelationEndpoint("act_group", index)
+            reached = reachable_from(group)
+            if not reached & graph_outputs:
+                continue
+            observed_outputs = {
+                native_names[endpoint]
+                for endpoint in reached & graph_outputs
+                if endpoint in native_names and native_names[endpoint] in known_output_names
+            }
+            observed_inputs = {
+                native_names[endpoint]
+                for endpoint in graph_inputs
+                if endpoint in native_names
+                and native_names[endpoint] in known_input_names
+                and group in reachable_from(endpoint)
+            }
+            if not observed_outputs.issubset(symbolic_outputs) or not observed_inputs.issubset(symbolic_inputs):
+                continue
+            viable.append(index)
+        viable_values.append(tuple(viable))
+    viable_candidates = tuple(viable_values)
 
     assignments: list[tuple[int, ...]] = []
     truncated = False
@@ -1722,9 +1791,9 @@ def _propose_native_topology_mapping(prepared: PreparedGraph) -> NativeTopologyP
     elif not assignments:
         reason = "no injective assignment preserves every positive custom-node dependency"
     elif len(assignments) == 1 and not truncated:
-        reason = "one assignment satisfies tensor contracts and positive native reachability"
+        reason = "one assignment satisfies tensor contracts, named I/O evidence, and positive native reachability"
     else:
-        reason = "multiple assignments remain because native endpoints lack source identities"
+        reason = "multiple assignments remain after unique native I/O names and positive reachability"
     return NativeTopologyProposal(
         outputs,
         names,
@@ -1732,6 +1801,7 @@ def _propose_native_topology_mapping(prepared: PreparedGraph) -> NativeTopologyP
         viable_candidates,
         tuple(assignments),
         relations,
+        io_symbols,
         reason,
         truncated,
     )
@@ -2403,6 +2473,11 @@ class PreparedGraph:
         """Return only native endpoint relations backed by a unique exact cover."""
 
         return self._libraries.inspect_exact_relations(self.ir_provenance.graph_blob)
+
+    def inspect_graph_io_symbols(self) -> tuple[GraphIOSymbol, ...]:
+        """Return validated native graph input/output symbol names and sizes."""
+
+        return self._libraries.inspect_graph_io_symbols(self.ir_provenance.graph_blob)
 
     def propose_native_topology_mapping(self) -> NativeTopologyProposal:
         """Explain single-group assignments allowed by contracts and exact native reachability."""

@@ -478,6 +478,18 @@ identities—and the result is never consumed as an automatic patch selector.
 A `graph_input` endpoint contains the native raw symbol and symbol-table
 section, not the name of an `npu.input()` object.
 
+Resolve the separately validated native I/O names when you need that identity
+bridge:
+
+```python
+for symbol in prepared.inspect_graph_io_symbols():
+    print(symbol.kind, symbol.symbol_index, symbol.name, symbol.size_bytes)
+```
+
+The compiler-8.3 tables preserve the observed graph input/output value names.
+The mapping proposal uses only names that are unique in both the native table
+and the symbolic graph. It ignores missing, duplicate, or unmatched names.
+
 To see whether those relations distinguish the custom nodes without changing
 any binding, request a proposal:
 
@@ -487,9 +499,10 @@ print(proposal.explain())
 ```
 
 `unique` means one single-group assignment survived descriptor and positive
-reachability checks. It is still an explanation, not a reviewed binding, and
-`plan()` will not use it. Independent branches often remain `ambiguous`
-because native graph-output symbols do not carry Python output names.
+reachability checks, including any unique matching I/O names. It is still an
+explanation, not a reviewed binding, and `plan()` will not use it. Independent
+branches remain `ambiguous` when native names are absent, duplicated, or do
+not match the symbolic graph.
 
 The compact helper runs the probes and combines them with coverage only when
 the identified group has exactly one complete route meaning:

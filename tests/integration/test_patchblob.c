@@ -429,6 +429,8 @@ int main(void) {
   npunlock_buffer unsupported_platform = {0};
   npunlock_buffer malformed_sections = {0};
   npunlock_buffer duplicate_dpu_relocation = {0};
+  npunlock_buffer malformed_io_name = {0};
+  npunlock_buffer renamed_io_name = {0};
   patchblob_options options = {0};
   patchblob_target targets[2] = {{0}};
   patchblob_target broadcast_targets[4] = {{0}};
@@ -446,6 +448,7 @@ int main(void) {
   patchblob_group_coverage_result coverage = {0};
   patchblob_dma_dpu_group_coverage_result dma_dpu_coverage = {0};
   patchblob_comparison_result comparison = {0};
+  patchblob_graph_io_symbol_result io_symbols = {0};
   patchblob_result result = {0};
   uint32_t flags = PATCHBLOB_CONTRACT_STATIC | PATCHBLOB_CONTRACT_DENSE | PATCHBLOB_CONTRACT_FP16 |
                    PATCHBLOB_CONTRACT_CMX | PATCHBLOB_CONTRACT_DISJOINT_OUTPUT;
@@ -491,6 +494,81 @@ int main(void) {
         multi_scalar_fp16_carrier.data != NULL && per_row_multi_scalar_fp16_carrier.data != NULL &&
         hybrid_scalar_fp16_carrier.data != NULL && global_hybrid_scalar_fp16_carrier.data != NULL &&
         elf.data != NULL && expected.data != NULL);
+
+  status = patchblob_inspect_graph_io_symbols(
+      (npunlock_view){convert_f32_to_f16.data, convert_f32_to_f16.size}, &io_symbols);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(io_symbols.symbol_count == 2);
+  CHECK(io_symbols.symbols[0].kind == PATCHBLOB_GRAPH_IO_INPUT);
+  CHECK(io_symbols.symbols[0].symbol_table_index == 24);
+  CHECK(io_symbols.symbols[0].symbol_index == 1);
+  CHECK(io_symbols.symbols[0].size_bytes == 64);
+  CHECK(io_symbols.symbols[0].name_utf8.size == 5);
+  CHECK(memcmp(io_symbols.symbols[0].name_utf8.data, "input", 5) == 0);
+  CHECK(io_symbols.symbols[1].kind == PATCHBLOB_GRAPH_IO_OUTPUT);
+  CHECK(io_symbols.symbols[1].symbol_index == 1);
+  CHECK(io_symbols.symbols[1].size_bytes == 32);
+  CHECK(io_symbols.symbols[1].name_utf8.size == 6);
+  CHECK(memcmp(io_symbols.symbols[1].name_utf8.data, "output", 6) == 0);
+  patchblob_graph_io_symbol_result_release(&io_symbols);
+
+  malformed_io_name.data = (uint8_t *)malloc(convert_f32_to_f16.size);
+  CHECK(malformed_io_name.data != NULL);
+  malformed_io_name.size = convert_f32_to_f16.size;
+  memcpy(malformed_io_name.data, convert_f32_to_f16.data, convert_f32_to_f16.size);
+  {
+    uint8_t *symbols = find_section_header(malformed_io_name.data, malformed_io_name.size,
+                                           ".symtab.input", UINT32_MAX);
+    uint8_t *strings = find_section_header(malformed_io_name.data, malformed_io_name.size,
+                                           ".symstrtab", UINT32_MAX);
+    size_t symbol_offset;
+    size_t string_offset;
+    uint32_t name_offset;
+    CHECK(symbols != NULL && strings != NULL);
+    CHECK(read_u64(symbols + 0x18u) <= SIZE_MAX && read_u64(strings + 0x18u) <= SIZE_MAX);
+    symbol_offset = (size_t)read_u64(symbols + 0x18u);
+    string_offset = (size_t)read_u64(strings + 0x18u);
+    CHECK(symbol_offset <= malformed_io_name.size - 2u * 24u);
+    name_offset = read_u32(malformed_io_name.data + symbol_offset + 24u);
+    CHECK(string_offset <= malformed_io_name.size &&
+          name_offset < malformed_io_name.size - string_offset);
+    malformed_io_name.data[string_offset + name_offset] = 0xffu;
+  }
+  status = patchblob_inspect_graph_io_symbols(
+      (npunlock_view){malformed_io_name.data, malformed_io_name.size}, &io_symbols);
+  CHECK(status == NPUNLOCK_STATUS_UNSUPPORTED);
+  patchblob_graph_io_symbol_result_release(&io_symbols);
+
+  renamed_io_name.data = (uint8_t *)malloc(convert_f32_to_f16.size);
+  CHECK(renamed_io_name.data != NULL);
+  renamed_io_name.size = convert_f32_to_f16.size;
+  memcpy(renamed_io_name.data, convert_f32_to_f16.data, convert_f32_to_f16.size);
+  {
+    uint8_t *symbols = find_section_header(renamed_io_name.data, renamed_io_name.size,
+                                           ".symtab.input", UINT32_MAX);
+    uint8_t *strings =
+        find_section_header(renamed_io_name.data, renamed_io_name.size, ".symstrtab", UINT32_MAX);
+    size_t symbol_offset;
+    size_t string_offset;
+    uint32_t name_offset;
+    CHECK(symbols != NULL && strings != NULL);
+    CHECK(read_u64(symbols + 0x18u) <= SIZE_MAX && read_u64(strings + 0x18u) <= SIZE_MAX);
+    symbol_offset = (size_t)read_u64(symbols + 0x18u);
+    string_offset = (size_t)read_u64(strings + 0x18u);
+    CHECK(symbol_offset <= renamed_io_name.size - 2u * 24u);
+    name_offset = read_u32(renamed_io_name.data + symbol_offset + 24u);
+    CHECK(string_offset <= renamed_io_name.size &&
+          name_offset < renamed_io_name.size - string_offset);
+    CHECK(renamed_io_name.data[string_offset + name_offset] == 'i');
+    renamed_io_name.data[string_offset + name_offset] = 'j';
+  }
+  status = patchblob_compare_graphs(
+      (npunlock_view){convert_f32_to_f16.data, convert_f32_to_f16.size},
+      (npunlock_view){renamed_io_name.data, renamed_io_name.size}, &comparison);
+  CHECK(status == NPUNLOCK_STATUS_OK);
+  CHECK(!comparison.contract_stable);
+  CHECK(comparison.mismatch_flags == PATCHBLOB_COMPARE_GRAPH_IO_CHANGED);
+  patchblob_comparison_result_release(&comparison);
 
   status = patchblob_inspect_group_completeness(
       (npunlock_view){two_operation_carrier.data, two_operation_carrier.size}, &completeness);
@@ -1400,6 +1478,8 @@ int main(void) {
   free(unsupported_platform.data);
   free(malformed_sections.data);
   free(duplicate_dpu_relocation.data);
+  free(malformed_io_name.data);
+  free(renamed_io_name.data);
   free(broadcast_carrier.data);
   free(convert_f16_to_f32.data);
   free(convert_f32_to_f16.data);

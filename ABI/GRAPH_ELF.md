@@ -809,6 +809,21 @@ does it establish other ranks, axes, shapes, or general broadcasting.
 
 ## Exact native endpoint relations
 
+### Native graph I/O symbols
+
+Compiler 8.3 emits one `.symtab.input` and one `.symtab.output` section linked
+to `.symstrtab`. Entry zero is the null symbol. Every remaining observed entry
+is an undefined local symbol with zero value, a nonzero byte size, and a
+terminated UTF-8 name. The symbol index is the raw identity used by the
+network-input/output DMA relocations.
+
+`patchblob_inspect_graph_io_symbols()` validates that layout and returns each
+record's input/output kind, symbol-table section, symbol index, byte size, and
+name. The result owns the copied records and names. The controlled connected
+graph retained `data` (128 bytes), `peer` (64 bytes), and `to_f32` (128 bytes),
+matching its symbolic graph values. This is confirmed compiler-8.3 metadata;
+it is not assumed for unvalidated compiler versions.
+
 The graph parser can conservatively project its detailed routing observations
 into an exact native topology. A relation is emitted only after the relevant
 invocations or inputs form a unique, complete cover. The currently represented

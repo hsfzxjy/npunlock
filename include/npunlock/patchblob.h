@@ -140,7 +140,8 @@ typedef enum patchblob_comparison_flags {
   PATCHBLOB_COMPARE_DMA_CHANGED = 1u << 7,
   PATCHBLOB_COMPARE_ACT_DMA_RELATIONS_CHANGED = 1u << 8,
   PATCHBLOB_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED = 1u << 9,
-  PATCHBLOB_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED = 1u << 10
+  PATCHBLOB_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED = 1u << 10,
+  PATCHBLOB_COMPARE_GRAPH_IO_CHANGED = 1u << 11
 } patchblob_comparison_flags;
 
 /*
@@ -354,6 +355,33 @@ typedef struct patchblob_exact_relation_result {
   npunlock_diagnostic diagnostic;
 } patchblob_exact_relation_result;
 
+typedef enum patchblob_graph_io_kind {
+  PATCHBLOB_GRAPH_IO_INPUT = 1u,
+  PATCHBLOB_GRAPH_IO_OUTPUT = 2u
+} patchblob_graph_io_kind;
+
+/*
+ * One validated symbol from the native graph's dedicated input/output symbol
+ * table. name_utf8 is borrowed from the owning result and remains valid until
+ * patchblob_graph_io_symbol_result_release(). The symbol name is observed
+ * native metadata; callers must not assume it always equals a source value.
+ */
+typedef struct patchblob_graph_io_symbol {
+  uint32_t struct_size;
+  uint32_t kind;
+  uint32_t symbol_table_index;
+  uint32_t symbol_index;
+  uint64_t size_bytes;
+  npunlock_view name_utf8;
+} patchblob_graph_io_symbol;
+
+typedef struct patchblob_graph_io_symbol_result {
+  uint32_t struct_size;
+  patchblob_graph_io_symbol *symbols;
+  size_t symbol_count;
+  npunlock_diagnostic diagnostic;
+} patchblob_graph_io_symbol_result;
+
 NPUNLOCK_PATCHBLOB_API npunlock_status
 patchblob_patch(const patchblob_options *options, npunlock_view graph_blob, npunlock_view shave_elf,
                 const patchblob_target *targets, size_t target_count, patchblob_result *result);
@@ -393,6 +421,10 @@ NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_exact_relations(
     npunlock_view graph_blob, patchblob_exact_relation_result *result);
 NPUNLOCK_PATCHBLOB_API void
 patchblob_exact_relation_result_release(patchblob_exact_relation_result *result);
+NPUNLOCK_PATCHBLOB_API npunlock_status patchblob_inspect_graph_io_symbols(
+    npunlock_view graph_blob, patchblob_graph_io_symbol_result *result);
+NPUNLOCK_PATCHBLOB_API void
+patchblob_graph_io_symbol_result_release(patchblob_graph_io_symbol_result *result);
 
 #ifdef __cplusplus
 }

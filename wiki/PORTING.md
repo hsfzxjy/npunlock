@@ -198,6 +198,26 @@ be classified, but only a complete cover becomes an exact relation. Raw input
 symbols and their symbol-table sections are native identities and are not
 Python input names.
 
+Schema v26 adds `graph_io_symbols`. Compiler 8.3 emits dedicated
+`.symtab.input` and `.symtab.output` tables whose non-null records retain a
+UTF-8 name and exact byte size. The inspector and
+`patchblob_inspect_graph_io_symbols()` preserve the table section, symbol
+index, size, and name. `PreparedGraph.inspect_graph_io_symbols()` exposes the
+same records. These are observed native identities, not a promise for another
+compiler or NPU generation.
+
+Strict baseline/candidate comparison also checks the complete validated I/O
+symbol record set. A changed identity, size, or name is reported as
+`graph_io`, so a carrier probe cannot be accepted after its public graph
+interface silently changes.
+
+The read-only topology proposal uses a name only when it is unique in both the
+native table and the symbolic graph. A positive native input or output edge
+whose name conflicts with a candidate's symbolic ancestry rejects that
+candidate. Missing, duplicated, or unmatched names contribute no negative
+evidence, so older ambiguous cases stay ambiguous instead of falling back to
+symbol order.
+
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
 
@@ -312,9 +332,10 @@ The initial proposal handles one ACT group per custom node. It filters by the
 observed descriptor contract, requires a complete native path to a graph
 output, and preserves every positive symbolic dependency between custom
 nodes. It reports all remaining injective assignments, capped for diagnostic
-output. `unique` is not patch authority: raw output symbols are unlabeled,
-ordinary native endpoints are not source operations, and `plan()` never
-consumes the proposal.
+output. Unique matching native I/O names can reject contradictory ancestry,
+but `unique` is not patch authority: ordinary native endpoints are not source
+operations, unmatched symbols stay unlabeled, and `plan()` never consumes the
+proposal.
 
 Python callers can make that policy choice explicitly after inspecting both
 reports:

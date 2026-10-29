@@ -352,6 +352,26 @@ class _PatchExactRelationResult(ctypes.Structure):
     ]
 
 
+class _PatchGraphIOSymbol(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("kind", ctypes.c_uint32),
+        ("symbol_table_index", ctypes.c_uint32),
+        ("symbol_index", ctypes.c_uint32),
+        ("size_bytes", ctypes.c_uint64),
+        ("name_utf8", _View),
+    ]
+
+
+class _PatchGraphIOSymbolResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("symbols", ctypes.POINTER(_PatchGraphIOSymbol)),
+        ("symbol_count", ctypes.c_size_t),
+        ("diagnostic", _Diagnostic),
+    ]
+
+
 class _InferOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -537,6 +557,7 @@ _GRAPH_COMPARISON_MISMATCH_NAMES = {
     1 << 8: "act_dma_relations",
     1 << 9: "act_dma_dpu_relations",
     1 << 10: "act_dma_act_relations",
+    1 << 11: "graph_io",
 }
 
 
@@ -729,6 +750,15 @@ class ExactGraphRelation:
     source: GraphRelationEndpoint
     destination: GraphRelationEndpoint
     evidence_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class GraphIOSymbol:
+    kind: str
+    symbol_table_index: int
+    symbol_index: int
+    size_bytes: int
+    name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1133,6 +1163,12 @@ class NativeLibraries:
         ]
         self.patch.patchblob_inspect_exact_relations.restype = ctypes.c_int
         self.patch.patchblob_exact_relation_result_release.argtypes = [ctypes.POINTER(_PatchExactRelationResult)]
+        self.patch.patchblob_inspect_graph_io_symbols.argtypes = [
+            _View,
+            ctypes.POINTER(_PatchGraphIOSymbolResult),
+        ]
+        self.patch.patchblob_inspect_graph_io_symbols.restype = ctypes.c_int
+        self.patch.patchblob_graph_io_symbol_result_release.argtypes = [ctypes.POINTER(_PatchGraphIOSymbolResult)]
         self.infer.graphinfer_infer.argtypes = [
             ctypes.POINTER(_InferOptions),
             _View,
@@ -1744,6 +1780,46 @@ class NativeLibraries:
             return tuple(relations)
         finally:
             self.patch.patchblob_exact_relation_result_release(ctypes.byref(result))
+
+    def inspect_graph_io_symbols(self, graph_blob: bytes) -> tuple[GraphIOSymbol, ...]:
+        if not isinstance(graph_blob, bytes) or not graph_blob:
+            raise ValueError("graph blob must be non-empty bytes")
+        graph_view, graph_owner = _owned_view(graph_blob)
+        _ = graph_owner
+        result = _PatchGraphIOSymbolResult()
+        result.struct_size = ctypes.sizeof(_PatchGraphIOSymbolResult)
+        status = self.patch.patchblob_inspect_graph_io_symbols(graph_view, ctypes.byref(result))
+        try:
+            if status != 0:
+                self._raise("patchblob graph I/O symbols", status, result.diagnostic)
+            if result.symbol_count and not bool(result.symbols):
+                raise RuntimeError("patchblob returned a null graph-I/O symbol array")
+            kinds = {1: "input", 2: "output"}
+            symbols: list[GraphIOSymbol] = []
+            for index in range(result.symbol_count):
+                source = result.symbols[index]
+                if (
+                    source.struct_size < ctypes.sizeof(_PatchGraphIOSymbol)
+                    or source.kind not in kinds
+                    or source.symbol_index == 0
+                    or source.size_bytes == 0
+                    or source.name_utf8.size == 0
+                    or not bool(source.name_utf8.data)
+                ):
+                    raise RuntimeError("patchblob returned an invalid graph-I/O symbol record")
+                name = ctypes.string_at(source.name_utf8.data, source.name_utf8.size).decode("utf-8")
+                symbols.append(
+                    GraphIOSymbol(
+                        kinds[source.kind],
+                        source.symbol_table_index,
+                        source.symbol_index,
+                        source.size_bytes,
+                        name,
+                    )
+                )
+            return tuple(symbols)
+        finally:
+            self.patch.patchblob_graph_io_symbol_result_release(ctypes.byref(result))
 
     def infer_graph(
         self,

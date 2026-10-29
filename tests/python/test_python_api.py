@@ -847,6 +847,10 @@ class FakeNative:
                 1,
             ),
         )
+        self.io_symbols = (
+            npu.GraphIOSymbol("input", 24, 1, 64, "x"),
+            npu.GraphIOSymbol("output", 25, 1, 64, "Result_0"),
+        )
 
     def compile_ir(self, xml: bytes, weights: bytes, **kwargs: object) -> npu.IrCompileResult:
         self.compile_ir_count += 1
@@ -898,6 +902,10 @@ class FakeNative:
     def inspect_exact_relations(self, graph_blob: bytes) -> tuple[npu.ExactGraphRelation, ...]:
         self.exact_relations_blob = graph_blob
         return self.exact_relations
+
+    def inspect_graph_io_symbols(self, graph_blob: bytes) -> tuple[npu.GraphIOSymbol, ...]:
+        self.io_symbols_blob = graph_blob
+        return self.io_symbols
 
     def infer_graph(self, graph_blob: bytes, inputs: object, **kwargs: object) -> npu.InferenceResult:
         values = tuple(inputs)  # type: ignore[arg-type]
@@ -1256,6 +1264,23 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(relations[1].source.secondary_index, None)
         self.assertEqual(relations[1].destination.kind, "graph_output")
 
+    def test_prepared_graph_io_symbols_preserve_native_identity(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        y = npu.custom(x, source=b"kernel", carrier="Abs")
+        fake = FakeNative()
+        prepared = npu.prepare(
+            npu.Graph([x], [y]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        symbols = prepared.inspect_graph_io_symbols()
+
+        self.assertEqual(symbols, fake.io_symbols)
+        self.assertEqual(fake.io_symbols_blob, b"native")
+        self.assertEqual(symbols[0].name, "x")
+        self.assertEqual(symbols[1].kind, "output")
+
     def test_native_topology_proposal_uses_positive_reachability_without_selecting(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         first = npu.custom(x, source=b"first", carrier="Abs", _name="first")
@@ -1279,6 +1304,10 @@ class CompilationFlowTests(unittest.TestCase):
                 1,
             ),
         )
+        fake.io_symbols = (
+            npu.GraphIOSymbol("input", 24, 1, 64, "x"),
+            npu.GraphIOSymbol("output", 25, 1, 64, "second"),
+        )
         prepared = npu.prepare(
             npu.Graph([x], [second]),
             native_dir="unused",
@@ -1292,7 +1321,7 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(prepared.mappings[0].group_indices, (0,))
         self.assertIn("one assignment", proposal.explain())
 
-    def test_native_topology_proposal_keeps_unlabeled_outputs_ambiguous(self) -> None:
+    def test_native_topology_proposal_uses_unique_output_symbol_names(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         left = npu.custom(x, source=b"left", carrier="Abs", _name="left")
         right = npu.custom(x, source=b"right", carrier="Abs", _name="right")
@@ -1310,6 +1339,46 @@ class CompilationFlowTests(unittest.TestCase):
             )
             for group_index in range(2)
         )
+        fake.io_symbols = (
+            npu.GraphIOSymbol("input", 24, 1, 64, "x"),
+            npu.GraphIOSymbol("output", 25, 1, 64, "left"),
+            npu.GraphIOSymbol("output", 25, 2, 64, "right"),
+        )
+        prepared = npu.prepare(
+            npu.Graph([x], [left, right]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        proposal = prepared.propose_native_topology_mapping()
+
+        self.assertEqual(proposal.status, "unique")
+        self.assertEqual(proposal.unique_group_indices, (0, 1))
+        self.assertIn("named I/O evidence", proposal.reason)
+
+    def test_native_topology_proposal_keeps_unmatched_output_names_ambiguous(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        left = npu.custom(x, source=b"left", carrier="Abs", _name="left")
+        right = npu.custom(x, source=b"right", carrier="Abs", _name="right")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 64),),
+            (npu.PatchTarget(1, 1, 1, 32, 64),),
+        )
+        fake.exact_relations = tuple(
+            npu.ExactGraphRelation(
+                "act_to_output",
+                npu.GraphRelationEndpoint("act_group", group_index),
+                npu.GraphRelationEndpoint("graph_output", group_index + 1),
+                1,
+            )
+            for group_index in range(2)
+        )
+        fake.io_symbols = (
+            npu.GraphIOSymbol("input", 24, 1, 64, "x"),
+            npu.GraphIOSymbol("output", 25, 1, 64, "native_1"),
+            npu.GraphIOSymbol("output", 25, 2, 64, "native_2"),
+        )
         prepared = npu.prepare(
             npu.Graph([x], [left, right]),
             native_dir="unused",
@@ -1320,7 +1389,59 @@ class CompilationFlowTests(unittest.TestCase):
 
         self.assertEqual(proposal.status, "ambiguous")
         self.assertEqual(set(proposal.assignments), {(0, 1), (1, 0)})
-        self.assertIsNone(proposal.unique_group_indices)
+
+    def test_native_topology_proposal_uses_unique_input_symbol_names(self) -> None:
+        left_input = npu.input("left_input", shape=(1, 32), dtype="f16")
+        right_input = npu.input("right_input", shape=(1, 32), dtype="f16")
+        left = npu.custom(left_input, source=b"left", carrier="Abs", _name="left")
+        right = npu.custom(right_input, source=b"right", carrier="Abs", _name="right")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 64),),
+            (npu.PatchTarget(1, 1, 1, 32, 64),),
+        )
+        fake.exact_relations = (
+            npu.ExactGraphRelation(
+                "graph_input_to_act_via_dma",
+                npu.GraphRelationEndpoint("graph_input", 1, 24),
+                npu.GraphRelationEndpoint("act_group", 0),
+                1,
+            ),
+            npu.ExactGraphRelation(
+                "graph_input_to_act_via_dma",
+                npu.GraphRelationEndpoint("graph_input", 2, 24),
+                npu.GraphRelationEndpoint("act_group", 1),
+                1,
+            ),
+            npu.ExactGraphRelation(
+                "act_to_output",
+                npu.GraphRelationEndpoint("act_group", 0),
+                npu.GraphRelationEndpoint("graph_output", 1),
+                1,
+            ),
+            npu.ExactGraphRelation(
+                "act_to_output",
+                npu.GraphRelationEndpoint("act_group", 1),
+                npu.GraphRelationEndpoint("graph_output", 2),
+                1,
+            ),
+        )
+        fake.io_symbols = (
+            npu.GraphIOSymbol("input", 24, 1, 64, "left_input"),
+            npu.GraphIOSymbol("input", 24, 2, 64, "right_input"),
+            npu.GraphIOSymbol("output", 25, 1, 64, "native_1"),
+            npu.GraphIOSymbol("output", 25, 2, 64, "native_2"),
+        )
+        prepared = npu.prepare(
+            npu.Graph([left_input, right_input], [left, right]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+
+        proposal = prepared.propose_native_topology_mapping()
+
+        self.assertEqual(proposal.status, "unique")
+        self.assertEqual(proposal.unique_group_indices, (0, 1))
 
     def test_reviewed_binding_accepts_complete_dma_dpu_coverage(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
@@ -3437,7 +3558,7 @@ class CompilationFlowTests(unittest.TestCase):
 
     def test_graph_comparison_rejection_reasons(self) -> None:
         comparison = npu.GraphComparison(
-            (1 << 2) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10),
+            (1 << 2) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11),
             (0, 1),
             False,
             False,
@@ -3453,6 +3574,7 @@ class CompilationFlowTests(unittest.TestCase):
                 "act_dma_relations",
                 "act_dma_dpu_relations",
                 "act_dma_act_relations",
+                "graph_io",
             ),
         )
 

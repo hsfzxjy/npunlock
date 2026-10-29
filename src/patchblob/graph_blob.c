@@ -29,6 +29,8 @@
 #define SHT_NOBITS 8u
 #define SHT_VPU_PLATFORM_INFO 0x8aaaaaafu
 #define SHT_VPU_COMPATIBILITY 0x8aaaaab2u
+#define SHF_VPU_NETWORK_INPUT UINT64_C(0x200000)
+#define SHF_VPU_NETWORK_OUTPUT UINT64_C(0x400000)
 #define R_VPU_64 0u
 #define R_VPU_64_OR 1u
 #define R_VPU_64_LSHIFT 3u
@@ -1759,6 +1761,214 @@ static bool graph_symbol_name_equals(const graph_layout *layout, const graph_sec
   return name_offset <= strings->size && expected_size < strings->size - name_offset &&
          memcmp(layout->blob.data + strings->offset + name_offset, expected, expected_size) == 0 &&
          layout->blob.data[strings->offset + name_offset + expected_size] == 0u;
+}
+
+static bool graph_symbol_name_is_utf8(const uint8_t *bytes, size_t size) {
+  size_t index = 0u;
+  while (index < size) {
+    uint8_t first = bytes[index++];
+    if (first < 0x80u) {
+      if (first == 0u) {
+        return false;
+      }
+      continue;
+    }
+    if (first >= 0xc2u && first <= 0xdfu) {
+      if (index >= size || bytes[index] < 0x80u || bytes[index] > 0xbfu) {
+        return false;
+      }
+      ++index;
+      continue;
+    }
+    if (first >= 0xe0u && first <= 0xefu) {
+      uint8_t second;
+      if (size - index < 2u) {
+        return false;
+      }
+      second = bytes[index];
+      if ((first == 0xe0u && (second < 0xa0u || second > 0xbfu)) ||
+          (first == 0xedu && (second < 0x80u || second > 0x9fu)) ||
+          ((first != 0xe0u && first != 0xedu) && (second < 0x80u || second > 0xbfu)) ||
+          bytes[index + 1u] < 0x80u || bytes[index + 1u] > 0xbfu) {
+        return false;
+      }
+      index += 2u;
+      continue;
+    }
+    if (first >= 0xf0u && first <= 0xf4u) {
+      uint8_t second;
+      if (size - index < 3u) {
+        return false;
+      }
+      second = bytes[index];
+      if ((first == 0xf0u && (second < 0x90u || second > 0xbfu)) ||
+          (first == 0xf4u && (second < 0x80u || second > 0x8fu)) ||
+          ((first != 0xf0u && first != 0xf4u) && (second < 0x80u || second > 0xbfu)) ||
+          bytes[index + 1u] < 0x80u || bytes[index + 1u] > 0xbfu || bytes[index + 2u] < 0x80u ||
+          bytes[index + 2u] > 0xbfu) {
+        return false;
+      }
+      index += 3u;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+npunlock_status npunlock_inspect_graph_io_symbols(npunlock_view graph_blob,
+                                                  patchblob_graph_io_symbol **symbols_out,
+                                                  size_t *symbol_count_out,
+                                                  npunlock_diagnostic *diagnostic) {
+  static const char *const table_names[] = {".symtab.input", ".symtab.output"};
+  static const uint32_t table_kinds[] = {PATCHBLOB_GRAPH_IO_INPUT, PATCHBLOB_GRAPH_IO_OUTPUT};
+  static const uint64_t table_flags[] = {SHF_VPU_NETWORK_INPUT, SHF_VPU_NETWORK_OUTPUT};
+  graph_layout layout;
+  size_t table_indices[2] = {SIZE_MAX, SIZE_MAX};
+  patchblob_graph_io_symbol *result = NULL;
+  size_t symbol_count = 0u;
+  size_t names_size = 0u;
+  size_t records_size;
+  size_t allocation_size;
+  size_t section_index;
+  size_t table_kind_index;
+  npunlock_status status;
+  if (symbols_out == NULL || symbol_count_out == NULL || diagnostic == NULL ||
+      !npunlock_view_is_valid(graph_blob) || graph_blob.size == 0u) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  *symbols_out = NULL;
+  *symbol_count_out = 0u;
+  status = parse_graph(graph_blob, &layout, diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    return status;
+  }
+  for (section_index = 0; section_index < layout.section_count; ++section_index) {
+    for (table_kind_index = 0; table_kind_index < 2u; ++table_kind_index) {
+      if (strcmp(layout.sections[section_index].name, table_names[table_kind_index]) == 0) {
+        if (table_indices[table_kind_index] != SIZE_MAX) {
+          status = malformed(diagnostic, "graph contains a duplicate I/O symbol table");
+          goto cleanup;
+        }
+        table_indices[table_kind_index] = section_index;
+      }
+    }
+  }
+  if (table_indices[0] == SIZE_MAX || table_indices[1] == SIZE_MAX) {
+    status = unsupported(diagnostic, "graph does not contain dedicated input/output symbol tables");
+    goto cleanup;
+  }
+  for (table_kind_index = 0; table_kind_index < 2u; ++table_kind_index) {
+    const graph_section *symbols = &layout.sections[table_indices[table_kind_index]];
+    const graph_section *strings;
+    size_t table_symbol_count;
+    size_t symbol_index;
+    if (symbols->type != SHT_SYMTAB || symbols->flags != table_flags[table_kind_index] ||
+        symbols->address != 0u || symbols->info != 0u || symbols->alignment != 8u ||
+        symbols->entry_size != ELF64_SYMBOL_SIZE || symbols->size % ELF64_SYMBOL_SIZE != 0u ||
+        symbols->link >= layout.section_count) {
+      status = unsupported(diagnostic, "graph I/O symbol table layout is unsupported");
+      goto cleanup;
+    }
+    strings = &layout.sections[symbols->link];
+    if (strcmp(strings->name, ".symstrtab") != 0 || strings->type != SHT_STRTAB ||
+        strings->flags != 0u || strings->address != 0u || strings->link != 0u ||
+        strings->info != 0u || strings->alignment != 4u || strings->entry_size != 0u ||
+        strings->size == 0u || layout.blob.data[strings->offset] != 0u) {
+      status = unsupported(diagnostic, "graph I/O symbol string table layout is unsupported");
+      goto cleanup;
+    }
+    table_symbol_count = symbols->size / ELF64_SYMBOL_SIZE;
+    if (table_symbol_count == 0u || table_symbol_count - 1u > UINT32_MAX ||
+        memcmp(layout.blob.data + symbols->offset, (uint8_t[ELF64_SYMBOL_SIZE]){0},
+               ELF64_SYMBOL_SIZE) != 0) {
+      status = malformed(diagnostic, "graph I/O symbol table has no null symbol");
+      goto cleanup;
+    }
+    for (symbol_index = 1u; symbol_index < table_symbol_count; ++symbol_index) {
+      const uint8_t *symbol = layout.blob.data + symbols->offset + symbol_index * ELF64_SYMBOL_SIZE;
+      uint32_t name_offset = read_u32(symbol);
+      const uint8_t *name;
+      const uint8_t *terminator;
+      size_t name_size;
+      if (symbol[4] != 0u || symbol[5] != 0u || read_u16(symbol + 6u) != 0u ||
+          read_u64(symbol + 8u) != 0u || read_u64(symbol + 16u) == 0u) {
+        status = unsupported(diagnostic, "graph I/O symbol record layout is unsupported");
+        goto cleanup;
+      }
+      if (name_offset == 0u || name_offset >= strings->size) {
+        status = malformed(diagnostic, "graph I/O symbol name is outside its string table");
+        goto cleanup;
+      }
+      name = layout.blob.data + strings->offset + name_offset;
+      terminator = (const uint8_t *)memchr(name, 0, strings->size - name_offset);
+      if (terminator == NULL || terminator == name) {
+        status = malformed(diagnostic, "graph I/O symbol name is empty or unterminated");
+        goto cleanup;
+      }
+      name_size = (size_t)(terminator - name);
+      if (!graph_symbol_name_is_utf8(name, name_size) ||
+          !npunlock_checked_add_size(names_size, name_size, &names_size) ||
+          !npunlock_checked_add_size(symbol_count, 1u, &symbol_count)) {
+        status = unsupported(diagnostic, "graph I/O symbol name or count is unsupported");
+        goto cleanup;
+      }
+    }
+  }
+  if (symbol_count == 0u) {
+    status = unsupported(diagnostic, "graph I/O symbol tables contain no tensor symbols");
+    goto cleanup;
+  }
+  if (!npunlock_checked_mul_size(symbol_count, sizeof(*result), &records_size) ||
+      !npunlock_checked_add_size(records_size, names_size, &allocation_size)) {
+    status = npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OVERFLOW,
+                                     "patchblob.inspect_graph_io_symbols",
+                                     "graph I/O symbol result allocation overflows");
+    goto cleanup;
+  }
+  result = (patchblob_graph_io_symbol *)calloc(1u, allocation_size);
+  if (result == NULL) {
+    status = npunlock_set_diagnostic(diagnostic, NPUNLOCK_STATUS_OUT_OF_MEMORY,
+                                     "patchblob.inspect_graph_io_symbols",
+                                     "could not allocate graph I/O symbol result");
+    goto cleanup;
+  }
+  {
+    uint8_t *name_cursor = (uint8_t *)result + records_size;
+    size_t result_index = 0u;
+    for (table_kind_index = 0; table_kind_index < 2u; ++table_kind_index) {
+      const graph_section *symbols = &layout.sections[table_indices[table_kind_index]];
+      const graph_section *strings = &layout.sections[symbols->link];
+      size_t table_symbol_count = symbols->size / ELF64_SYMBOL_SIZE;
+      size_t symbol_index;
+      for (symbol_index = 1u; symbol_index < table_symbol_count; ++symbol_index) {
+        const uint8_t *symbol =
+            layout.blob.data + symbols->offset + symbol_index * ELF64_SYMBOL_SIZE;
+        const uint8_t *name = layout.blob.data + strings->offset + read_u32(symbol);
+        size_t name_size = strlen((const char *)name);
+        patchblob_graph_io_symbol *record = &result[result_index++];
+        record->struct_size = (uint32_t)sizeof(*record);
+        record->kind = table_kinds[table_kind_index];
+        record->symbol_table_index = (uint32_t)table_indices[table_kind_index];
+        record->symbol_index = (uint32_t)symbol_index;
+        record->size_bytes = read_u64(symbol + 16u);
+        record->name_utf8.data = name_cursor;
+        record->name_utf8.size = name_size;
+        memcpy(name_cursor, name, name_size);
+        name_cursor += name_size;
+      }
+    }
+  }
+  *symbols_out = result;
+  *symbol_count_out = symbol_count;
+  status = NPUNLOCK_STATUS_OK;
+
+cleanup:
+  if (status != NPUNLOCK_STATUS_OK) {
+    free(result);
+  }
+  graph_layout_release(&layout);
+  return status;
 }
 
 static npunlock_status classify_dma_endpoint(const graph_layout *layout,

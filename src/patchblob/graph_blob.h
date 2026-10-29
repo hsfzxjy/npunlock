@@ -535,6 +535,7 @@ typedef struct npunlock_graph_routing_observations {
   PATCHBLOB_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED
 #define NPUNLOCK_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED                                             \
   PATCHBLOB_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED
+#define NPUNLOCK_COMPARE_GRAPH_IO_CHANGED PATCHBLOB_COMPARE_GRAPH_IO_CHANGED
 
 typedef struct npunlock_graph_routing_comparison {
   uint32_t mismatch_flags;
@@ -588,6 +589,10 @@ npunlock_status npunlock_derive_graph_input_act_covers(
     size_t group_count, const npunlock_dma_task_observation *dma_tasks, size_t dma_task_count,
     npunlock_graph_input_act_cover_observation **covers, size_t *cover_count,
     npunlock_diagnostic *diagnostic);
+npunlock_status npunlock_inspect_graph_io_symbols(npunlock_view graph_blob,
+                                                  patchblob_graph_io_symbol **symbols,
+                                                  size_t *symbol_count,
+                                                  npunlock_diagnostic *diagnostic);
 npunlock_status npunlock_derive_act_dma_act_input_observations(
     const npunlock_invocation_routing_observation *invocations, size_t invocation_count,
     size_t group_count, const npunlock_dma_task_observation *dma_tasks, size_t dma_task_count,

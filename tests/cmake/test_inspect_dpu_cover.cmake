@@ -13,7 +13,9 @@ if(NOT result EQUAL 0)
 endif()
 
 foreach(expected
-    "\"schema\": \"npunlock.porting.inspect.v25\""
+    "\"schema\": \"npunlock.porting.inspect.v26\""
+    "\"kind\": \"input\", \"symbol_table_index\": 24, \"symbol_index\": 1, \"size_bytes\": 64, \"name\": \"input\""
+    "\"kind\": \"output\", \"symbol_table_index\": 25, \"symbol_index\": 1, \"size_bytes\": 32, \"name\": \"output\""
     "\"precision\": \"mixed\""
     "\"dpu_section_index\": 14"
     "\"graph_input_act_cover_observations\""

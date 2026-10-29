@@ -378,12 +378,38 @@ void patchblob_discovery_result_v2_release(patchblob_discovery_result_v2 *result
   memset(result, 0, sizeof(*result));
 }
 
+static bool graph_io_symbols_equal(const patchblob_graph_io_symbol *left, size_t left_count,
+                                   const patchblob_graph_io_symbol *right, size_t right_count) {
+  size_t index;
+  if (left_count != right_count || (left == NULL && left_count != 0u) ||
+      (right == NULL && right_count != 0u)) {
+    return false;
+  }
+  for (index = 0; index < left_count; ++index) {
+    if (left[index].kind != right[index].kind ||
+        left[index].symbol_table_index != right[index].symbol_table_index ||
+        left[index].symbol_index != right[index].symbol_index ||
+        left[index].size_bytes != right[index].size_bytes ||
+        left[index].name_utf8.size != right[index].name_utf8.size ||
+        (left[index].name_utf8.size != 0u &&
+         memcmp(left[index].name_utf8.data, right[index].name_utf8.data,
+                left[index].name_utf8.size) != 0)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 npunlock_status patchblob_compare_graphs(npunlock_view baseline_graph_blob,
                                          npunlock_view candidate_graph_blob,
                                          patchblob_comparison_result *result) {
   npunlock_graph_routing_observations baseline = {0};
   npunlock_graph_routing_observations candidate = {0};
   npunlock_graph_routing_comparison comparison = {0};
+  patchblob_graph_io_symbol *baseline_io = NULL;
+  patchblob_graph_io_symbol *candidate_io = NULL;
+  size_t baseline_io_count = 0u;
+  size_t candidate_io_count = 0u;
   npunlock_status status;
   if (result == NULL) {
     return NPUNLOCK_STATUS_INVALID_ARGUMENT;
@@ -404,10 +430,24 @@ npunlock_status patchblob_compare_graphs(npunlock_view baseline_graph_blob,
   if (status != NPUNLOCK_STATUS_OK) {
     goto cleanup;
   }
+  status = npunlock_inspect_graph_io_symbols(baseline_graph_blob, &baseline_io, &baseline_io_count,
+                                             &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
+  status = npunlock_inspect_graph_io_symbols(candidate_graph_blob, &candidate_io,
+                                             &candidate_io_count, &result->diagnostic);
+  if (status != NPUNLOCK_STATUS_OK) {
+    goto cleanup;
+  }
   status = npunlock_compare_graph_routing_observations(&baseline, &candidate, &comparison,
                                                        &result->diagnostic);
   if (status != NPUNLOCK_STATUS_OK) {
     goto cleanup;
+  }
+  if (!graph_io_symbols_equal(baseline_io, baseline_io_count, candidate_io, candidate_io_count)) {
+    comparison.mismatch_flags |= NPUNLOCK_COMPARE_GRAPH_IO_CHANGED;
+    comparison.contract_stable = false;
   }
   result->mismatch_flags = comparison.mismatch_flags;
   result->contract_stable = comparison.contract_stable ? 1u : 0u;
@@ -418,6 +458,8 @@ npunlock_status patchblob_compare_graphs(npunlock_view baseline_graph_blob,
   comparison.changed_group_count = 0u;
 
 cleanup:
+  free(baseline_io);
+  free(candidate_io);
   npunlock_graph_routing_observations_release(&baseline);
   npunlock_graph_routing_observations_release(&candidate);
   npunlock_graph_routing_comparison_release(&comparison);
@@ -1189,6 +1231,33 @@ void patchblob_exact_relation_result_release(patchblob_exact_relation_result *re
     return;
   }
   free(result->relations);
+  npunlock_diagnostic_release(&result->diagnostic);
+  memset(result, 0, sizeof(*result));
+}
+
+npunlock_status patchblob_inspect_graph_io_symbols(npunlock_view graph_blob,
+                                                   patchblob_graph_io_symbol_result *result) {
+  npunlock_status status;
+  if (result == NULL) {
+    return NPUNLOCK_STATUS_INVALID_ARGUMENT;
+  }
+  memset(result, 0, sizeof(*result));
+  result->struct_size = (uint32_t)sizeof(*result);
+  if (!npunlock_view_is_valid(graph_blob) || graph_blob.size == 0u) {
+    return npunlock_set_diagnostic(&result->diagnostic, NPUNLOCK_STATUS_INVALID_ARGUMENT,
+                                   "patchblob.inspect_graph_io_symbols",
+                                   "graph blob view must be non-empty");
+  }
+  status = npunlock_inspect_graph_io_symbols(graph_blob, &result->symbols, &result->symbol_count,
+                                             &result->diagnostic);
+  return status;
+}
+
+void patchblob_graph_io_symbol_result_release(patchblob_graph_io_symbol_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->symbols);
   npunlock_diagnostic_release(&result->diagnostic);
   memset(result, 0, sizeof(*result));
 }

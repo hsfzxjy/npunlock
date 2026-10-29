@@ -59,26 +59,31 @@ static file_buffer read_file(const char *path) {
   return buffer;
 }
 
-static int write_json_string(FILE *stream, const char *value) {
-  const unsigned char *cursor = (const unsigned char *)value;
+static int write_json_view(FILE *stream, npunlock_view value) {
+  size_t index;
   if (fputc('"', stream) == EOF) {
     return 0;
   }
-  while (*cursor != 0) {
-    if (*cursor == '"' || *cursor == '\\') {
-      if (fputc('\\', stream) == EOF || fputc(*cursor, stream) == EOF) {
+  for (index = 0; index < value.size; ++index) {
+    uint8_t byte = value.data[index];
+    if (byte == '"' || byte == '\\') {
+      if (fputc('\\', stream) == EOF || fputc(byte, stream) == EOF) {
         return 0;
       }
-    } else if (*cursor < 0x20) {
-      if (fprintf(stream, "\\u%04x", *cursor) < 0) {
+    } else if (byte < 0x20) {
+      if (fprintf(stream, "\\u%04x", byte) < 0) {
         return 0;
       }
-    } else if (fputc(*cursor, stream) == EOF) {
+    } else if (fputc(byte, stream) == EOF) {
       return 0;
     }
-    ++cursor;
   }
   return fputc('"', stream) != EOF;
+}
+
+static int write_json_string(FILE *stream, const char *value) {
+  return write_json_view(
+      stream, (npunlock_view){(const uint8_t *)value, value == NULL ? 0u : strlen(value)});
 }
 
 static void format_digest(const uint8_t digest[32], char text[65]) {
@@ -199,17 +204,34 @@ static int write_relation_endpoint(FILE *stream, const patchblob_relation_endpoi
 
 static int write_report(FILE *stream, const char *graph_path, const file_buffer *graph,
                         const npunlock_graph_routing_observations *routing,
-                        const patchblob_exact_relation_result *exact_relations) {
+                        const patchblob_exact_relation_result *exact_relations,
+                        const patchblob_graph_io_symbol_result *graph_io_symbols) {
   char graph_hash[65];
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v25\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v26\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
                       "\"loader_elf\": \"1.2.0\", \"mapped_inference\": \"7.0.4\", "
                       "\"source\": \"compatibility_string + version notes\"},\n") < 0 ||
+      fprintf(stream, "  \"graph_io_symbols\": [\n") < 0) {
+    return 0;
+  }
+  for (index = 0; index < graph_io_symbols->symbol_count; ++index) {
+    const patchblob_graph_io_symbol *symbol = &graph_io_symbols->symbols[index];
+    if (fprintf(stream,
+                "%s    {\"kind\": \"%s\", \"symbol_table_index\": %u, "
+                "\"symbol_index\": %u, \"size_bytes\": %" PRIu64 ", \"name\": ",
+                index == 0 ? "" : ",\n",
+                symbol->kind == PATCHBLOB_GRAPH_IO_INPUT ? "input" : "output",
+                symbol->symbol_table_index, symbol->symbol_index, symbol->size_bytes) < 0 ||
+        !write_json_view(stream, symbol->name_utf8) || fprintf(stream, "}") < 0) {
+      return 0;
+    }
+  }
+  if (fprintf(stream, "\n  ],\n") < 0 ||
       fprintf(stream,
               "  \"act\": {\"group_count\": %zu, \"target_count\": %zu, "
               "\"tile_count_observed\": %u, "
@@ -852,7 +874,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   return fprintf(stream,
                  "\n  ],\n  \"scope\": \"observed NPU3720/compiler-8.3 ACT, DPU-invariant, "
                  "network-input/output DMA, and raw DMA-task contract; DMA endpoints "
-                 "come from validated relocations, while transfer geometry and scheduling "
+                 "come from validated relocations; graph I/O names and byte sizes come from "
+                 "dedicated validated symbol tables; transfer geometry and scheduling "
                  "fields remain raw observations; graph-input/ACT covers require a unique "
                  "network-input DMA load, direct scheduling, and either a direct task or a "
                  "full-contract multicast replica classification for every invocation; "
@@ -909,6 +932,7 @@ static int write_mismatch_names(FILE *stream, uint32_t flags) {
       {NPUNLOCK_COMPARE_ACT_DMA_RELATIONS_CHANGED, "act_dma_relations"},
       {NPUNLOCK_COMPARE_ACT_DMA_DPU_RELATIONS_CHANGED, "act_dma_dpu_relations"},
       {NPUNLOCK_COMPARE_ACT_DMA_ACT_RELATIONS_CHANGED, "act_dma_act_relations"},
+      {NPUNLOCK_COMPARE_GRAPH_IO_CHANGED, "graph_io"},
   };
   bool first = true;
   size_t index;
@@ -987,6 +1011,7 @@ int main(int argc, char **argv) {
   npunlock_graph_routing_observations compare_routing = {0};
   npunlock_graph_routing_comparison comparison = {0};
   patchblob_exact_relation_result exact_relations = {0};
+  patchblob_graph_io_symbol_result graph_io_symbols = {0};
   npunlock_diagnostic diagnostic = {0};
   npunlock_status status;
   FILE *report = stdout;
@@ -1056,6 +1081,12 @@ int main(int argc, char **argv) {
       print_diagnostic(&exact_relations.diagnostic);
       goto cleanup;
     }
+    status = patchblob_inspect_graph_io_symbols((npunlock_view){graph.data, graph.size},
+                                                &graph_io_symbols);
+    if (status != NPUNLOCK_STATUS_OK) {
+      print_diagnostic(&graph_io_symbols.diagnostic);
+      goto cleanup;
+    }
   }
   if (report_path != NULL) {
 #ifdef _WIN32
@@ -1070,7 +1101,8 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
   }
-  if (!(compare_path == NULL ? write_report(report, graph_path, &graph, &routing, &exact_relations)
+  if (!(compare_path == NULL ? write_report(report, graph_path, &graph, &routing, &exact_relations,
+                                            &graph_io_symbols)
                              : write_comparison_report(report, graph_path, &graph, compare_path,
                                                        &compare_graph, &comparison)) ||
       fflush(report) != 0) {
@@ -1094,6 +1126,7 @@ cleanup:
   }
   npunlock_graph_routing_observations_release(&routing);
   patchblob_exact_relation_result_release(&exact_relations);
+  patchblob_graph_io_symbol_result_release(&graph_io_symbols);
   npunlock_graph_routing_observations_release(&compare_routing);
   npunlock_graph_routing_comparison_release(&comparison);
   npunlock_diagnostic_release(&diagnostic);

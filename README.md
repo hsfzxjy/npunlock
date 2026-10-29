@@ -1,6 +1,6 @@
 # npunlock
 
-> **Latest ABI breakthrough — 2026-10-28:** [Validated network-input DMA routes can now identify exact graph-input-to-ACT edges without guessing through incomplete tile schedules.](wiki/REVERSE_ENGINEERING.md#74-exact-graph-input-to-act-provenance)
+> **Latest ABI breakthrough — 2026-10-29:** [Dedicated native I/O symbol tables preserve graph value names and now resolve otherwise ambiguous topology proposals without positional guessing.](wiki/REVERSE_ENGINEERING.md#75-native-io-symbol-identities)
 
 Intel NPUs contain programmable ACT-SHAVE cores, but the public software stack
 does not expose a workflow for supplying them with custom C kernels. `npunlock`

@@ -238,6 +238,13 @@ class ExactGraphRelation:
     destination: GraphRelationEndpoint
     evidence_count: int
 
+class GraphIOSymbol:
+    kind: str
+    symbol_table_index: int
+    symbol_index: int
+    size_bytes: int
+    name: str
+
 class NativeTopologyProposal:
     outputs: tuple[Tensor, ...]
     names: tuple[str, ...]
@@ -245,6 +252,7 @@ class NativeTopologyProposal:
     viable_candidates: tuple[tuple[int, ...], ...]
     assignments: tuple[tuple[int, ...], ...]
     relations: tuple[ExactGraphRelation, ...]
+    io_symbols: tuple[GraphIOSymbol, ...]
     reason: str
     truncated: bool
     @property
@@ -468,6 +476,7 @@ class NativeLibraries:
     def compare_graphs(self, baseline_graph_blob: bytes, candidate_graph_blob: bytes) -> GraphComparison: ...
     def inspect_group_completeness(self, graph_blob: bytes) -> tuple[ActGroupCompleteness, ...]: ...
     def inspect_exact_relations(self, graph_blob: bytes) -> tuple[ExactGraphRelation, ...]: ...
+    def inspect_graph_io_symbols(self, graph_blob: bytes) -> tuple[GraphIOSymbol, ...]: ...
     def inspect_group_coverage(self, graph_blob: bytes) -> tuple[ActGroupCoverage, ...]: ...
     def query_ir_provenance(
         self,
@@ -608,6 +617,7 @@ class PreparedGraph:
     ) -> CarrierProbeReport: ...
     def inspect_group_completeness(self) -> tuple[ActGroupCompleteness, ...]: ...
     def inspect_exact_relations(self) -> tuple[ExactGraphRelation, ...]: ...
+    def inspect_graph_io_symbols(self) -> tuple[GraphIOSymbol, ...]: ...
     def propose_native_topology_mapping(self) -> NativeTopologyProposal: ...
     def inspect_group_coverage(self) -> tuple[ActGroupCoverage, ...]: ...
     def probe_binding(
