@@ -500,6 +500,7 @@ static void configure_contiguous_dma(npunlock_dma_task_observation *task, uint32
 static int test_graph_input_act_covers(void) {
   npunlock_invocation_routing_observation invocations[2];
   npunlock_dma_task_observation dma;
+  npunlock_dma_task_observation transitive_dma[4];
   npunlock_graph_input_act_cover_observation *covers = NULL;
   size_t cover_count = 0;
   npunlock_diagnostic diagnostic = {0};
@@ -527,6 +528,7 @@ static int test_graph_input_act_covers(void) {
   CHECK(covers[0].input_symbol_raw == 7);
   CHECK(covers[0].invocation_count == 2);
   CHECK(covers[0].direct_dma_task_count == 1);
+  CHECK(covers[0].transitive_dma_task_count == 0);
   CHECK(covers[0].replica_invocation_count == 1);
   CHECK(covers[0].source_span_bytes == 16);
   free(covers);
@@ -537,6 +539,49 @@ static int test_graph_input_act_covers(void) {
                                                &diagnostic) == NPUNLOCK_STATUS_OK);
   CHECK(cover_count == 1);
   CHECK(!covers[0].exact_cover);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_GRAPH_INPUT_ACT_INVOCATION_UNCLASSIFIED) != 0);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_GRAPH_INPUT_ACT_REPLICA_UNRESOLVED) != 0);
+  free(covers);
+  covers = NULL;
+
+  configure_edge_invocation(&invocations[0], 0, 0, 128, 192, 2, 16);
+  configure_edge_invocation(&invocations[1], 1, 0, 2097280, 2097344, 2, 16);
+  invocations[1].tile_candidate_raw = 1;
+  configure_contiguous_dma(&transitive_dma[0], 5, 1, 0, 16, 0, 4);
+  transitive_dma[0].source.memory_kind = NPUNLOCK_DMA_ENDPOINT_NETWORK_INPUT;
+  transitive_dma[0].source.relocation_type = 0;
+  transitive_dma[0].source.symbol_table_index = 26;
+  transitive_dma[0].source.symbol_raw = 7;
+  transitive_dma[0].destination.memory_kind = NPUNLOCK_DMA_ENDPOINT_CMX;
+  transitive_dma[0].destination.relocation_type = 0;
+  transitive_dma[0].destination.addend_raw = 128;
+  configure_contiguous_dma(&transitive_dma[1], 5, 3, 0, 16, 4, 2);
+  configure_contiguous_dma(&transitive_dma[2], 6, 0, 1, 16, 0, 2);
+  transitive_dma[2].source.memory_kind = NPUNLOCK_DMA_ENDPOINT_NETWORK_INPUT;
+  transitive_dma[2].source.relocation_type = 0;
+  transitive_dma[2].source.symbol_table_index = 26;
+  transitive_dma[2].source.symbol_raw = 7;
+  transitive_dma[2].source.addend_raw = 16;
+  transitive_dma[2].destination.memory_kind = NPUNLOCK_DMA_ENDPOINT_CMX;
+  transitive_dma[2].destination.relocation_type = 0;
+  transitive_dma[2].destination.addend_raw = 2097280;
+  CHECK(npunlock_derive_graph_input_act_covers(invocations, 2, 1, transitive_dma, 3, &covers,
+                                               &cover_count, &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(covers[0].exact_cover);
+  CHECK(covers[0].direct_dma_task_count == 1);
+  CHECK(covers[0].transitive_dma_task_count == 1);
+  CHECK(covers[0].replica_invocation_count == 0);
+  CHECK(covers[0].source_span_bytes == 32);
+  free(covers);
+  covers = NULL;
+
+  configure_contiguous_dma(&transitive_dma[3], 5, 4, 0, 16, 4, 2);
+  CHECK(npunlock_derive_graph_input_act_covers(invocations, 2, 1, transitive_dma, 4, &covers,
+                                               &cover_count, &diagnostic) == NPUNLOCK_STATUS_OK);
+  CHECK(cover_count == 1);
+  CHECK(!covers[0].exact_cover);
+  CHECK((covers[0].unresolved_flags & NPUNLOCK_GRAPH_INPUT_ACT_SCHEDULE_UNRESOLVED) != 0);
   CHECK((covers[0].unresolved_flags & NPUNLOCK_GRAPH_INPUT_ACT_INVOCATION_UNCLASSIFIED) != 0);
   CHECK((covers[0].unresolved_flags & NPUNLOCK_GRAPH_INPUT_ACT_REPLICA_UNRESOLVED) != 0);
   free(covers);

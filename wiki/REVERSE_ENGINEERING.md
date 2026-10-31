@@ -2292,6 +2292,9 @@ replica. Schema v25 reports the attempted cover with
 the edge. Inferring engine order or transitive DMA scheduling here would need
 separate evidence; the implementation does not assume it.
 
+Section 76 supplies that separate bounded evidence and closes this particular
+edge without generalizing to arbitrary DMA schedule traversal.
+
 At this stage the raw input symbols were not yet Python input names and were
 not consumed by the mapping proposal or patch selector. The result was an
 exact native provenance edge where scheduling evidence was complete, plus an
@@ -2335,6 +2338,36 @@ compiler contract, but it is still not automatic patch authority. Other
 compiler versions may omit, rewrite, or duplicate names; ordinary operations
 and multi-group custom nodes remain outside this proposal; and every selected
 group still needs its tensor and coverage evidence.
+
+## 76. Bounded transitive graph-input scheduling
+
+On 2026-10-31, the unresolved second input of the retained connected
+mixed-precision graph was traced through its complete DMA schedule. Named
+input `peer` is represented by two relocation-backed 32-byte network-input
+loads. The engine-1 load posts barrier `0x2`, which directly satisfies the
+tile-1 ACT invocation. The engine-0 load posts `0x4`; a later task in that same
+DMA section and engine waits on `0x4`, posts `0x2`, and the tile-0 ACT
+invocation waits on `0x2`.
+
+Inspector schema v27 recognizes only this bounded form: a direct
+DMA-post/ACT-wait intersection, or exactly one later relay task in the same
+DMA section and engine. The source task must still match the ACT input's CMX
+symbol, address, and exact byte span. No relay, a backwards relay, another
+engine, or more than one candidate relay fails closed. The detailed cover now
+separates direct and transitive DMA-task counts.
+
+For `peer`, the direct and relayed loads retain the same input symbol and cover
+source intervals `[0,32)` and `[32,64)` without overlap. Both ACT invocations
+are therefore classified, the union matches the symbol's observed 64-byte
+size, and `exact_relations` now emits input symbol 2 to ACT group 1 with
+evidence count 2. Together with section 75, the exact native topology now
+contains both named graph-input edges of this three-custom-kernel graph.
+
+This result does not establish arbitrary transitive scheduling, DMA engine
+ordering, or semantic data flow from barrier masks alone. The implementation
+uses the relay only after relocation and CMX equality have already identified
+the same input data, and retains the one-relay/same-engine restriction until
+different schedules provide new evidence.
 
 ## What remains deliberately unresolved
 

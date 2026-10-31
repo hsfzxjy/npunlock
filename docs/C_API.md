@@ -344,10 +344,12 @@ projects all complete, uniquely covered routes into endpoint pairs: graph
 input to ACT group, ACT group to graph output, ACT group to ACT group, ACT
 group to DPU invariant, and DPU invariant to ACT group, with DMA-mediated
 forms kept distinct. Graph-input endpoints use a raw input symbol plus its
-symbol-table section; they are not source-level input names. All endpoint
-indices are native identities, not source-node identities. This read-only
-topology result must not be treated as an automatic patch selector. Release
-it with `patchblob_exact_relation_result_release()`.
+symbol-table section. Their scheduling proof accepts a direct dependency or
+one uniquely identified forward relay in the same DMA engine; it rejects a
+missing or ambiguous relay. All endpoint indices are native identities, not
+source-node identities. This read-only topology result must not be treated as
+an automatic patch selector. Release it with
+`patchblob_exact_relation_result_release()`.
 
 `patchblob_inspect_graph_io_symbols()` returns the validated non-null records
 from the native graph's dedicated input and output symbol tables. Each record

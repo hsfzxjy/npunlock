@@ -478,6 +478,11 @@ identities—and the result is never consumed as an automatic patch selector.
 A `graph_input` endpoint contains the native raw symbol and symbol-table
 section, not the name of an `npu.input()` object.
 
+Graph-input edges may use either a direct DMA-to-ACT barrier dependency or one
+uniquely identified forward relay on the same DMA engine. The inspector keeps
+direct and relayed task counts separate and omits the exact relation when the
+relay is missing or ambiguous.
+
 Resolve the separately validated native I/O names when you need that identity
 bridge:
 

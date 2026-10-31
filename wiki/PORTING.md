@@ -218,6 +218,15 @@ candidate. Missing, duplicated, or unmatched names contribute no negative
 evidence, so older ambiguous cases stay ambiguous instead of falling back to
 symbol order.
 
+Schema v27 extends only the graph-input scheduling proof. A network-input DMA
+load may reach its matching ACT invocation through one later task in the same
+DMA section and engine when the raw masks form an exact two-hop chain. The
+report distinguishes `direct_dma_task_count` from
+`transitive_dma_task_count`; zero or several possible relays remain
+unresolved. On the retained connected mixed-precision graph this proves both
+32-byte halves of named input `peer` feed ACT group 1, so the source interval
+union is the input's complete 64 bytes.
+
 To apply that strict comparison without a custom parser, inspect a controlled
 baseline and one-perturbation candidate together:
 

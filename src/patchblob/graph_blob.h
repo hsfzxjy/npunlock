@@ -168,6 +168,7 @@ typedef struct npunlock_act_dma_fanin_observation {
 #define NPUNLOCK_GRAPH_INPUT_ACT_SOURCE_MISMATCH (1u << 3)
 #define NPUNLOCK_GRAPH_INPUT_ACT_SOURCE_COVER_UNRESOLVED (1u << 4)
 #define NPUNLOCK_GRAPH_INPUT_ACT_REPLICA_UNRESOLVED (1u << 5)
+#define NPUNLOCK_GRAPH_INPUT_ACT_SCHEDULE_UNRESOLVED (1u << 6)
 
 typedef struct npunlock_graph_input_act_cover_observation {
   uint32_t act_group_index;
@@ -176,6 +177,7 @@ typedef struct npunlock_graph_input_act_cover_observation {
   uint32_t input_symbol_raw;
   uint32_t invocation_count;
   uint32_t direct_dma_task_count;
+  uint32_t transitive_dma_task_count;
   uint32_t replica_invocation_count;
   uint32_t unresolved_flags;
   uint64_t source_span_bytes;

@@ -845,10 +845,12 @@ endpoint pair; the record keeps their count. Direct and DMA-mediated routes
 remain distinct.
 
 The graph-input relation requires one relocation-backed network-input DMA
-source, an equal-span CMX destination at the ACT input address, and a direct
-barrier dependency. Every invocation in a tiled group must be either directly
-loaded or a unique full-contract replica of a multicast destination. Raw input
-symbols are native identities, not source-level input names.
+source and an equal-span CMX destination at the ACT input address. Scheduling
+must have either a direct DMA-post/ACT-wait intersection or exactly one forward
+relay through a later task in the same DMA section and engine. Every invocation
+in a tiled group must be scheduled this way or be a unique full-contract
+replica of a multicast destination. Multiple candidate relays fail closed.
+Raw input symbols are native identities, not source-level input names.
 
 This projection deliberately omits ambiguous or incomplete candidates. It
 describes native scheduling and byte-interval connectivity, not semantic graph

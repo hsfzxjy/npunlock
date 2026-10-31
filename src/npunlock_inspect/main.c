@@ -210,7 +210,7 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
   size_t index;
   hash_view((npunlock_view){graph->data, graph->size}, graph_hash);
   if (fprintf(stream,
-              "{\n  \"schema\": \"npunlock.porting.inspect.v26\",\n  \"graph\": {\"path\": ") < 0 ||
+              "{\n  \"schema\": \"npunlock.porting.inspect.v27\",\n  \"graph\": {\"path\": ") < 0 ||
       !write_json_string(stream, graph_path) ||
       fprintf(stream, ", \"size\": %zu, \"sha256\": \"%s\"},\n", graph->size, graph_hash) < 0 ||
       fprintf(stream, "  \"graph_contract\": {\"compiler\": \"8.3\", \"npu\": \"3720\", "
@@ -592,13 +592,14 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                 "%s    {\"act_group_index\": %u, \"act_tensor_record_index\": %u, "
                 "\"input_symbol_table_index\": %u, \"input_symbol_raw\": %u, "
                 "\"invocation_count\": %u, \"direct_dma_task_count\": %u, "
+                "\"transitive_dma_task_count\": %u, "
                 "\"replica_invocation_count\": %u, \"source_span_bytes\": %" PRIu64
                 ", \"exact_cover\": %s, \"unresolved_flags\": %u}",
                 index == 0 ? "" : ",\n", cover->act_group_index, cover->act_tensor_record_index,
                 cover->input_symbol_table_index, cover->input_symbol_raw, cover->invocation_count,
-                cover->direct_dma_task_count, cover->replica_invocation_count,
-                cover->source_span_bytes, cover->exact_cover ? "true" : "false",
-                cover->unresolved_flags) < 0) {
+                cover->direct_dma_task_count, cover->transitive_dma_task_count,
+                cover->replica_invocation_count, cover->source_span_bytes,
+                cover->exact_cover ? "true" : "false", cover->unresolved_flags) < 0) {
       return 0;
     }
   }
@@ -877,7 +878,8 @@ static int write_report(FILE *stream, const char *graph_path, const file_buffer 
                  "come from validated relocations; graph I/O names and byte sizes come from "
                  "dedicated validated symbol tables; transfer geometry and scheduling "
                  "fields remain raw observations; graph-input/ACT covers require a unique "
-                 "network-input DMA load, direct scheduling, and either a direct task or a "
+                 "network-input DMA load, either a direct post/wait dependency or exactly one "
+                 "forward same-engine DMA scheduling relay, and a scheduled task or "
                  "full-contract multicast replica classification for every invocation; "
                  "ACT/DMA source candidates require an exact "
                  "CMX interval and direct schedule match; fan-in observations additionally "

@@ -22,7 +22,7 @@ if(NOT first_output STREQUAL second_output)
 endif()
 
 foreach(required
-    "\"schema\": \"npunlock.porting.inspect.v26\""
+    "\"schema\": \"npunlock.porting.inspect.v27\""
     "\"graph_io_symbols\""
     "\"dma\""
     "\"tasks\""

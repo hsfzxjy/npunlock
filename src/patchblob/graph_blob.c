@@ -4990,24 +4990,58 @@ static bool replica_contracts_match(const npunlock_invocation_routing_observatio
   return true;
 }
 
+static uint32_t graph_input_dma_direct_or_same_engine_relay_hops(
+    const npunlock_invocation_routing_observation *invocation,
+    const npunlock_dma_task_observation *source, const npunlock_dma_task_observation *dma_tasks,
+    size_t dma_task_count) {
+  size_t index;
+  size_t relay_count = 0u;
+  if ((source->post_mask_raw & invocation->wait_mask_raw) != 0u) {
+    return 1u;
+  }
+  for (index = 0; index < dma_task_count; ++index) {
+    const npunlock_dma_task_observation *relay = &dma_tasks[index];
+    if (relay == source || relay->section_index != source->section_index ||
+        relay->engine_index != source->engine_index || relay->task_index <= source->task_index ||
+        (source->post_mask_raw & relay->wait_mask_raw) == 0u ||
+        (relay->post_mask_raw & invocation->wait_mask_raw) == 0u) {
+      continue;
+    }
+    ++relay_count;
+  }
+  return relay_count == 1u ? 2u : 0u;
+}
+
 static bool graph_input_dma_matches(const npunlock_invocation_routing_observation *invocation,
-                                    size_t tensor_index, const npunlock_dma_task_observation *dma) {
+                                    size_t tensor_index, const npunlock_dma_task_observation *dma,
+                                    const npunlock_dma_task_observation *dma_tasks,
+                                    size_t dma_task_count, uint32_t *schedule_hops,
+                                    bool *address_matched) {
   const patchblob_tensor_contract_v2 *tensor = &invocation->target.tensors[tensor_index];
   const npunlock_tensor_routing_observation *routing = &invocation->tensors[tensor_index];
-  uint64_t barrier_intersection = dma->post_mask_raw & invocation->wait_mask_raw;
   bool direct_cmx =
       dma->destination.relocation_type == R_VPU_64 && dma->destination_value_raw == 0u;
   bool multicast_cmx = dma->destination.relocation_type == R_VPU_64_OR &&
                        dma->destination_value_raw == UINT64_C(0xc00000);
-  return tensor->role == PATCHBLOB_TENSOR_ROLE_INPUT_V2 && tensor->span_bytes != 0u &&
-         tensor->span_bytes <= UINT32_MAX && routing->data_addend >= 0 &&
-         dma_task_is_simple_contiguous(dma) &&
-         dma->source.memory_kind == NPUNLOCK_DMA_ENDPOINT_NETWORK_INPUT &&
-         dma->source.relocation_type == R_VPU_64 && dma->source_value_raw == 0u &&
-         dma->source.addend_raw >= 0 && dma->destination.memory_kind == NPUNLOCK_DMA_ENDPOINT_CMX &&
-         (direct_cmx || multicast_cmx) && dma->destination.symbol_raw == routing->data_symbol &&
-         dma->destination.addend_raw == routing->data_addend &&
-         dma->length_bytes == (uint32_t)tensor->span_bytes && barrier_intersection != 0u;
+  if (schedule_hops == NULL || address_matched == NULL) {
+    return false;
+  }
+  *address_matched = false;
+  if (tensor->role != PATCHBLOB_TENSOR_ROLE_INPUT_V2 || tensor->span_bytes == 0u ||
+      tensor->span_bytes > UINT32_MAX || routing->data_addend < 0 ||
+      !dma_task_is_simple_contiguous(dma) ||
+      dma->source.memory_kind != NPUNLOCK_DMA_ENDPOINT_NETWORK_INPUT ||
+      dma->source.relocation_type != R_VPU_64 || dma->source_value_raw != 0u ||
+      dma->source.addend_raw < 0 || dma->destination.memory_kind != NPUNLOCK_DMA_ENDPOINT_CMX ||
+      (!direct_cmx && !multicast_cmx) || dma->destination.symbol_raw != routing->data_symbol ||
+      dma->destination.addend_raw != routing->data_addend ||
+      dma->length_bytes != (uint32_t)tensor->span_bytes) {
+    return false;
+  }
+  *address_matched = true;
+  *schedule_hops =
+      graph_input_dma_direct_or_same_engine_relay_hops(invocation, dma, dma_tasks, dma_task_count);
+  return *schedule_hops != 0u;
 }
 
 static bool dma_task_is_multicast_cmx(const npunlock_dma_task_observation *dma) {
@@ -5027,6 +5061,7 @@ npunlock_status npunlock_derive_graph_input_act_covers(
   size_t result_capacity;
   size_t result_count = 0u;
   size_t allocation_size;
+  size_t work_bound;
   size_t group_index;
   if (covers == NULL || cover_count == NULL || diagnostic == NULL ||
       (invocations == NULL && invocation_count != 0u) ||
@@ -5040,8 +5075,10 @@ npunlock_status npunlock_derive_graph_input_act_covers(
   }
   if (!npunlock_checked_mul_size(group_count, PATCHBLOB_TARGET_V2_MAX_TENSORS - 1u,
                                  &result_capacity) ||
-      !npunlock_checked_mul_size(invocation_count, dma_task_count, &allocation_size) ||
-      allocation_size > ACT_EDGE_MAX_COMPARISONS ||
+      !npunlock_checked_mul_size(invocation_count, dma_task_count, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, dma_task_count, &work_bound) ||
+      !npunlock_checked_mul_size(work_bound, PATCHBLOB_TARGET_V2_MAX_TENSORS - 1u, &work_bound) ||
+      work_bound > ACT_EDGE_MAX_COMPARISONS ||
       !npunlock_checked_mul_size(result_capacity, sizeof(*result), &allocation_size)) {
     return unsupported(diagnostic, "graph-input/ACT cover analysis exceeds its work bound");
   }
@@ -5084,6 +5121,7 @@ npunlock_status npunlock_derive_graph_input_act_covers(
       npunlock_graph_input_act_cover_observation *cover;
       size_t group_invocation_count = 0u;
       size_t direct_count = 0u;
+      size_t transitive_count = 0u;
       size_t replica_count = 0u;
       size_t interval_count = 0u;
       uint32_t initial_unresolved_flags = 0u;
@@ -5095,6 +5133,7 @@ npunlock_status npunlock_derive_graph_input_act_covers(
         const npunlock_dma_task_observation *selected = NULL;
         size_t local_count = 0u;
         size_t dma_index;
+        uint32_t selected_hops = 0u;
         if (invocation->group_index != group_index) {
           continue;
         }
@@ -5104,19 +5143,29 @@ npunlock_status npunlock_derive_graph_input_act_covers(
           continue;
         }
         for (dma_index = 0; dma_index < dma_task_count; ++dma_index) {
-          if (graph_input_dma_matches(invocation, tensor_index, &dma_tasks[dma_index])) {
+          bool address_matched;
+          uint32_t schedule_hops;
+          if (graph_input_dma_matches(invocation, tensor_index, &dma_tasks[dma_index], dma_tasks,
+                                      dma_task_count, &schedule_hops, &address_matched)) {
             selected = &dma_tasks[dma_index];
+            selected_hops = schedule_hops;
             ++local_count;
+          } else if (address_matched) {
+            initial_unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_SCHEDULE_UNRESOLVED;
           }
         }
         if (local_count == 1u) {
           selected_tasks[invocation_index] = selected;
-          ++direct_count;
+          if (selected_hops == 1u) {
+            ++direct_count;
+          } else {
+            ++transitive_count;
+          }
         } else if (local_count > 1u) {
           initial_unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_INPUT_AMBIGUOUS;
         }
       }
-      if (direct_count == 0u) {
+      if (direct_count + transitive_count == 0u) {
         continue;
       }
       if (result_count >= result_capacity) {
@@ -5130,6 +5179,7 @@ npunlock_status npunlock_derive_graph_input_act_covers(
       cover->act_tensor_record_index = (uint32_t)tensor_index;
       cover->invocation_count = (uint32_t)group_invocation_count;
       cover->direct_dma_task_count = (uint32_t)direct_count;
+      cover->transitive_dma_task_count = (uint32_t)transitive_count;
       cover->unresolved_flags = initial_unresolved_flags;
 
       for (invocation_index = 0; invocation_index < invocation_count; ++invocation_index) {
@@ -5187,7 +5237,7 @@ npunlock_status npunlock_derive_graph_input_act_covers(
         }
       }
       cover->replica_invocation_count = (uint32_t)replica_count;
-      if (direct_count + replica_count != group_invocation_count) {
+      if (direct_count + transitive_count + replica_count != group_invocation_count) {
         cover->unresolved_flags |= NPUNLOCK_GRAPH_INPUT_ACT_INVOCATION_UNCLASSIFIED;
       }
       if (interval_count == 0u) {
