@@ -2369,6 +2369,24 @@ uses the relay only after relocation and CMX equality have already identified
 the same input data, and retains the one-relay/same-engine restriction until
 different schedules provide new evidence.
 
+## 77. Graph-wide topology review artifact
+
+On 2026-10-31, the explanation-only topology proposal and the independent
+per-group coverage proofs were joined into one opt-in review artifact. This is
+an integration milestone rather than a new native ABI conclusion.
+
+`review_native_topology_mapping()` first recomputes the current proposal and
+requires exactly one assignment. The caller must then select one complete
+route meaning for every proposed custom node. The resulting record preserves
+the native graph hash, ordered ACT groups, selected route meanings, and full
+coverage records. Missing, extra, stale, ambiguous, unsupported, or incomplete
+evidence is rejected.
+
+The artifact is deliberately report-only. `plan()` does not consume it and no
+group is patched automatically from the proposal. That boundary lets a porter
+review a complete multi-node native explanation without promoting observed
+topology into source identity or patch authority.
+
 ## What remains deliberately unresolved
 
 The experiments above reconstruct a useful path, not a complete Intel NPU SDK.

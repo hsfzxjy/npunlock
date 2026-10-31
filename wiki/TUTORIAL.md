@@ -509,6 +509,31 @@ explanation, not a reviewed binding, and `plan()` will not use it. Independent
 branches remain `ambiguous` when native names are absent, duplicated, or do
 not match the symbolic graph.
 
+For a graph with several custom nodes, you can turn that unique proposal into
+one review record by explicitly choosing what complete native route proves
+each group:
+
+```python
+review = prepared.review_native_topology_mapping(
+    proposal,
+    coverage_kinds={
+        first: "act_consumer",
+        second: "dma_dpu_consumer",
+        result: "direct_output",
+    },
+)
+print(review.explain())
+```
+
+Every proposed custom output must appear exactly once. Each chosen route must
+be `complete` for its assigned ACT group, and the proposal must still be the
+current unique proposal for this prepared graph. `NativeTopologyReview` is a
+report-only artifact: it records the native-blob hash, group assignment,
+coverage meanings, and coverage records, but `plan()` deliberately does not
+accept it. After review, pass the corresponding group choices explicitly to
+`plan()` or use the carrier-probe workflow below when you need a revalidated
+per-node `ReviewedBinding`.
+
 The compact helper runs the probes and combines them with coverage only when
 the identified group has exactly one complete route meaning:
 

@@ -89,6 +89,7 @@ __all__ = [
     "NativeError",
     "NativeLibraries",
     "NativeTopologyProposal",
+    "NativeTopologyReview",
     "NpuProvenance",
     "Node",
     "PatchResult",
@@ -461,6 +462,32 @@ class NativeTopologyProposal:
             lines.append(f"  assignment[{index}]: {bindings}")
         if self.truncated:
             lines.append("  additional assignments were omitted")
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeTopologyReview:
+    """A unique native assignment paired with explicitly selected complete coverage."""
+
+    proposal: NativeTopologyProposal = field(repr=False, compare=False)
+    group_indices: tuple[int, ...]
+    coverage_kinds: tuple[str, ...]
+    coverages: tuple[ActGroupCoverage, ...]
+    baseline_graph_blob_sha256: str
+
+    @property
+    def outputs(self) -> tuple[Tensor, ...]:
+        return self.proposal.outputs
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return self.proposal.names
+
+    def explain(self) -> str:
+        lines = ["native topology review: complete; " f"baseline_graph_blob_sha256={self.baseline_graph_blob_sha256}"]
+        for name, group_index, coverage_kind in zip(self.names, self.group_indices, self.coverage_kinds):
+            lines.append(f"  {name}=group[{group_index}]; coverage={coverage_kind}")
+        lines.append("  evidence only: pass explicit reviewed group choices to plan()")
         return "\n".join(lines)
 
 
@@ -2483,6 +2510,69 @@ class PreparedGraph:
         """Explain single-group assignments allowed by contracts and exact native reachability."""
 
         return _propose_native_topology_mapping(self)
+
+    def review_native_topology_mapping(
+        self,
+        proposal: NativeTopologyProposal | None = None,
+        *,
+        coverage_kinds: Mapping[Tensor, str],
+    ) -> NativeTopologyReview:
+        """Pair one current unique topology proposal with explicit complete coverage kinds."""
+
+        current = self.propose_native_topology_mapping()
+        if proposal is None:
+            proposal = current
+        elif not isinstance(proposal, NativeTopologyProposal):
+            raise TypeError("proposal must be NativeTopologyProposal or None")
+        elif len(proposal.outputs) != len(current.outputs) or any(
+            left is not right for left, right in zip(proposal.outputs, current.outputs)
+        ):
+            raise ValueError("native topology proposal belongs to a different symbolic graph")
+        elif proposal != current:
+            raise ValueError("native topology proposal is stale for this prepared carrier")
+        assignment = proposal.unique_group_indices
+        if assignment is None:
+            raise ValueError(f"native topology review requires one unique assignment; got {proposal.status}")
+        if not isinstance(coverage_kinds, Mapping):
+            raise TypeError("coverage_kinds must map every custom output tensor to one coverage kind")
+        selected_kinds = dict(coverage_kinds)
+        if set(selected_kinds) != set(proposal.outputs):
+            raise ValueError("coverage_kinds must contain every and only the proposed custom outputs")
+        allowed_kinds = {
+            "direct_output",
+            "act_consumer",
+            "dpu_consumer",
+            "dma_dpu_consumer",
+            "dma_act_consumer",
+        }
+        records = self.inspect_group_coverage()
+        if len(records) != len(self.groups):
+            raise RuntimeError("group coverage count does not match prepared ACT groups")
+        reviewed_kinds: list[str] = []
+        reviewed_coverages: list[ActGroupCoverage] = []
+        for output, group_index in zip(proposal.outputs, assignment):
+            coverage_kind = selected_kinds[output]
+            if coverage_kind not in allowed_kinds:
+                raise ValueError(f"unsupported coverage kind {coverage_kind!r}")
+            if not 0 <= group_index < len(records):
+                raise RuntimeError(f"proposed ACT group {group_index} is out of range")
+            coverage = records[group_index]
+            if coverage.group_index != group_index or coverage.invocation_count != len(
+                self.groups[group_index].targets
+            ):
+                raise RuntimeError("group coverage does not match the proposed ACT group")
+            if coverage_kind not in coverage.complete_kinds:
+                state = "not_observed" if coverage_kind not in coverage.observed_kinds else "incomplete"
+                raise ValueError(f"ACT group {group_index} coverage kind {coverage_kind!r} is {state}, not complete")
+            reviewed_kinds.append(coverage_kind)
+            reviewed_coverages.append(coverage)
+        return NativeTopologyReview(
+            proposal,
+            assignment,
+            tuple(reviewed_kinds),
+            tuple(reviewed_coverages),
+            hashlib.sha256(self.ir_provenance.graph_blob).hexdigest(),
+        )
 
     def probe_binding(
         self,

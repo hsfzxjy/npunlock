@@ -346,6 +346,13 @@ but `unique` is not patch authority: ordinary native endpoints are not source
 operations, unmatched symbols stay unlabeled, and `plan()` never consumes the
 proposal.
 
+For a unique proposal, `review_native_topology_mapping()` can pair every
+proposed custom output with a caller-selected complete coverage kind. The
+method rejects missing or extra nodes, stale proposals, ambiguous assignments,
+and incomplete coverage. Its immutable result records the native-blob hash,
+ordered groups, and full coverage records. It remains evidence only: `plan()`
+does not accept the graph-wide review as a binding.
+
 Python callers can make that policy choice explicitly after inspecting both
 reports:
 

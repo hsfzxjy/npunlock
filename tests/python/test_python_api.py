@@ -1321,6 +1321,71 @@ class CompilationFlowTests(unittest.TestCase):
         self.assertEqual(prepared.mappings[0].group_indices, (0,))
         self.assertIn("one assignment", proposal.explain())
 
+    def test_native_topology_review_requires_explicit_complete_coverage_for_every_node(self) -> None:
+        x = npu.input("x", shape=(1, 32), dtype="f16")
+        first = npu.custom(x, source=b"first", carrier="Abs", _name="first")
+        second = npu.custom(first, source=b"second", carrier="Abs", _name="second")
+        fake = FakeNative()
+        fake.discovery_groups = (
+            (npu.PatchTarget(0, 0, 1, 32, 64),),
+            (npu.PatchTarget(1, 1, 1, 32, 64),),
+        )
+        fake.exact_relations = (
+            npu.ExactGraphRelation(
+                "act_to_act",
+                npu.GraphRelationEndpoint("act_group", 0),
+                npu.GraphRelationEndpoint("act_group", 1),
+                1,
+            ),
+            npu.ExactGraphRelation(
+                "act_to_output",
+                npu.GraphRelationEndpoint("act_group", 1),
+                npu.GraphRelationEndpoint("graph_output", 1),
+                1,
+            ),
+        )
+        fake.io_symbols = (
+            npu.GraphIOSymbol("input", 24, 1, 64, "x"),
+            npu.GraphIOSymbol("output", 25, 1, 64, "second"),
+        )
+        fake.coverage = (
+            fake.coverage[0],
+            replace(
+                fake.coverage[0],
+                group_index=1,
+                direct_output_state="complete",
+                act_consumer_state="not_observed",
+            ),
+        )
+        prepared = npu.prepare(
+            npu.Graph([x], [second]),
+            native_dir="unused",
+            libraries=fake,  # type: ignore[arg-type]
+        )
+        proposal = prepared.propose_native_topology_mapping()
+
+        with self.assertRaisesRegex(ValueError, "every and only"):
+            prepared.review_native_topology_mapping(proposal, coverage_kinds={first: "act_consumer"})
+        review = prepared.review_native_topology_mapping(
+            proposal,
+            coverage_kinds={first: "act_consumer", second: "direct_output"},
+        )
+
+        self.assertEqual(review.group_indices, (0, 1))
+        self.assertEqual(review.coverage_kinds, ("act_consumer", "direct_output"))
+        self.assertEqual(review.names, ("first", "second"))
+        self.assertIn("evidence only", review.explain())
+        self.assertEqual(hashlib.sha256(b"native").hexdigest(), review.baseline_graph_blob_sha256)
+        with self.assertRaisesRegex(TypeError, "prepared binding"):
+            prepared.plan(bindings={first: review, second: 1})
+
+        fake.coverage = (fake.coverage[0], replace(fake.coverage[1], direct_output_state="incomplete"))
+        with self.assertRaisesRegex(ValueError, "not complete"):
+            prepared.review_native_topology_mapping(
+                proposal,
+                coverage_kinds={first: "act_consumer", second: "direct_output"},
+            )
+
     def test_native_topology_proposal_uses_unique_output_symbol_names(self) -> None:
         x = npu.input("x", shape=(1, 32), dtype="f16")
         left = npu.custom(x, source=b"left", carrier="Abs", _name="left")
@@ -1389,6 +1454,11 @@ class CompilationFlowTests(unittest.TestCase):
 
         self.assertEqual(proposal.status, "ambiguous")
         self.assertEqual(set(proposal.assignments), {(0, 1), (1, 0)})
+        with self.assertRaisesRegex(ValueError, "requires one unique assignment"):
+            prepared.review_native_topology_mapping(
+                proposal,
+                coverage_kinds={left: "act_consumer", right: "act_consumer"},
+            )
 
     def test_native_topology_proposal_uses_unique_input_symbol_names(self) -> None:
         left_input = npu.input("left_input", shape=(1, 32), dtype="f16")
