@@ -151,7 +151,7 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
     root = graph.node(
         f"{prefix}.elf",
         label=f"{artifact.name} · ELF{elf.elf_class * 32}",
-        spans=[Span(artifact, 0, len(data))],
+        spans=[Span(artifact, 0, len(data), f"{prefix}.elf.complete", "complete artifact", "container")],
         properties={
             "format": f"ELF{elf.elf_class * 32}",
             "byte_order": "little-endian",
@@ -160,12 +160,13 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
             "machine": elf.machine,
             "section_count": len(elf.sections),
         },
+        contributes_to_coverage=False,
         **node_metadata(_ELF_SCHEMA, "elf_image"),
     )
     graph.node(
         f"{prefix}.header",
         label="ELF header",
-        spans=[Span(artifact, 0, elf.header_size)],
+        spans=[Span(artifact, 0, elf.header_size, f"{prefix}.header.bytes", "ELF header", "record")],
         fields=decode_record_fields(_ELF_SCHEMA, f"elf{elf.elf_class * 32}_header", artifact, data, 0),
         addresses={"entry": Address("virtual", elf.entry)},
         parent=root,
@@ -174,15 +175,42 @@ def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix
     table = graph.node(
         f"{prefix}.sections",
         label=f"Section table · {len(elf.sections)} entries",
-        spans=[Span(artifact, elf.section_offset, elf.section_offset + len(elf.sections) * elf.section_entry_size)],
+        spans=[
+            Span(
+                artifact,
+                elf.section_offset,
+                elf.section_offset + len(elf.sections) * elf.section_entry_size,
+                f"{prefix}.sections.table",
+                "section-header table",
+                "table",
+            )
+        ],
         parent=root,
         **node_metadata(_ELF_SCHEMA, "section_table"),
     )
     section_nodes: dict[int, Node] = {}
     for section in elf.sections:
-        spans = [Span(artifact, section.header_offset, section.header_offset + elf.section_entry_size)]
+        spans = [
+            Span(
+                artifact,
+                section.header_offset,
+                section.header_offset + elf.section_entry_size,
+                f"{prefix}.section.{section.index}.header",
+                "section-header entry",
+                "record",
+            )
+        ]
         if section.section_type != 8 and section.size:
-            spans.append(Span(artifact, section.offset, section.offset + section.size))
+            spans.append(
+                Span(
+                    artifact,
+                    section.offset,
+                    section.offset + section.size,
+                    f"{prefix}.section.{section.index}.payload",
+                    "section contents",
+                    "payload",
+                )
+            )
         fields = decode_record_fields(
             _ELF_SCHEMA,
             f"elf{elf.elf_class * 32}_section_header",

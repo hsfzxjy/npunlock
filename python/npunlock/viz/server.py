@@ -65,6 +65,12 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         self._send_bytes(body, "application/json; charset=utf-8", status=status)
 
     def do_POST(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"), 10)
+        except ValueError:
+            length = 0
+        if 0 < length <= MAX_RANGE_BYTES:
+            self.rfile.read(length)
         self._error(HTTPStatus.METHOD_NOT_ALLOWED, "viewer endpoints are read-only")
 
     do_PUT = do_POST

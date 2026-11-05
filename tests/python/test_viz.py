@@ -67,10 +67,20 @@ def test_model_and_serialization() -> None:
         label="Overlap",
         kind="record",
         category="reference",
-        spans=[Span(first, 12, 24), Span(second, 0, 6)],
+        spans=[
+            Span(first, 12, 24, "overlap.primary", "primary bytes", "payload"),
+            Span(second, 0, 6, "overlap.name", "name bytes", "string"),
+        ],
     )
     logical = graph.node("logical", label="No bytes", kind="operation")
-    graph.link(inner, overlap, "references")
+    graph.link(
+        inner,
+        overlap,
+        "references",
+        description="The inner record resolves the overlapping payload.",
+        confidence="confirmed",
+        scope="test fixture",
+    )
     graph.link(logical, inner, "scheduled_as")
     graph.validate()
     assert graph.nodes["logical"].spans == ()
@@ -84,10 +94,22 @@ def test_model_and_serialization() -> None:
         "scope": "test fixture",
         "relevance": "context",
     }
+    assert graph.to_dict()["version"] == 2
+    assert graph.to_dict()["nodes"][0]["fields"]["size"]["confidence"] == "confirmed"
+    assert graph.to_dict()["nodes"][2]["spans"][0]["label"] == "primary bytes"
+    assert graph.to_dict()["links"][0]["description"].startswith("The inner record")
+    assert graph.to_dict()["links"][0]["confidence"] == "confirmed"
 
     portable = graph.dumps(include_data=True)
     restored = ArtifactGraph.loads(portable)
     assert restored.dumps(include_data=True) == portable
+    legacy = json.loads(portable)
+    legacy["version"] = 1
+    legacy_restored = ArtifactGraph.from_dict(legacy)
+    assert legacy_restored.to_dict()["version"] == 2
+    invalid_version = json.loads(portable)
+    invalid_version["version"] = True
+    expect_error(ValueError, ArtifactGraph.from_dict, invalid_version)
     metadata = graph.dumps(include_data=False)
     rebound = ArtifactGraph.loads(metadata, artifact_data={"first": first.read(), "second": second.read()})
     assert rebound.artifacts["first"].sha256 == first.sha256
@@ -96,11 +118,17 @@ def test_model_and_serialization() -> None:
     expect_error(ValueError, Category, "bad", "Bad", "#xyz")
     expect_error(ValueError, Field, 1, (), None, " ")
     expect_error(ValueError, Field, 1, (), None, None, {"bad": float("nan")})
+    expect_error(ValueError, Field, 1, confidence="guess")
     expect_error(ValueError, graph.node, "bad-description", description="")
     invalid = ArtifactGraph("Invalid")
     artifact = invalid.artifact("tiny", data=b"abc")
     invalid.node("past-end", spans=[Span(artifact, 2, 4)])
     expect_error(ValueError, invalid.validate)
+    duplicate_spans = ArtifactGraph("Duplicate spans")
+    duplicate_artifact = duplicate_spans.artifact("a", data=b"abcd")
+    duplicate_spans.node("one", spans=[Span(duplicate_artifact, 0, 1, "same")])
+    duplicate_spans.node("two", spans=[Span(duplicate_artifact, 1, 2, "same")])
+    expect_error(ValueError, duplicate_spans.validate)
     expect_error(ValueError, graph.link, "missing", inner, "bad")
     expect_error(ValueError, graph.contain, inner, outer)
 
@@ -328,6 +356,8 @@ def test_npunlock_fixture_annotations() -> None:
     native_root = graph.nodes["native.elf"]
     assert native_root.spans[0].start == 0
     assert native_root.spans[0].end == graph.artifacts["native"].size
+    assert native_root.spans[0].label == "complete artifact"
+    assert native_root.contributes_to_coverage is False
     assert native_root.properties["format"] == "ELF64"
     assert native_root.properties["section_count"] == 41
     assert sum(node.kind == "ActKernelRange" for node in graph.nodes.values()) == 2
@@ -337,6 +367,7 @@ def test_npunlock_fixture_annotations() -> None:
     assert graph.nodes["native.range.0"].description is not None
     assert graph.nodes["native.range.0"].fields["code_size"].description is not None
     assert graph.nodes["native.range.0"].fields["code_size"].properties["confidence"] == "execution-tested-inference"
+    assert graph.nodes["native.range.0"].fields["code_size"].confidence == "execution-tested-inference"
     exact = [link for link in graph.links if link.kind == "byte_identical_to"]
     assert len(exact) == 1
     assert exact[0].properties["evidence"] == "exact executable-image byte comparison"
@@ -441,7 +472,9 @@ def test_bundled_semantic_schemas() -> None:
     assert fields["entry"].spans[0].size == 4
     assert fields["entry"].display == hex(fields["entry"].value)
     assert fields["entry"].properties["confidence"] == "confirmed"
+    assert fields["entry"].confidence == "confirmed"
     assert fields["ident_padding"].properties["relevance"] == "irrelevant"
+    assert fields["ident_padding"].relevance == "irrelevant"
 
     truncated = ArtifactGraph("Truncated")
     tiny = truncated.artifact("tiny", data=b"\x00" * 8)

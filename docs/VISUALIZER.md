@@ -66,31 +66,39 @@ title. Use `--help` for the complete contract.
 
 ## Model
 
-The serialization envelope is `npunlock.artifact-graph`, version 1.
+The serialization envelope is `npunlock.artifact-graph`, version 2. Version 2
+readers also accept version 1 documents; newly serialized graphs use version 2.
 
 - An `Artifact` has a stable ID, display name, byte size, SHA-256 digest, and
   immutable bytes or a file source. A file is range-read and rejected if its
   size or modification timestamp changes after graph construction.
 - A `Span` is a nonempty file-relative half-open interval `[start, end)` and
-  always identifies its artifact. It never represents a virtual address.
+  always identifies its artifact. It never represents a virtual address. A
+  span may have a stable ID, short label, and role so one entity can distinguish
+  noncontiguous pieces such as a section-header entry and section contents.
 - A `Node` has a stable ID, label, kind, semantic category, optional JSON
-  properties, an optional plain-text description, zero or more spans, fields,
-  and explicitly named non-file `Address` values. Logical nodes need no byte
-  span; one node may cover several noncontiguous spans.
+  properties, an optional plain-text description, typed confidence/scope/
+  relevance metadata, zero or more spans, fields, and explicitly named
+  non-file `Address` values. Logical nodes need no byte span; one node may
+  cover several noncontiguous spans. Container-only nodes can opt out of
+  annotation-coverage calculations without losing their byte span.
 - `Field` optionally identifies its exact byte spans and has optional
   plain-text description and JSON properties. The inspector reports the
   total annotated byte size for each field and uses a stable, distinct field
   color in both the field row and selected entity's hex bytes. Fields without
   exact spans explicitly show that their size is unknown. Descriptor-backed
   fields use properties to carry evidence confidence and the scope in which a
-  meaning was established; the inspector shows those qualifications beside
-  the explanation. A field or node may also set `relevance` to `relevant`,
+  meaning was established; version 2 gives these qualifications explicit
+  fields while retaining version-1 property compatibility. The inspector
+  shows those qualifications beside the explanation. A field or node may set
+  `relevance` to `relevant`,
   `context`, or `irrelevant`. Marking something irrelevant is an affirmative
   semantic claim and must not be inferred merely because its meaning is
   unknown.
 - `contain(parent, child)` defines the single-parent hierarchy. `link(source,
   target, kind)` adds arbitrary typed relationships independently of that
-  hierarchy. Links may cross artifacts.
+  hierarchy. Links may cross artifacts and may carry a plain-text description,
+  confidence, and scope without constraining user-defined relationship kinds.
 - Nested and overlapping spans are valid. The hex view chooses the shortest
   covering span as the primary color, then the deeper hierarchy node. The
   inspector keeps every covering entity reachable.

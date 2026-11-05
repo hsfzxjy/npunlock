@@ -13,7 +13,10 @@ from typing import Any
 
 
 FORMAT = "npunlock.artifact-graph"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+SUPPORTED_FORMAT_VERSIONS = frozenset({1, FORMAT_VERSION})
+CONFIDENCE_VALUES = frozenset({"confirmed", "strong-inference", "execution-tested-inference", "raw", "unresolved"})
+RELEVANCE_VALUES = frozenset({"relevant", "context", "irrelevant"})
 
 
 def _identifier(value: str, what: str) -> str:
@@ -38,6 +41,25 @@ def _optional_description(value: str | None, what: str) -> str | None:
     if not value or value.strip() != value:
         raise ValueError(f"{what} must be non-empty and have no surrounding whitespace")
     return value
+
+
+def _optional_choice(value: str | None, choices: frozenset[str], what: str) -> str | None:
+    if value is None:
+        return None
+    value = _identifier(value, what)
+    if value not in choices:
+        raise ValueError(f"{what} must be one of {sorted(choices)!r}")
+    return value
+
+
+def _legacy_choice(properties: Mapping[str, Any], key: str, choices: frozenset[str]) -> str | None:
+    value = properties.get(key)
+    return value if isinstance(value, str) and value in choices else None
+
+
+def _legacy_text(properties: Mapping[str, Any], key: str) -> str | None:
+    value = properties.get(key)
+    return value if isinstance(value, str) and value and value.strip() == value else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +187,9 @@ class Span:
     artifact: Artifact
     start: int
     end: int
+    id: str | None = None
+    label: str | None = None
+    role: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.artifact, Artifact):
@@ -173,13 +198,25 @@ class Span:
             raise TypeError("span offsets must be integers")
         if self.start < 0 or self.end <= self.start:
             raise ValueError("span must be a non-empty half-open interval [start, end)")
+        if self.id is not None:
+            _identifier(self.id, "span id")
+        _optional_description(self.label, "span label")
+        if self.role is not None:
+            _identifier(self.role, "span role")
 
     @property
     def size(self) -> int:
         return self.end - self.start
 
     def to_dict(self) -> dict[str, Any]:
-        return {"artifact": self.artifact.id, "start": self.start, "end": self.end}
+        value: dict[str, Any] = {"artifact": self.artifact.id, "start": self.start, "end": self.end}
+        if self.id is not None:
+            value["id"] = self.id
+        if self.label is not None:
+            value["label"] = self.label
+        if self.role is not None:
+            value["role"] = self.role
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +226,9 @@ class Field:
     display: str | None = None
     description: str | None = None
     properties: Mapping[str, Any] = field(default_factory=dict)
+    confidence: str | None = None
+    scope: str | None = None
+    relevance: str | None = None
 
     def __init__(
         self,
@@ -197,6 +237,10 @@ class Field:
         display: str | None = None,
         description: str | None = None,
         properties: Mapping[str, Any] | None = None,
+        *,
+        confidence: str | None = None,
+        scope: str | None = None,
+        relevance: str | None = None,
     ) -> None:
         object.__setattr__(self, "value", _json_value(value, "field value"))
         object.__setattr__(self, "spans", tuple(spans))
@@ -204,10 +248,25 @@ class Field:
             raise TypeError("field display must be a string or None")
         object.__setattr__(self, "display", display)
         object.__setattr__(self, "description", _optional_description(description, "field description"))
+        property_values = dict(_json_value(dict(properties or {}), "field properties"))
+        object.__setattr__(self, "properties", property_values)
+        inherited_confidence = (
+            _legacy_choice(property_values, "confidence", CONFIDENCE_VALUES) if confidence is None else confidence
+        )
+        inherited_scope = _legacy_text(property_values, "scope") if scope is None else scope
+        inherited_relevance = (
+            _legacy_choice(property_values, "relevance", RELEVANCE_VALUES) if relevance is None else relevance
+        )
         object.__setattr__(
             self,
-            "properties",
-            dict(_json_value(dict(properties or {}), "field properties")),
+            "confidence",
+            _optional_choice(inherited_confidence, CONFIDENCE_VALUES, "field confidence"),
+        )
+        object.__setattr__(self, "scope", _optional_description(inherited_scope, "field scope"))
+        object.__setattr__(
+            self,
+            "relevance",
+            _optional_choice(inherited_relevance, RELEVANCE_VALUES, "field relevance"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -216,6 +275,12 @@ class Field:
             value["display"] = self.display
         if self.description is not None:
             value["description"] = self.description
+        if self.confidence is not None:
+            value["confidence"] = self.confidence
+        if self.scope is not None:
+            value["scope"] = self.scope
+        if self.relevance is not None:
+            value["relevance"] = self.relevance
         if self.properties:
             value["properties"] = dict(self.properties)
         if self.spans:
@@ -234,6 +299,10 @@ class Node:
     fields: Mapping[str, Field] = field(default_factory=dict)
     addresses: Mapping[str, Address] = field(default_factory=dict)
     description: str | None = None
+    confidence: str | None = None
+    scope: str | None = None
+    relevance: str | None = None
+    contributes_to_coverage: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +311,9 @@ class Link:
     target: str
     kind: str
     properties: Mapping[str, Any] = field(default_factory=dict)
+    description: str | None = None
+    confidence: str | None = None
+    scope: str | None = None
 
 
 class ArtifactGraph:
@@ -289,6 +361,10 @@ class ArtifactGraph:
         fields: Mapping[str, Field | Any] | None = None,
         addresses: Mapping[str, Address | int] | None = None,
         parent: Node | str | None = None,
+        confidence: str | None = None,
+        scope: str | None = None,
+        relevance: str | None = None,
+        contributes_to_coverage: bool = True,
     ) -> Node:
         node_id = _identifier(node_id, "node id")
         if node_id in self.nodes:
@@ -306,16 +382,30 @@ class ArtifactGraph:
         for name, value in (addresses or {}).items():
             name = _identifier(name, "address name")
             address_values[name] = value if isinstance(value, Address) else Address(name, value)
+        property_values = dict(_json_value(dict(properties or {}), "node properties"))
+        inherited_confidence = (
+            _legacy_choice(property_values, "confidence", CONFIDENCE_VALUES) if confidence is None else confidence
+        )
+        inherited_scope = _legacy_text(property_values, "scope") if scope is None else scope
+        inherited_relevance = (
+            _legacy_choice(property_values, "relevance", RELEVANCE_VALUES) if relevance is None else relevance
+        )
+        if not isinstance(contributes_to_coverage, bool):
+            raise TypeError("node contributes_to_coverage must be a boolean")
         node = Node(
             node_id,
             label,
             kind,
             category,
             tuple(spans),
-            dict(_json_value(dict(properties or {}), "node properties")),
+            property_values,
             field_values,
             address_values,
             description,
+            _optional_choice(inherited_confidence, CONFIDENCE_VALUES, "node confidence"),
+            _optional_description(inherited_scope, "node scope"),
+            _optional_choice(inherited_relevance, RELEVANCE_VALUES, "node relevance"),
+            contributes_to_coverage,
         )
         self.nodes[node_id] = node
         if parent is not None:
@@ -349,22 +439,34 @@ class ArtifactGraph:
         kind: str,
         *,
         properties: Mapping[str, Any] | None = None,
+        description: str | None = None,
+        confidence: str | None = None,
+        scope: str | None = None,
     ) -> Link:
         source_id = self._node_id(source)
         target_id = self._node_id(target)
         if source_id not in self.nodes or target_id not in self.nodes:
             raise ValueError("link references an unknown node")
+        property_values = dict(_json_value(dict(properties or {}), "link properties"))
+        inherited_confidence = (
+            _legacy_choice(property_values, "confidence", CONFIDENCE_VALUES) if confidence is None else confidence
+        )
+        inherited_scope = _legacy_text(property_values, "scope") if scope is None else scope
         link = Link(
             source_id,
             target_id,
             _identifier(kind, "link kind"),
-            dict(_json_value(dict(properties or {}), "link properties")),
+            property_values,
+            _optional_description(description, "link description"),
+            _optional_choice(inherited_confidence, CONFIDENCE_VALUES, "link confidence"),
+            _optional_description(inherited_scope, "link scope"),
         )
         self.links.append(link)
         return link
 
     def validate(self) -> None:
         artifact_objects = set(self.artifacts.values())
+        span_ids: set[str] = set()
         for node in self.nodes.values():
             for span in (*node.spans, *(span for value in node.fields.values() for span in value.spans)):
                 if span.artifact not in artifact_objects:
@@ -374,6 +476,10 @@ class ArtifactGraph:
                         f"span [{span.start}, {span.end}) for node {node.id!r} exceeds "
                         f"artifact {span.artifact.id!r} size {span.artifact.size}"
                     )
+                if span.id is not None:
+                    if span.id in span_ids:
+                        raise ValueError(f"duplicate span id: {span.id}")
+                    span_ids.add(span.id)
         for child, parent in self._parents.items():
             if child not in self.nodes or parent not in self.nodes:
                 raise ValueError("containment references an unknown node")
@@ -401,6 +507,14 @@ class ArtifactGraph:
                 value["parent"] = self._parents[node.id]
             if node.description is not None:
                 value["description"] = node.description
+            if node.confidence is not None:
+                value["confidence"] = node.confidence
+            if node.scope is not None:
+                value["scope"] = node.scope
+            if node.relevance is not None:
+                value["relevance"] = node.relevance
+            if not node.contributes_to_coverage:
+                value["contributes_to_coverage"] = False
             nodes.append(value)
         return {
             "format": FORMAT,
@@ -412,16 +526,24 @@ class ArtifactGraph:
             ],
             "artifacts": [artifact.to_dict(include_data=include_data) for artifact in self.artifacts.values()],
             "nodes": nodes,
-            "links": [
-                {
-                    "source": link.source,
-                    "target": link.target,
-                    "kind": link.kind,
-                    "properties": dict(link.properties),
-                }
-                for link in self.links
-            ],
+            "links": [self._link_to_dict(link) for link in self.links],
         }
+
+    @staticmethod
+    def _link_to_dict(link: Link) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "source": link.source,
+            "target": link.target,
+            "kind": link.kind,
+            "properties": dict(link.properties),
+        }
+        if link.description is not None:
+            value["description"] = link.description
+        if link.confidence is not None:
+            value["confidence"] = link.confidence
+        if link.scope is not None:
+            value["scope"] = link.scope
+        return value
 
     def dumps(self, *, include_data: bool = False, indent: int | None = 2) -> str:
         return json.dumps(self.to_dict(include_data=include_data), ensure_ascii=False, indent=indent, allow_nan=False)
@@ -433,7 +555,13 @@ class ArtifactGraph:
         *,
         artifact_data: Mapping[str, bytes | bytearray | memoryview | str | os.PathLike[str]] | None = None,
     ) -> ArtifactGraph:
-        if value.get("format") != FORMAT or value.get("version") != FORMAT_VERSION:
+        version = value.get("version")
+        if (
+            value.get("format") != FORMAT
+            or isinstance(version, bool)
+            or not isinstance(version, int)
+            or version not in SUPPORTED_FORMAT_VERSIONS
+        ):
             raise ValueError("unsupported artifact graph serialization format or version")
         categories = tuple(Category(item["id"], item["label"], item["color"]) for item in value["categories"])
         graph = cls(value["title"], categories=categories)
@@ -457,22 +585,31 @@ class ArtifactGraph:
             )
             if artifact.size != item["size"] or artifact.sha256 != item["sha256"]:
                 raise ValueError(f"serialized artifact {item['id']!r} does not match its bytes")
-        for item in value["nodes"]:
-            spans = tuple(
-                Span(graph.artifacts[span["artifact"]], span["start"], span["end"]) for span in item.get("spans", ())
+
+        def deserialize_span(span: Mapping[str, Any]) -> Span:
+            return Span(
+                graph.artifacts[span["artifact"]],
+                span["start"],
+                span["end"],
+                span.get("id"),
+                span.get("label"),
+                span.get("role"),
             )
+
+        for item in value["nodes"]:
+            spans = tuple(deserialize_span(span) for span in item.get("spans", ()))
             fields: dict[str, Field] = {}
             for name, field_value in item.get("fields", {}).items():
-                field_spans = tuple(
-                    Span(graph.artifacts[span["artifact"]], span["start"], span["end"])
-                    for span in field_value.get("spans", ())
-                )
+                field_spans = tuple(deserialize_span(span) for span in field_value.get("spans", ()))
                 fields[name] = Field(
                     field_value.get("value"),
                     field_spans,
                     field_value.get("display"),
                     field_value.get("description"),
                     field_value.get("properties", {}),
+                    confidence=field_value.get("confidence"),
+                    scope=field_value.get("scope"),
+                    relevance=field_value.get("relevance"),
                 )
             addresses = {
                 name: Address(address["space"], address["value"]) for name, address in item.get("addresses", {}).items()
@@ -487,12 +624,24 @@ class ArtifactGraph:
                 properties=item.get("properties", {}),
                 fields=fields,
                 addresses=addresses,
+                confidence=item.get("confidence"),
+                scope=item.get("scope"),
+                relevance=item.get("relevance"),
+                contributes_to_coverage=item.get("contributes_to_coverage", True),
             )
         for item in value["nodes"]:
             if parent := item.get("parent"):
                 graph.contain(parent, item["id"])
         for item in value.get("links", ()):
-            graph.link(item["source"], item["target"], item["kind"], properties=item.get("properties", {}))
+            graph.link(
+                item["source"],
+                item["target"],
+                item["kind"],
+                properties=item.get("properties", {}),
+                description=item.get("description"),
+                confidence=item.get("confidence"),
+                scope=item.get("scope"),
+            )
         graph.validate()
         return graph
 

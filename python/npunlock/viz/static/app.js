@@ -77,9 +77,9 @@ function unionLength(spans, size) {
     return total;
 }
 function evidenceText(field) {
-    const confidence = field.properties?.confidence;
-    const scope = field.properties?.scope;
-    const relevance = field.properties?.relevance;
+    const confidence = field.confidence ?? field.properties?.confidence;
+    const scope = field.scope ?? field.properties?.scope;
+    const relevance = field.relevance ?? field.properties?.relevance;
     const labels = {
         confirmed: "confirmed",
         "strong-inference": "strong inference",
@@ -277,7 +277,8 @@ class Viewer {
         if (!span)
             return "logical entity";
         const artifact = this.artifacts.get(span.artifact);
-        return `${artifact?.name ?? span.artifact} ${hex(span.start)}–${hex(span.end)} · ${span.end - span.start} B`;
+        const label = span.label ? `${span.label} · ` : "";
+        return `${label}${artifact?.name ?? span.artifact} ${hex(span.start)}–${hex(span.end)} · ${span.end - span.start} B`;
     }
     buildSearchIndex() {
         const entries = [];
@@ -331,7 +332,8 @@ class Viewer {
             return spans.length === 0 || spans.some(span => span.artifact === artifact.id);
         }));
         const mappedSpans = touchedNodes.flatMap(node => node.spans.filter(span => span.artifact === artifact.id
-            && !(node.parent === undefined && span.start === 0 && span.end === artifact.size)));
+            && node.contributes_to_coverage !== false
+            && !(this.graph.version === 1 && node.parent === undefined && span.start === 0 && span.end === artifact.size)));
         const fieldSpans = fields.flatMap(field => (field.spans ?? []).filter(span => span.artifact === artifact.id));
         return {
             entityCount: touchedNodes.length,
@@ -1077,9 +1079,12 @@ class Viewer {
         return `hsl(${hue} 48% 42%)`;
     }
     isIrrelevant(node, fieldName) {
-        if (fieldName && node.fields[fieldName]?.properties?.relevance === "irrelevant")
-            return true;
-        return node.properties.relevance === "irrelevant";
+        if (fieldName) {
+            const field = node.fields[fieldName];
+            if (field?.relevance === "irrelevant" || field?.properties?.relevance === "irrelevant")
+                return true;
+        }
+        return node.relevance === "irrelevant" || node.properties.relevance === "irrelevant";
     }
     displayColor(color, irrelevant) {
         if (!this.options.dimIrrelevant || !irrelevant)
@@ -1241,7 +1246,8 @@ class Viewer {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "jump";
-        button.textContent = `${artifact.name}  ${hex(span.start)}–${hex(span.end)}  (${span.end - span.start})`;
+        const label = span.label ? `${span.label} · ` : "";
+        button.textContent = `${label}${artifact.name}  ${hex(span.start)}–${hex(span.end)}  (${span.end - span.start})`;
         button.addEventListener("click", () => this.navigateSpan(span, this.current.nodeId, undefined, spanIndex));
         return button;
     }
@@ -1333,8 +1339,9 @@ async function main() {
     if (!response.ok)
         throw new Error(`graph request failed: ${response.status}`);
     const graph = await response.json();
-    if (graph.format !== "npunlock.artifact-graph" || graph.version !== 1)
+    if (graph.format !== "npunlock.artifact-graph" || ![1, 2].includes(graph.version)) {
         throw new Error("unsupported artifact graph format");
+    }
     new Viewer(graph);
 }
 main().catch(error => {

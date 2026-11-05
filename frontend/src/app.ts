@@ -10,13 +10,16 @@ import {
   type SearchEntry,
 } from "./search.js";
 
-interface SpanData { artifact: string; start: number; end: number }
+interface SpanData { artifact: string; start: number; end: number; id?: string; label?: string; role?: string }
 interface FieldData {
   value: unknown;
   display?: string;
   description?: string;
   properties?: Record<string, unknown>;
   spans?: SpanData[];
+  confidence?: string;
+  scope?: string;
+  relevance?: string;
 }
 interface AddressData { space: string; value: number }
 interface NodeData {
@@ -30,8 +33,20 @@ interface NodeData {
   fields: Record<string, FieldData>;
   addresses: Record<string, AddressData>;
   parent?: string;
+  confidence?: string;
+  scope?: string;
+  relevance?: string;
+  contributes_to_coverage?: boolean;
 }
-interface LinkData { source: string; target: string; kind: string; properties: Record<string, unknown> }
+interface LinkData {
+  source: string;
+  target: string;
+  kind: string;
+  properties: Record<string, unknown>;
+  description?: string;
+  confidence?: string;
+  scope?: string;
+}
 interface ArtifactData { id: string; name: string; size: number; sha256: string; media_type: string }
 interface CategoryData { id: string; label: string; color: string }
 interface GraphData {
@@ -145,9 +160,9 @@ function unionLength(spans: SpanData[], size: number): number {
 }
 
 function evidenceText(field: FieldData): string | undefined {
-  const confidence = field.properties?.confidence;
-  const scope = field.properties?.scope;
-  const relevance = field.properties?.relevance;
+  const confidence = field.confidence ?? field.properties?.confidence;
+  const scope = field.scope ?? field.properties?.scope;
+  const relevance = field.relevance ?? field.properties?.relevance;
   const labels: Record<string, string> = {
     confirmed: "confirmed",
     "strong-inference": "strong inference",
@@ -332,7 +347,8 @@ class Viewer {
     const span = spans[0];
     if (!span) return "logical entity";
     const artifact = this.artifacts.get(span.artifact);
-    return `${artifact?.name ?? span.artifact} ${hex(span.start)}–${hex(span.end)} · ${span.end - span.start} B`;
+    const label = span.label ? `${span.label} · ` : "";
+    return `${label}${artifact?.name ?? span.artifact} ${hex(span.start)}–${hex(span.end)} · ${span.end - span.start} B`;
   }
 
   private buildSearchIndex(): SearchEntry<SearchTarget>[] {
@@ -391,7 +407,8 @@ class Viewer {
     }));
     const mappedSpans = touchedNodes.flatMap(node => node.spans.filter(span =>
       span.artifact === artifact.id
-      && !(node.parent === undefined && span.start === 0 && span.end === artifact.size)
+      && node.contributes_to_coverage !== false
+      && !(this.graph.version === 1 && node.parent === undefined && span.start === 0 && span.end === artifact.size)
     ));
     const fieldSpans = fields.flatMap(field => (field.spans ?? []).filter(span => span.artifact === artifact.id));
     return {
@@ -1101,8 +1118,11 @@ class Viewer {
   }
 
   private isIrrelevant(node: NodeData, fieldName?: string): boolean {
-    if (fieldName && node.fields[fieldName]?.properties?.relevance === "irrelevant") return true;
-    return node.properties.relevance === "irrelevant";
+    if (fieldName) {
+      const field = node.fields[fieldName];
+      if (field?.relevance === "irrelevant" || field?.properties?.relevance === "irrelevant") return true;
+    }
+    return node.relevance === "irrelevant" || node.properties.relevance === "irrelevant";
   }
 
   private displayColor(color: string, irrelevant: boolean): string {
@@ -1264,7 +1284,8 @@ class Viewer {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "jump";
-    button.textContent = `${artifact.name}  ${hex(span.start)}–${hex(span.end)}  (${span.end - span.start})`;
+    const label = span.label ? `${span.label} · ` : "";
+    button.textContent = `${label}${artifact.name}  ${hex(span.start)}–${hex(span.end)}  (${span.end - span.start})`;
     button.addEventListener("click", () => this.navigateSpan(span, this.current.nodeId, undefined, spanIndex));
     return button;
   }
@@ -1356,7 +1377,9 @@ async function main(): Promise<void> {
   const response = await fetch(new URL("api/graph", window.location.href));
   if (!response.ok) throw new Error(`graph request failed: ${response.status}`);
   const graph = await response.json() as GraphData;
-  if (graph.format !== "npunlock.artifact-graph" || graph.version !== 1) throw new Error("unsupported artifact graph format");
+  if (graph.format !== "npunlock.artifact-graph" || ![1, 2].includes(graph.version)) {
+    throw new Error("unsupported artifact graph format");
+  }
   new Viewer(graph);
 }
 
