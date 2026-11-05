@@ -6,7 +6,7 @@ from os import PathLike
 from typing import Any, Sequence
 
 from ._bundled_schema import load_bundled_schema
-from ._schema import decode_record_fields, lookup, match_rule, node_metadata
+from ._schema import decode_record_fields, link_metadata, lookup, match_rule, node_metadata
 from .model import Address, Artifact, ArtifactGraph, Field, Node, Span
 
 
@@ -144,6 +144,18 @@ def _mark_fields_irrelevant(fields: dict[str, Field], names: Sequence[str], scop
     for name in names:
         field = fields[name]
         fields[name] = _with_field_properties(field, relevance="irrelevant", scope=scope)
+
+
+def _link(
+    graph: ArtifactGraph,
+    source: Node | str,
+    target: Node | str,
+    kind: str,
+    *,
+    properties: dict[str, Any] | None = None,
+) -> None:
+    metadata = link_metadata(_NPU3720_ACT_SCHEMA, kind) or link_metadata(_ELF_SCHEMA, kind) or {}
+    graph.link(source, target, kind, properties=properties, **metadata)
 
 
 def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix: str) -> tuple[_Elf, dict[int, Node]]:
@@ -315,7 +327,7 @@ def _annotate_symbols(
         )
         result[(table_index, symbol_index)] = node
         if section_index != 0 and section_index in section_nodes:
-            graph.link(node, section_nodes[section_index], "defined_in_section")
+            _link(graph, node, section_nodes[section_index], "defined_in_section")
     return result
 
 
@@ -356,12 +368,12 @@ def _annotate_relocations(
             )
             result[(section.index, index)] = node
             if section.info in section_nodes:
-                graph.link(node, section_nodes[section.info], "patches_section")
+                _link(graph, node, section_nodes[section.info], "patches_section")
             symbol_node = symbol_nodes.get((section.link, symbol_index))
             if symbol_node is not None:
-                graph.link(node, symbol_node, "uses_symbol")
+                _link(graph, node, symbol_node, "uses_symbol")
             if symbol and symbol[1] != 0 and symbol[1] in section_nodes:
-                graph.link(node, section_nodes[symbol[1]], "references_section")
+                _link(graph, node, section_nodes[symbol[1]], "references_section")
     return result
 
 
@@ -531,8 +543,8 @@ def _annotate_parameter_records(
             parent=section_nodes[params.index],
             **node_metadata(_NPU3720_ACT_SCHEMA, "parameter_block"),
         )
-        graph.link(invocation_nodes[invocation_index], block, "uses_parameters")
-        graph.link(relocation_nodes[(base_section, base_relocation)], block, "selects_parameter_block")
+        _link(graph, invocation_nodes[invocation_index], block, "uses_parameters")
+        _link(graph, relocation_nodes[(base_section, base_relocation)], block, "selects_parameter_block")
 
         for tensor_index, (data_section, data_relocation, data_symbol, data_addend) in enumerate(record_relocations):
             relative = base + tensor_index * 0x28
@@ -634,10 +646,11 @@ def _annotate_parameter_records(
                 parent=block,
                 **node_metadata(_NPU3720_ACT_SCHEMA, "memref"),
             )
-            graph.link(relocation_nodes[(data_section, data_relocation)], tensor, "resolves_tensor_data")
+            _link(graph, relocation_nodes[(data_section, data_relocation)], tensor, "resolves_tensor_data")
             for kind, array, pointer_section, pointer_relocation in resolved_arrays:
-                graph.link(tensor, array, f"uses_{kind}")
-                graph.link(
+                _link(graph, tensor, array, f"uses_{kind}")
+                _link(
+                    graph,
                     relocation_nodes[(pointer_section, pointer_relocation)],
                     array,
                     f"resolves_{kind}",
@@ -730,7 +743,7 @@ def _annotate_routing_records(
             if stride and target_offset < target.size:
                 target_node = record_nodes.get((target.index, target_offset // stride))
                 if target_node is not None:
-                    graph.link(relocation_nodes[(section.index, index)], target_node, "patches_field")
+                    _link(graph, relocation_nodes[(section.index, index)], target_node, "patches_field")
 
 
 def _annotate_native_records(
@@ -797,7 +810,13 @@ def _annotate_native_records(
                     **node_metadata(_NPU3720_ACT_SCHEMA, "code_image"),
                 )
                 code_nodes[key] = code
-            graph.link(node, code, "selects_code", properties={"evidence": "KernelText relocation + observed extent"})
+            _link(
+                graph,
+                node,
+                code,
+                "selects_code",
+                properties={"evidence": "KernelText relocation + observed extent"},
+            )
     contracts = _target_contracts(target_groups)
     invocation_nodes: list[Node] = []
     for index in range(invocations.size // 0x40):
@@ -817,17 +836,21 @@ def _annotate_native_records(
         )
         invocation_nodes.append(node)
         if range_index < len(range_nodes):
-            graph.link(
-                node, range_nodes[range_index], "selects_range", properties={"evidence": "confirmed index field"}
+            _link(
+                graph,
+                node,
+                range_nodes[range_index],
+                "selects_range",
+                properties={"evidence": "confirmed index field"},
             )
     for relocation_section in ([range_relocations] if range_relocations else []) + invocation_relocations:
         assert relocation_section is not None
         for index, target_offset, _, _, _ in _relocations(data, elf, relocation_section):
             relocation = relocation_nodes[(relocation_section.index, index)]
             if relocation_section.info == ranges.index and target_offset // 0x18 < len(range_nodes):
-                graph.link(relocation, range_nodes[target_offset // 0x18], "patches_field")
+                _link(graph, relocation, range_nodes[target_offset // 0x18], "patches_field")
             if relocation_section.info == invocations.index and target_offset // 0x40 < len(invocation_nodes):
-                graph.link(relocation, invocation_nodes[target_offset // 0x40], "patches_field")
+                _link(graph, relocation, invocation_nodes[target_offset // 0x40], "patches_field")
     _annotate_parameter_records(
         graph,
         artifact,
@@ -912,7 +935,8 @@ def build_npunlock_graph(
             for code in code_nodes:
                 span = code.spans[0]
                 if span.size == len(text_bytes) and native_artifact.read(span.start, span.end) == text_bytes:
-                    graph.link(
+                    _link(
+                        graph,
                         text_node,
                         code,
                         "byte_identical_to",

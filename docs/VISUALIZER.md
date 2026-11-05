@@ -125,6 +125,17 @@ fields and containing entities in deterministic specificity order. Named
 noncontiguous spans use the compact strip controls or `Alt+[`/`Alt+]` without
 losing the selected entity.
 
+The inspector places the selected meaning and evidence before its clickable
+containment path and physical spans. Fields remain in byte order and report
+their encoded size. A small `hide irrelevant` control can collapse only fields
+that are explicitly both `confirmed` and `irrelevant`; raw, inferred, and
+unresolved fields always remain visible. This preference is stored with the
+other viewer options. Incoming and outgoing references are grouped by kind and
+show the destination path, artifact, byte range, size, meaning, and evidence.
+Hovering a destination previews its semantic context without switching
+artifacts or fetching bytes; activating it records the source relationship so
+Back returns to the exact origin.
+
 `graph.dumps(include_data=True)` creates a portable JSON document with base64
 artifact data. The default omits bytes, matching the browser metadata endpoint;
 `ArtifactGraph.loads(..., artifact_data={...})` can bind those metadata-only
@@ -161,7 +172,7 @@ than embedded in the parser. `elf.json` describes ELF32/ELF64 header and
 section-header fields. `npu3720-act-compiler-8.3.json` describes the observed
 ACT range, invocation, and Rela records for the supported carrier family.
 These files own fixed record sizes, relative field offsets and encodings,
-plain-text explanations, node presentation metadata, and section
+plain-text explanations, node and relationship presentation metadata, and section
 classification rules. `descriptor.schema.json` documents their versioned JSON
 shape.
 

@@ -69,6 +69,63 @@
       "description": "Observed 0x130-byte DPU invariant. npunlock decodes selected tensor-shape, type, address-relocation, and scheduling fields for ACT/DPU routing checks."
     }
   },
+  "links": {
+    "patches_field": {
+      "description": "The relocation target offset identifies an exact decoded field in this record.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "uses_parameters": {
+      "description": "This ACT invocation selects the relocation-backed KernelParams block.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "selects_parameter_block": {
+      "description": "This relocation resolves the exact KernelParams block selected by an invocation.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "resolves_tensor_data": {
+      "description": "This relocation resolves the tensor descriptor's CMX data address.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "uses_dimensions": {
+      "description": "The tensor descriptor uses this decoded dimension array.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "resolves_dimensions": {
+      "description": "This relocation resolves the dimension array referenced by the tensor descriptor.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "uses_strides": {
+      "description": "The tensor descriptor uses this decoded bit-stride array.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "resolves_strides": {
+      "description": "This relocation resolves the stride array referenced by the tensor descriptor.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "selects_code": {
+      "description": "The ACT range selects this KernelText slice through a relocation-backed base and observed extent.",
+      "confidence": "execution-tested-inference",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "selects_range": {
+      "description": "The ACT invocation's range index selects this range record.",
+      "confidence": "confirmed",
+      "scope": "NPU3720 compiler-8.3 carrier family"
+    },
+    "byte_identical_to": {
+      "description": "The two executable regions are byte-for-byte identical over their complete extents.",
+      "confidence": "confirmed",
+      "scope": "exact artifact-byte comparison"
+    }
+  },
   "records": {
     "act_kernel_range": {
       "size": 24,

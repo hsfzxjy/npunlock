@@ -29,6 +29,28 @@
       "description": "One ELF symbol-table entry. Relocations use its table index to identify a section or named target."
     }
   },
+  "links": {
+    "defined_in_section": {
+      "description": "The symbol entry names or is defined relative to this ELF section.",
+      "confidence": "confirmed",
+      "scope": "standard ELF symbol semantics"
+    },
+    "patches_section": {
+      "description": "The relocation target offset lies in this ELF section.",
+      "confidence": "confirmed",
+      "scope": "standard ELF relocation semantics"
+    },
+    "uses_symbol": {
+      "description": "The relocation's symbol-table index selects this ELF symbol entry.",
+      "confidence": "confirmed",
+      "scope": "standard ELF relocation semantics"
+    },
+    "references_section": {
+      "description": "The relocation's selected symbol resolves to this ELF section.",
+      "confidence": "confirmed",
+      "scope": "standard ELF relocation semantics"
+    }
+  },
   "records": {
     "elf32_header": {
       "size": 52,

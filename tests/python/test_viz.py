@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from npunlock.viz import Address, ArtifactGraph, Category, Field, Span, build_npunlock_graph, show  # noqa: E402
 from npunlock.viz._bundled_schema import load_bundled_schema  # noqa: E402
-from npunlock.viz._schema import decode_record_fields, validate_schema  # noqa: E402
+from npunlock.viz._schema import decode_record_fields, link_metadata, validate_schema  # noqa: E402
 from npunlock.viz.cli import main as viz_main  # noqa: E402
 
 
@@ -460,6 +460,13 @@ def test_bundled_semantic_schemas() -> None:
     act_schema = load_bundled_schema("npu3720-act-compiler-8.3.json")
     assert validate_schema(elf_schema) is elf_schema
     assert validate_schema(act_schema) is act_schema
+    assert link_metadata(act_schema, "selects_code") == {
+        "description": "The ACT range selects this KernelText slice through a relocation-backed base and observed extent.",
+        "confidence": "execution-tested-inference",
+        "scope": "NPU3720 compiler-8.3 carrier family",
+    }
+    assert link_metadata(elf_schema, "defined_in_section")["confidence"] == "confirmed"
+    assert link_metadata(elf_schema, "not-present") is None
     expect_error(ValueError, load_bundled_schema, "outside.json")
 
     data = (ROOT / "tests/fixtures/npu3720/add1-fp16.elf").read_bytes()
@@ -491,6 +498,10 @@ def test_bundled_semantic_schemas() -> None:
     unknown_relevance = json.loads(json.dumps(elf_schema))
     unknown_relevance["records"]["elf32_header"]["fields"][0]["relevance"] = "probably-unused"
     expect_error(ValueError, validate_schema, unknown_relevance)
+
+    unknown_link_confidence = json.loads(json.dumps(elf_schema))
+    unknown_link_confidence["links"]["defined_in_section"]["confidence"] = "guess"
+    expect_error(ValueError, validate_schema, unknown_link_confidence)
 
 
 def test_dense_model() -> None:
@@ -534,6 +545,9 @@ def test_bundled_frontend() -> None:
     assert "treeFilterState" in javascript
     assert "renderContextStatus" in javascript
     assert "cycleOverlap" in javascript
+    assert "collapseIrrelevantFields" in javascript
+    assert "referenceGroups" in javascript
+    assert "semantic color and evidence" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
@@ -546,6 +560,8 @@ def test_bundled_frontend() -> None:
     assert "border-right: 2px solid var(--select-line)" in stylesheet
     assert ".status-crumb" in stylesheet
     assert ".status-control" in stylesheet
+    assert ".reference-group" in stylesheet
+    assert ".semantic-help" in stylesheet
     index = static.joinpath("index.html").read_text(encoding="utf-8")
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index

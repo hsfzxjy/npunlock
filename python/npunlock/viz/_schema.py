@@ -21,9 +21,9 @@ _ENCODING_SIZES = {
 }
 _VARIABLE_SIZE_ENCODINGS = {"bytes-hex"}
 _DISPLAYS = {None, "hex", "hex-nonnegative"}
-_CONFIDENCE = {"confirmed", "strong-inference", "execution-tested-inference", "raw"}
+_CONFIDENCE = {"confirmed", "strong-inference", "execution-tested-inference", "raw", "unresolved"}
 _RELEVANCE = {"relevant", "context", "irrelevant"}
-_ROOT_KEYS = {"format", "version", "id", "nodes", "records", "lookups", "rules"}
+_ROOT_KEYS = {"format", "version", "id", "nodes", "links", "records", "lookups", "rules"}
 
 
 def _text(value: Any, what: str) -> str:
@@ -53,6 +53,19 @@ def validate_schema(value: Any) -> dict[str, Any]:
             raise ValueError(f"node descriptor {node_id!r} must contain kind, category, and description")
         for key in ("kind", "category", "description"):
             _text(node[key], f"node descriptor {node_id!r} {key}")
+    links = value.get("links", {})
+    if not isinstance(links, dict):
+        raise ValueError("visualization schema links must be an object")
+    for link_id, link in links.items():
+        _text(link_id, "link descriptor id")
+        if not isinstance(link, dict) or set(link) - {"description", "confidence", "scope"}:
+            raise ValueError(f"link descriptor {link_id!r} has unsupported keys")
+        _text(link.get("description"), f"link descriptor {link_id!r} description")
+        confidence = link.get("confidence")
+        if confidence is not None and confidence not in _CONFIDENCE:
+            raise ValueError(f"link descriptor {link_id!r} has unsupported confidence {confidence!r}")
+        if "scope" in link:
+            _text(link["scope"], f"link descriptor {link_id!r} scope")
     for record_id, record in records.items():
         _text(record_id, "record descriptor id")
         if not isinstance(record, dict) or set(record) != {"size", "fields"}:
@@ -160,6 +173,15 @@ def node_metadata(schema: Mapping[str, Any], node_id: str) -> dict[str, str]:
         raise ValueError(f"schema has no node descriptor {node_id!r}") from error
 
 
+def link_metadata(schema: Mapping[str, Any], link_id: str) -> dict[str, str] | None:
+    link = schema.get("links", {}).get(link_id)
+    if link is None:
+        return None
+    if not isinstance(link, Mapping):
+        raise ValueError(f"schema link descriptor {link_id!r} is not an object")
+    return {key: link[key] for key in ("description", "confidence", "scope") if key in link}
+
+
 def lookup(schema: Mapping[str, Any], lookup_id: str, key: str, default: Any = None) -> Any:
     values = schema.get("lookups", {}).get(lookup_id, {})
     if not isinstance(values, dict):
@@ -252,6 +274,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "decode_record_fields",
     "lookup",
+    "link_metadata",
     "match_rule",
     "node_metadata",
     "validate_schema",

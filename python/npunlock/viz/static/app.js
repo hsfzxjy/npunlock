@@ -8,6 +8,7 @@ const OVERSCAN = 8;
 const OPTIONS_KEY = "npunlock.viz.options.v1";
 const DEFAULT_OPTIONS = {
     dimIrrelevant: true,
+    collapseIrrelevantFields: false,
     treeVisible: true,
     inspectorVisible: true,
     treeWidth: null,
@@ -76,15 +77,16 @@ function unionLength(spans, size) {
         total += end - start;
     return total;
 }
-function evidenceText(field) {
-    const confidence = field.confidence ?? field.properties?.confidence;
-    const scope = field.scope ?? field.properties?.scope;
-    const relevance = field.relevance ?? field.properties?.relevance;
+function evidenceText(value) {
+    const confidence = value.confidence ?? value.properties?.confidence;
+    const scope = value.scope ?? value.properties?.scope;
+    const relevance = value.relevance ?? value.properties?.relevance;
     const labels = {
         confirmed: "confirmed",
         "strong-inference": "strong inference",
         "execution-tested-inference": "execution-tested inference",
         raw: "raw observation",
+        unresolved: "unresolved",
     };
     const parts = [];
     if (typeof confidence === "string")
@@ -104,6 +106,9 @@ function loadOptions() {
             return { ...DEFAULT_OPTIONS };
         return {
             dimIrrelevant: typeof value.dimIrrelevant === "boolean" ? value.dimIrrelevant : true,
+            collapseIrrelevantFields: typeof value.collapseIrrelevantFields === "boolean"
+                ? value.collapseIrrelevantFields
+                : false,
             treeVisible: typeof value.treeVisible === "boolean" ? value.treeVisible : true,
             inspectorVisible: typeof value.inspectorVisible === "boolean" ? value.inspectorVisible : true,
             treeWidth: typeof value.treeWidth === "number" && Number.isFinite(value.treeWidth) ? value.treeWidth : null,
@@ -1104,6 +1109,11 @@ class Viewer {
         }
         return node.relevance === "irrelevant" || node.properties.relevance === "irrelevant";
     }
+    isConfirmedIrrelevantField(field) {
+        const relevance = field.relevance ?? field.properties?.relevance;
+        const confidence = field.confidence ?? field.properties?.confidence;
+        return relevance === "irrelevant" && confidence === "confirmed";
+    }
     displayColor(color, irrelevant) {
         if (!this.options.dimIrrelevant || !irrelevant)
             return color;
@@ -1185,18 +1195,23 @@ class Viewer {
         const subtitle = document.createElement("div");
         subtitle.className = "inspector-subtitle";
         subtitle.textContent = node ? `${node.kind} · ${node.id}` : `${this.current.end - this.current.offset} selected byte${this.current.end - this.current.offset === 1 ? "" : "s"}`;
-        this.inspector.append(title, subtitle, this.knowledgeElement(artifact));
+        this.inspector.append(title, subtitle);
         if (node) {
-            if (node.description) {
-                const description = document.createElement("p");
-                description.className = "inspector-description";
-                description.textContent = node.description;
-                this.inspector.append(description);
-            }
-            if (node.spans.length) {
-                const section = this.section("byte spans");
-                for (const [index, span] of node.spans.entries())
-                    section.append(this.spanButton(span, index));
+            const meaning = this.meaningElement(node);
+            if (meaning)
+                this.inspector.append(meaning);
+            this.inspector.append(this.locationElement(node));
+            const fields = this.fieldsElement(node);
+            if (fields)
+                this.inspector.append(fields);
+            const outgoing = this.graph.links.filter(link => link.source === node.id);
+            const incoming = this.graph.links.filter(link => link.target === node.id);
+            if (outgoing.length || incoming.length) {
+                const section = this.section("references");
+                for (const group of this.referenceGroups(outgoing, true))
+                    section.append(group);
+                for (const group of this.referenceGroups(incoming, false))
+                    section.append(group);
                 this.inspector.append(section);
             }
             if (Object.keys(node.addresses).length) {
@@ -1205,66 +1220,10 @@ class Viewer {
                     section.append(this.kv(name, `${address.space}:${hex(address.value)}`));
                 this.inspector.append(section);
             }
-            if (Object.keys(node.fields).length) {
-                const section = this.section("fields");
-                for (const [name, field] of Object.entries(node.fields)) {
-                    const spans = field.spans ?? [];
-                    const element = document.createElement(spans.length ? "button" : "div");
-                    if (element instanceof HTMLButtonElement) {
-                        element.type = "button";
-                        element.title = "Navigate to field bytes";
-                        element.addEventListener("click", () => this.navigateSpan(spans[0], node.id, name, 0));
-                    }
-                    const irrelevant = this.isIrrelevant(node, name);
-                    element.className = `field-row${spans.length ? " jump" : ""}`;
-                    if (this.options.dimIrrelevant && irrelevant)
-                        element.classList.add("irrelevant");
-                    const mark = document.createElement("span");
-                    mark.className = "field-mark";
-                    mark.style.background = this.displayColor(this.fieldColor(node, name), irrelevant);
-                    const label = document.createElement("span");
-                    label.className = "field-name";
-                    label.textContent = name;
-                    const value = document.createElement("span");
-                    value.className = "field-value";
-                    value.textContent = field.display ?? displayValue(field.value);
-                    const size = document.createElement("span");
-                    size.className = "field-size";
-                    const byteSize = spans.reduce((total, span) => total + span.end - span.start, 0);
-                    size.textContent = spans.length ? `${byteSize} byte${byteSize === 1 ? "" : "s"}` : "size unknown";
-                    element.append(mark, label, value, size);
-                    if (field.description) {
-                        const description = document.createElement("span");
-                        description.className = "field-description";
-                        description.textContent = field.description;
-                        element.append(description);
-                    }
-                    const evidence = evidenceText(field);
-                    if (evidence) {
-                        const evidenceElement = document.createElement("span");
-                        evidenceElement.className = "field-evidence";
-                        evidenceElement.textContent = evidence;
-                        evidenceElement.title = "Confirmed meanings come from a standard or validated contract. Inferences are qualified by their evidence. Irrelevant means the bytes are understood but carry no meaning for the supported interpretation.";
-                        element.append(evidenceElement);
-                    }
-                    section.append(element);
-                }
-                this.inspector.append(section);
-            }
             if (Object.keys(node.properties).length) {
-                const section = this.section();
+                const section = this.section("properties");
                 for (const [name, value] of Object.entries(node.properties))
                     section.append(this.kv(name, displayValue(value)));
-                this.inspector.append(section);
-            }
-            const outgoing = this.graph.links.filter(link => link.source === node.id);
-            const incoming = this.graph.links.filter(link => link.target === node.id);
-            if (outgoing.length || incoming.length) {
-                const section = this.section("references");
-                for (const link of outgoing)
-                    section.append(this.referenceButton(link, true));
-                for (const link of incoming)
-                    section.append(this.referenceButton(link, false));
                 this.inspector.append(section);
             }
         }
@@ -1281,6 +1240,143 @@ class Viewer {
             }
             this.inspector.append(section);
         }
+        this.inspector.append(this.semanticHelpElement(), this.knowledgeElement(artifact));
+    }
+    meaningElement(node) {
+        const evidence = evidenceText(node);
+        if (!node.description && !evidence && !this.current.arrival)
+            return undefined;
+        const element = document.createElement("div");
+        element.className = "inspector-meaning";
+        if (node.description) {
+            const description = document.createElement("p");
+            description.className = "inspector-description";
+            description.textContent = node.description;
+            element.append(description);
+        }
+        if (evidence) {
+            const evidenceElement = document.createElement("div");
+            evidenceElement.className = "semantic-evidence";
+            evidenceElement.textContent = evidence;
+            element.append(evidenceElement);
+        }
+        if (this.current.arrival) {
+            const source = this.nodes.get(this.current.arrival.sourceNodeId);
+            const arrival = document.createElement("div");
+            arrival.className = "semantic-evidence";
+            arrival.textContent = `arrived via ${this.current.arrival.kind}${source ? ` from ${source.label}` : ""}`;
+            element.append(arrival);
+        }
+        return element;
+    }
+    locationElement(node) {
+        const section = this.section("location");
+        const lineage = [];
+        let cursor = node;
+        while (cursor) {
+            lineage.push(cursor);
+            cursor = cursor.parent ? this.nodes.get(cursor.parent) : undefined;
+        }
+        lineage.reverse();
+        const path = document.createElement("div");
+        path.className = "containment-path";
+        for (const [index, pathNode] of lineage.entries()) {
+            if (index)
+                path.append(document.createTextNode(" › "));
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = pathNode.label;
+            button.title = pathNode.description ?? pathNode.id;
+            button.addEventListener("click", () => this.selectNode(pathNode.id, true));
+            path.append(button);
+        }
+        section.append(path);
+        if (node.spans.length) {
+            for (const [index, span] of node.spans.entries())
+                section.append(this.spanButton(span, index));
+        }
+        else {
+            const logical = document.createElement("div");
+            logical.className = "muted";
+            logical.textContent = "logical entity · no physical byte span";
+            section.append(logical);
+        }
+        return section;
+    }
+    fieldsElement(node) {
+        const indexed = Object.entries(node.fields).map(([name, field], order) => ({
+            name,
+            field,
+            order,
+            offset: Math.min(...(field.spans ?? []).map(span => span.start), Number.POSITIVE_INFINITY),
+        }));
+        if (!indexed.length)
+            return undefined;
+        indexed.sort((left, right) => left.offset - right.offset || left.order - right.order);
+        const collapsible = indexed.filter(({ field }) => this.isConfirmedIrrelevantField(field)).length;
+        let action;
+        if (collapsible) {
+            action = document.createElement("button");
+            action.type = "button";
+            action.className = "section-action";
+            action.textContent = this.options.collapseIrrelevantFields
+                ? `show ${collapsible} irrelevant`
+                : `hide ${collapsible} irrelevant`;
+            action.title = "Only fields explicitly marked both confirmed and irrelevant are collapsible";
+            action.addEventListener("click", () => {
+                this.options.collapseIrrelevantFields = !this.options.collapseIrrelevantFields;
+                saveOptions(this.options);
+                this.renderInspector();
+            });
+        }
+        const section = this.section("fields", action);
+        for (const { name, field } of indexed) {
+            if (this.options.collapseIrrelevantFields && this.isConfirmedIrrelevantField(field))
+                continue;
+            section.append(this.fieldElement(node, name, field));
+        }
+        return section;
+    }
+    fieldElement(node, name, field) {
+        const spans = field.spans ?? [];
+        const element = document.createElement(spans.length ? "button" : "div");
+        if (element instanceof HTMLButtonElement) {
+            element.type = "button";
+            element.title = "Navigate to field bytes";
+            element.addEventListener("click", () => this.navigateSpan(spans[0], node.id, name, 0));
+        }
+        const irrelevant = this.isIrrelevant(node, name);
+        element.className = `field-row${spans.length ? " jump" : ""}`;
+        if (this.options.dimIrrelevant && irrelevant)
+            element.classList.add("irrelevant");
+        const mark = document.createElement("span");
+        mark.className = "field-mark";
+        mark.style.background = this.displayColor(this.fieldColor(node, name), irrelevant);
+        const label = document.createElement("span");
+        label.className = "field-name";
+        label.textContent = name;
+        const value = document.createElement("span");
+        value.className = "field-value";
+        value.textContent = field.display ?? displayValue(field.value);
+        const size = document.createElement("span");
+        size.className = "field-size";
+        const byteSize = spans.reduce((total, span) => total + span.end - span.start, 0);
+        size.textContent = spans.length ? `${byteSize} byte${byteSize === 1 ? "" : "s"}` : "size unknown";
+        element.append(mark, label, value, size);
+        if (field.description) {
+            const description = document.createElement("span");
+            description.className = "field-description";
+            description.textContent = field.description;
+            element.append(description);
+        }
+        const evidence = evidenceText(field);
+        if (evidence) {
+            const evidenceElement = document.createElement("span");
+            evidenceElement.className = "field-evidence";
+            evidenceElement.textContent = evidence;
+            element.append(evidenceElement);
+        }
+        return element;
     }
     knowledgeElement(artifact) {
         const knowledge = this.knowledge.get(artifact.id);
@@ -1298,13 +1394,28 @@ class Viewer {
         element.append(coverageLine, counts);
         return element;
     }
-    section(label) {
+    semanticHelpElement() {
+        const details = document.createElement("details");
+        details.className = "semantic-help";
+        const summary = document.createElement("summary");
+        summary.textContent = "semantic color and evidence";
+        const content = document.createElement("p");
+        content.textContent = "Color groups bytes by semantic category; field marks distinguish decoded fields. Confirmed is specified or validated, an inference is evidence-qualified, raw is observed without interpretation, unresolved is deliberately undecided, and irrelevant means understood but unused by the stated supported interpretation.";
+        details.append(summary, content);
+        return details;
+    }
+    section(label, action) {
         const section = document.createElement("section");
         section.className = "inspector-section";
         if (label) {
+            const headingRow = document.createElement("div");
+            headingRow.className = "section-heading";
             const heading = document.createElement("h2");
             heading.textContent = label;
-            section.append(heading);
+            headingRow.append(heading);
+            if (action)
+                headingRow.append(action);
+            section.append(headingRow);
         }
         return section;
     }
@@ -1325,6 +1436,12 @@ class Viewer {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "jump";
+        const selectedNode = this.current.nodeId ? this.nodes.get(this.current.nodeId) : undefined;
+        if (selectedNode?.spans[spanIndex] === span
+            && span.artifact === this.current.artifactId
+            && span.start === this.current.offset
+            && span.end === this.current.end)
+            button.classList.add("active-span");
         const label = span.label ? `${span.label} · ` : "";
         button.textContent = `${label}${artifact.name}  ${hex(span.start)}–${hex(span.end)}  (${span.end - span.start})`;
         button.addEventListener("click", () => this.navigateSpan(span, this.current.nodeId, undefined, spanIndex));
@@ -1333,23 +1450,83 @@ class Viewer {
     navigateSpan(span, nodeId, fieldName, spanIndex) {
         this.navigate({ artifactId: span.artifact, offset: span.start, end: span.end, nodeId, fieldName, spanIndex }, { history: "push", scroll: true });
     }
+    referenceGroups(links, outgoing) {
+        const grouped = new Map();
+        for (const link of links) {
+            const values = grouped.get(link.kind) ?? [];
+            values.push(link);
+            grouped.set(link.kind, values);
+        }
+        return [...grouped.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([kind, values]) => {
+            const group = document.createElement("div");
+            group.className = "reference-group";
+            const heading = document.createElement("div");
+            heading.className = "reference-heading";
+            const kindElement = document.createElement("span");
+            kindElement.className = "ref-kind";
+            kindElement.textContent = `${outgoing ? "→" : "←"} ${kind}`;
+            const count = document.createElement("span");
+            count.className = "reference-count";
+            count.textContent = String(values.length);
+            heading.append(kindElement, count);
+            group.append(heading);
+            const description = values.find(link => link.description)?.description;
+            const evidence = evidenceText(values[0]);
+            if (description) {
+                const element = document.createElement("div");
+                element.className = "reference-description";
+                element.textContent = description;
+                group.append(element);
+            }
+            if (evidence) {
+                const element = document.createElement("div");
+                element.className = "semantic-evidence";
+                element.textContent = evidence;
+                group.append(element);
+            }
+            for (const link of values)
+                group.append(this.referenceButton(link, outgoing));
+            return group;
+        });
+    }
     referenceButton(link, outgoing) {
         const targetId = outgoing ? link.target : link.source;
         const target = this.nodes.get(targetId);
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "jump";
-        const prefix = document.createElement("span");
-        prefix.className = "ref-kind";
-        prefix.textContent = `${outgoing ? "→" : "←"} ${link.kind}`;
-        const label = document.createTextNode(target ? `  ${target.label}` : `  ${targetId}`);
-        button.append(prefix, label);
-        button.title = displayValue(link.properties);
+        button.className = "reference-target";
+        const label = document.createElement("span");
+        label.className = "reference-target-label";
+        label.textContent = target?.label ?? targetId;
+        const location = document.createElement("span");
+        location.className = "reference-target-location";
+        location.textContent = target
+            ? `${this.nodePath(target)} · ${this.spanDetail(target.spans)}`
+            : targetId;
+        button.append(label, location);
+        if (target?.description) {
+            const description = document.createElement("span");
+            description.className = "reference-target-description";
+            description.textContent = target.description;
+            button.append(description);
+        }
+        const targetEvidence = target ? evidenceText(target) : undefined;
+        if (targetEvidence) {
+            const evidence = document.createElement("span");
+            evidence.className = "semantic-evidence";
+            evidence.textContent = targetEvidence;
+            button.append(evidence);
+        }
+        button.title = Object.keys(link.properties).length ? displayValue(link.properties) : "Follow reference";
         button.addEventListener("click", () => this.selectNode(targetId, true, {
             sourceNodeId: link.source,
             targetNodeId: link.target,
             kind: link.kind,
         }));
+        button.addEventListener("mouseenter", () => this.setHovered(targetId, undefined, target?.spans[0]?.start));
+        button.addEventListener("mouseleave", () => this.setHovered(undefined));
         return button;
     }
     hexKey(event) {

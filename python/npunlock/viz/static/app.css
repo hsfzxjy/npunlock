@@ -344,7 +344,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 .inspector-subtitle { color: var(--text-dim); margin-bottom: 8px; }
 .artifact-knowledge {
-  margin: 0 -9px 8px;
+  margin: 11px -9px -18px;
   padding: 5px 9px 6px;
   border-block: 1px solid var(--border);
   background: var(--surface-1);
@@ -353,13 +353,35 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   line-height: 1.45;
 }
 .artifact-knowledge-counts { color: var(--text-faint); }
-.inspector-description { margin: 5px 0 8px; color: var(--text-dim); line-height: 1.42; }
+.inspector-meaning { margin: 5px 0 8px; }
+.inspector-description { margin: 0 0 3px; color: var(--text-dim); line-height: 1.42; }
+.semantic-evidence { color: var(--text-faint); font: 11px/1.35 var(--ui-font); }
 .inspector-section { margin-top: 11px; }
-.inspector-section > h2 {
-  margin: 0 0 3px;
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.section-heading > h2 {
+  margin: 0;
   font: 600 11px/1.4 var(--ui-font);
   color: var(--text-dim);
 }
+.section-action {
+  min-height: 18px;
+  padding: 0 2px;
+  color: var(--text-faint);
+  font: 11px/1.3 var(--ui-font);
+}
+.containment-path {
+  margin-bottom: 3px;
+  color: var(--text-faint);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.containment-path button { padding: 0 1px; color: var(--text-dim); }
 .kv { display: grid; grid-template-columns: minmax(72px, 38%) minmax(0, 1fr); gap: 3px 8px; padding: 2px 0; }
 .kv-key { color: var(--text-dim); overflow-wrap: anywhere; }
 .kv-value { font-family: var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -397,6 +419,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 .field-row.jump { display: grid; overflow: visible; text-overflow: clip; white-space: normal; }
 .jump .ref-kind { color: var(--text-dim); margin-right: 5px; }
+.jump.active-span { box-shadow: inset 2px 0 var(--select-line); background: var(--select); }
+.reference-group { margin-top: 7px; }
+.reference-group:first-of-type { margin-top: 0; }
+.reference-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.reference-heading .ref-kind { color: var(--text-dim); font-family: var(--mono); overflow-wrap: anywhere; }
+.reference-count { color: var(--text-faint); font-family: var(--mono); }
+.reference-description { margin: 1px 0 2px; color: var(--text-dim); line-height: 1.35; }
+.reference-target {
+  display: grid;
+  width: 100%;
+  min-height: 21px;
+  margin-top: 2px;
+  padding: 2px 4px 3px;
+  text-align: left;
+}
+.reference-target-label { color: var(--text); overflow-wrap: anywhere; }
+.reference-target-location,
+.reference-target-description {
+  color: var(--text-faint);
+  font: 11px/1.35 var(--ui-font);
+  overflow-wrap: anywhere;
+}
+.reference-target-description { color: var(--text-dim); }
+.semantic-help { margin-top: 11px; color: var(--text-faint); font-size: 11px; }
+.semantic-help summary { cursor: pointer; color: var(--text-dim); }
+.semantic-help p { margin: 4px 0 0; line-height: 1.4; }
 .muted { color: var(--text-faint); }
 .error { color: var(--error); padding: 10px; white-space: pre-wrap; }
 

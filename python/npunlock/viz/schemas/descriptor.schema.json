@@ -22,6 +22,21 @@
         }
       }
     },
+    "links": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description"],
+        "properties": {
+          "description": { "type": "string", "minLength": 1 },
+          "confidence": {
+            "enum": ["confirmed", "strong-inference", "execution-tested-inference", "raw", "unresolved"]
+          },
+          "scope": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "records": {
       "type": "object",
       "additionalProperties": {
@@ -48,7 +63,7 @@
                 "description": { "type": "string", "minLength": 1 },
                 "value_map": { "type": "object" },
                 "confidence": {
-                  "enum": ["confirmed", "strong-inference", "execution-tested-inference", "raw"]
+                  "enum": ["confirmed", "strong-inference", "execution-tested-inference", "raw", "unresolved"]
                 },
                 "scope": { "type": "string", "minLength": 1 },
                 "relevance": { "enum": ["relevant", "context", "irrelevant"] }
