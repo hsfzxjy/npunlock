@@ -485,7 +485,7 @@ def test_dense_model() -> None:
 
 def test_bundled_frontend() -> None:
     static = files("npunlock.viz").joinpath("static")
-    for name in ("index.html", "app.css", "app.js", "navigation.js"):
+    for name in ("index.html", "app.css", "app.js", "navigation.js", "search.js"):
         content = static.joinpath(name).read_bytes()
         assert content
     javascript = static.joinpath("app.js").read_text(encoding="utf-8")
@@ -497,6 +497,8 @@ def test_bundled_frontend() -> None:
     assert "npunlock.viz.options.v1" in javascript
     assert "dimIrrelevant: true" in javascript
     assert "focusedRangeGuide" in javascript
+    assert "openGoTo" in javascript
+    assert "treeFilterState" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
@@ -512,6 +514,8 @@ def test_bundled_frontend() -> None:
     assert "hex-head-viewport" in index
     assert 'class="range-head"' in index
     assert 'id="toggle-dim-irrelevant"' in index
+    assert 'id="go-to-dialog"' in index
+    assert 'id="tree-filter"' in index
     assert ">focus relevant</button>" in index
     schemas = files("npunlock.viz").joinpath("schemas")
     for name in ("descriptor.schema.json", "elf.json", "npu3720-act-compiler-8.3.json"):

@@ -40,7 +40,7 @@ body {
   font: 12px/1.35 var(--ui-font);
 }
 
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 
 button {
   min-height: 24px;
@@ -53,7 +53,7 @@ button {
 button:hover:not(:disabled) { background: var(--hover); border-color: var(--border); }
 button:disabled { color: var(--text-faint); }
 button[aria-pressed="false"] { color: var(--text-faint); }
-button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
   outline: 1px solid var(--focus);
   outline-offset: -1px;
 }
@@ -132,6 +132,23 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .splitter { background: var(--bg); cursor: col-resize; }
 .splitter:hover, .splitter.dragging { background: var(--select-line); }
 
+.tree-panel { display: grid; grid-template-rows: 29px minmax(0, 1fr); }
+.tree-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 3px;
+  padding: 3px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.tree-filter-bar input, .tree-filter-bar select {
+  min-width: 0;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg);
+  padding: 1px 4px;
+}
 .tree, .inspector { height: 100%; overflow: auto; scrollbar-color: var(--border-strong) transparent; }
 .tree { padding: 3px 0 10px; }
 
@@ -159,7 +176,45 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .tree-mark { width: 7px; height: 7px; margin: 0 7px 0 2px; background: var(--unknown); }
 .tree-row.irrelevant > * { opacity: var(--irrelevant-opacity); }
 .tree-label { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-label.match { color: var(--focus); text-decoration: underline; text-underline-offset: 2px; }
 .tree-kind { margin-left: 7px; color: var(--text-faint); font-size: 11px; }
+
+.go-to-dialog {
+  width: min(680px, calc(100vw - 28px));
+  max-height: min(520px, calc(100vh - 48px));
+  margin: 42px auto auto;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  background: var(--surface-1);
+  color: var(--text);
+}
+.go-to-dialog::backdrop { background: rgba(32, 38, 45, .18); }
+#go-to-form { display: grid; grid-template-rows: 32px minmax(0, 1fr); max-height: inherit; }
+#go-to-input {
+  width: 100%;
+  height: 32px;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--bg);
+  padding: 4px 8px;
+  font-family: var(--mono);
+}
+.go-to-results { overflow: auto; padding: 3px 0; }
+.go-to-result {
+  display: grid;
+  grid-template-columns: minmax(120px, 42%) minmax(0, 1fr);
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px;
+  border-radius: 0;
+  text-align: left;
+}
+.go-to-result[aria-selected="true"] { background: rgba(47, 112, 159, .14); border-left-color: var(--select-line); }
+.go-to-result-label, .go-to-result-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.go-to-result-detail { color: var(--text-dim); font-family: var(--mono); }
+.go-to-empty { padding: 7px 8px; color: var(--text-faint); }
 
 .hex-panel {
   min-width: 0;

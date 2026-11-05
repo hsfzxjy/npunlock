@@ -97,6 +97,20 @@ The serialization envelope is `npunlock.artifact-graph`, version 1.
 - The hierarchy is fully expanded on first load so every entry is immediately
   present; branches can then be collapsed with the mouse or keyboard.
 
+Press `Ctrl+K` to search entity labels and IDs, field names and explanations,
+relationship kinds, named non-file addresses, or a file location such as
+`native:0x9a00-0x9a40`. Results retain their containment path, artifact, byte
+extent, and kind. Address-space expressions remain distinct from file offsets:
+an address such as `virtual:0x1d000000` selects a matching semantic entity and
+is never silently treated as a file position. The structure filter (`/`) can
+limit the tree to matching text, relevant entities, the active artifact,
+entities covering the selected byte, or direct references while preserving
+the ancestors needed for context.
+
+Navigation history records semantic jumps, artifact and span changes, and
+references. Consecutive byte-key movements coalesce into one destination so
+Back returns to the preceding semantic location rather than the previous byte.
+
 `graph.dumps(include_data=True)` creates a portable JSON document with base64
 artifact data. The default omits bytes, matching the browser metadata endpoint;
 `ArtifactGraph.loads(..., artifact_data={...})` can bind those metadata-only

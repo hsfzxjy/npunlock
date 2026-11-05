@@ -4,6 +4,11 @@ import {
   type HistoryMode,
   type LocationState,
 } from "./navigation.js";
+import {
+  parseLocationExpression,
+  searchEntries,
+  type SearchEntry,
+} from "./search.js";
 
 interface SpanData { artifact: string; start: number; end: number }
 interface FieldData {
@@ -40,6 +45,13 @@ interface GraphData {
 }
 interface IndexedSpan extends SpanData { node: NodeData; length: number; fieldName?: string }
 interface NavigateOptions { history: HistoryMode; scroll: boolean; coalesceKey?: string }
+type TreeMode = "all" | "relevant" | "artifact" | "covers" | "referenced";
+type SearchTarget =
+  | { kind: "node"; nodeId: string }
+  | { kind: "field"; nodeId: string; fieldName: string }
+  | { kind: "link"; link: LinkData; targetId: string }
+  | { kind: "address"; nodeId: string; space: string; value: number }
+  | { kind: "location"; artifactId: string; start: number; end: number };
 interface ArtifactKnowledge {
   entityCount: number;
   relationshipCount: number;
@@ -54,6 +66,7 @@ interface ViewerOptions {
   inspectorVisible: boolean;
   treeWidth: number | null;
   inspectorWidth: number | null;
+  treeMode: TreeMode;
 }
 
 const ROW_BYTES = 16;
@@ -68,6 +81,7 @@ const DEFAULT_OPTIONS: ViewerOptions = {
   inspectorVisible: true,
   treeWidth: null,
   inspectorWidth: null,
+  treeMode: "all",
 };
 
 function required<T extends HTMLElement>(id: string): T {
@@ -158,6 +172,9 @@ function loadOptions(): ViewerOptions {
       inspectorVisible: typeof value.inspectorVisible === "boolean" ? value.inspectorVisible : true,
       treeWidth: typeof value.treeWidth === "number" && Number.isFinite(value.treeWidth) ? value.treeWidth : null,
       inspectorWidth: typeof value.inspectorWidth === "number" && Number.isFinite(value.inspectorWidth) ? value.inspectorWidth : null,
+      treeMode: ["all", "relevant", "artifact", "covers", "referenced"].includes(String(value.treeMode))
+        ? value.treeMode as TreeMode
+        : "all",
     };
   } catch {
     return { ...DEFAULT_OPTIONS };
@@ -224,6 +241,11 @@ class Viewer {
   private status = required<HTMLElement>("status");
   private workspace = required<HTMLElement>("workspace");
   private offsetInput = required<HTMLInputElement>("offset-input");
+  private treeFilter = required<HTMLInputElement>("tree-filter");
+  private treeMode = required<HTMLSelectElement>("tree-mode");
+  private goToDialog = required<HTMLDialogElement>("go-to-dialog");
+  private goToInput = required<HTMLInputElement>("go-to-input");
+  private goToResults = required<HTMLElement>("go-to-results");
   private nodes = new Map<string, NodeData>();
   private artifacts = new Map<string, ArtifactData>();
   private categories = new Map<string, CategoryData>();
@@ -236,6 +258,9 @@ class Viewer {
   private expanded = new Set<string>();
   private current!: LocationState;
   private history = new NavigationHistory();
+  private searchIndex: SearchEntry<SearchTarget>[] = [];
+  private visibleSearchResults: SearchEntry<SearchTarget>[] = [];
+  private searchSelection = 0;
   private hoveredNode?: string;
   private treeFocusId?: string;
   private renderToken = 0;
@@ -273,6 +298,7 @@ class Viewer {
     for (const root of this.roots) {
       this.assignDepth(root, 0);
     }
+    this.searchIndex = this.buildSearchIndex();
     for (const artifact of graph.artifacts) this.knowledge.set(artifact.id, this.buildKnowledge(artifact));
     const first = graph.artifacts[0];
     if (!first) throw new Error("artifact graph contains no artifacts");
@@ -288,6 +314,69 @@ class Viewer {
   private assignDepth(node: NodeData, depth: number): void {
     this.depths.set(node.id, depth);
     for (const child of this.children.get(node.id) ?? []) this.assignDepth(child, depth + 1);
+  }
+
+  private nodePath(node: NodeData): string {
+    const labels = [node.label];
+    let current = node;
+    while (current.parent) {
+      const parent = this.nodes.get(current.parent);
+      if (!parent) break;
+      labels.push(parent.label);
+      current = parent;
+    }
+    return labels.reverse().join(" › ");
+  }
+
+  private spanDetail(spans: SpanData[]): string {
+    const span = spans[0];
+    if (!span) return "logical entity";
+    const artifact = this.artifacts.get(span.artifact);
+    return `${artifact?.name ?? span.artifact} ${hex(span.start)}–${hex(span.end)} · ${span.end - span.start} B`;
+  }
+
+  private buildSearchIndex(): SearchEntry<SearchTarget>[] {
+    const entries: SearchEntry<SearchTarget>[] = [];
+    for (const node of this.graph.nodes) {
+      const path = this.nodePath(node);
+      entries.push({
+        id: `node:${node.id}`,
+        label: node.label,
+        detail: `${path} · ${this.spanDetail(node.spans)} · ${node.kind}`,
+        terms: [node.id, node.kind, node.description ?? "", path],
+        value: { kind: "node", nodeId: node.id },
+      });
+      for (const [fieldName, field] of Object.entries(node.fields)) {
+        entries.push({
+          id: `field:${node.id}:${fieldName}`,
+          label: `${node.label} › ${fieldName}`,
+          detail: `${path} · ${this.spanDetail(field.spans ?? [])}`,
+          terms: [node.id, node.kind, fieldName, field.description ?? "", evidenceText(field) ?? ""],
+          value: { kind: "field", nodeId: node.id, fieldName },
+        });
+      }
+      for (const [name, address] of Object.entries(node.addresses)) {
+        entries.push({
+          id: `address:${node.id}:${name}`,
+          label: `${address.space}:${hex(address.value)}`,
+          detail: `${path} · ${name}`,
+          terms: [node.id, node.label, name, address.space],
+          value: { kind: "address", nodeId: node.id, space: address.space, value: address.value },
+        });
+      }
+    }
+    for (const [index, link] of this.graph.links.entries()) {
+      const source = this.nodes.get(link.source);
+      const target = this.nodes.get(link.target);
+      entries.push({
+        id: `link:${index}`,
+        label: `${source?.label ?? link.source} → ${target?.label ?? link.target}`,
+        detail: `${link.kind} · ${target ? this.nodePath(target) : link.target}`,
+        terms: [link.kind, link.source, link.target, displayValue(link.properties)],
+        value: { kind: "link", link, targetId: link.target },
+      });
+    }
+    return entries;
   }
 
   private buildKnowledge(artifact: ArtifactData): ArtifactKnowledge {
@@ -336,16 +425,41 @@ class Viewer {
       );
     });
     required<HTMLButtonElement>("copy").addEventListener("click", () => this.copyLocation());
+    required<HTMLButtonElement>("open-go-to").addEventListener("click", () => this.openGoTo());
     required<HTMLButtonElement>("back").addEventListener("click", () => this.moveHistory(-1));
     required<HTMLButtonElement>("forward").addEventListener("click", () => this.moveHistory(1));
     required<HTMLButtonElement>("toggle-tree").addEventListener("click", event => this.togglePanel("tree", event));
     required<HTMLButtonElement>("toggle-inspector").addEventListener("click", event => this.togglePanel("inspector", event));
     required<HTMLButtonElement>("toggle-dim-irrelevant").addEventListener("click", () => this.toggleDimIrrelevant());
+    this.treeFilter.addEventListener("input", () => this.renderTree());
+    this.treeMode.addEventListener("change", () => {
+      const mode = this.treeMode.value;
+      if (!(["all", "relevant", "artifact", "covers", "referenced"] as string[]).includes(mode)) return;
+      this.options.treeMode = mode as TreeMode;
+      saveOptions(this.options);
+      this.renderTree();
+    });
+    this.goToInput.addEventListener("input", () => this.renderGoTo());
+    this.goToInput.addEventListener("keydown", event => this.goToKey(event));
+    required<HTMLFormElement>("go-to-form").addEventListener("submit", event => {
+      event.preventDefault();
+      this.activateSearchResult(this.visibleSearchResults[this.searchSelection]);
+    });
+    this.goToDialog.addEventListener("click", event => {
+      if (event.target === this.goToDialog) this.goToDialog.close();
+    });
     this.bindSplitter(required<HTMLElement>("left-splitter"), "--tree-width", "treeWidth", true, 150, 520);
     this.bindSplitter(required<HTMLElement>("right-splitter"), "--inspector-width", "inspectorWidth", false, 210, 620);
     window.addEventListener("keydown", event => {
       if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); this.moveHistory(-1); }
       if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); this.moveHistory(1); }
+      if (event.ctrlKey && event.key.toLowerCase() === "k") { event.preventDefault(); this.openGoTo(); }
+      if (event.key === "/" && !event.ctrlKey && !event.altKey && !event.metaKey
+        && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLSelectElement)) {
+        event.preventDefault();
+        this.treeFilter.focus();
+        this.treeFilter.select();
+      }
     });
   }
 
@@ -355,6 +469,7 @@ class Viewer {
     required<HTMLButtonElement>("toggle-tree").setAttribute("aria-pressed", String(this.options.treeVisible));
     required<HTMLButtonElement>("toggle-inspector").setAttribute("aria-pressed", String(this.options.inspectorVisible));
     required<HTMLButtonElement>("toggle-dim-irrelevant").setAttribute("aria-pressed", String(this.options.dimIrrelevant));
+    this.treeMode.value = this.options.treeMode;
     if (this.options.treeWidth !== null) {
       document.documentElement.style.setProperty("--tree-width", `${Math.max(150, Math.min(520, this.options.treeWidth))}px`);
     }
@@ -437,6 +552,123 @@ class Viewer {
     this.renderHex();
   }
 
+  private openGoTo(): void {
+    if (!this.goToDialog.open) this.goToDialog.showModal();
+    this.goToInput.value = "";
+    this.searchSelection = 0;
+    this.renderGoTo();
+    requestAnimationFrame(() => this.goToInput.focus());
+  }
+
+  private renderGoTo(): void {
+    const query = this.goToInput.value;
+    const artifactSizes = new Map(this.graph.artifacts.map(artifact => [artifact.id, artifact.size]));
+    const parsed = parseLocationExpression(query, this.current.artifactId, artifactSizes);
+    const matches = searchEntries(this.searchIndex, query, 60);
+    this.visibleSearchResults = parsed
+      ? [{
+        id: `location:${parsed.artifactId}:${parsed.start}:${parsed.end}`,
+        label: `${parsed.artifactId}:${hex(parsed.start)}${parsed.end > parsed.start + 1 ? `-${hex(parsed.end)}` : ""}`,
+        detail: `${parsed.end - parsed.start} byte${parsed.end - parsed.start === 1 ? "" : "s"} · file offset`,
+        terms: [],
+        value: { kind: "location", artifactId: parsed.artifactId, start: parsed.start, end: parsed.end },
+      }, ...matches]
+      : matches;
+    this.searchSelection = Math.max(0, Math.min(this.searchSelection, this.visibleSearchResults.length - 1));
+    this.goToResults.replaceChildren();
+    if (!this.visibleSearchResults.length) {
+      const empty = document.createElement("div");
+      empty.className = "go-to-empty";
+      empty.textContent = query.trim() ? "no matching semantic location" : "type a node, field, relation, or offset";
+      this.goToResults.append(empty);
+      this.goToInput.removeAttribute("aria-activedescendant");
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const [index, entry] of this.visibleSearchResults.entries()) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.id = `go-to-result-${index}`;
+      button.className = "go-to-result";
+      button.role = "option";
+      button.tabIndex = -1;
+      button.setAttribute("aria-selected", String(index === this.searchSelection));
+      const label = document.createElement("span");
+      label.className = "go-to-result-label";
+      label.textContent = entry.label;
+      const detail = document.createElement("span");
+      detail.className = "go-to-result-detail";
+      detail.textContent = entry.detail;
+      button.append(label, detail);
+      button.addEventListener("mousemove", () => {
+        if (this.searchSelection === index) return;
+        this.searchSelection = index;
+        this.updateSearchSelection();
+      });
+      button.addEventListener("click", () => this.activateSearchResult(entry));
+      fragment.append(button);
+    }
+    this.goToResults.append(fragment);
+    this.updateSearchSelection();
+  }
+
+  private updateSearchSelection(): void {
+    for (const [index, element] of Array.from(this.goToResults.querySelectorAll<HTMLElement>(".go-to-result")).entries()) {
+      element.setAttribute("aria-selected", String(index === this.searchSelection));
+      if (index === this.searchSelection) element.scrollIntoView({ block: "nearest" });
+    }
+    if (this.visibleSearchResults.length) {
+      this.goToInput.setAttribute("aria-activedescendant", `go-to-result-${this.searchSelection}`);
+    }
+  }
+
+  private goToKey(event: KeyboardEvent): void {
+    if (!this.visibleSearchResults.length) return;
+    let next = this.searchSelection;
+    if (event.key === "ArrowDown") next = Math.min(this.visibleSearchResults.length - 1, next + 1);
+    else if (event.key === "ArrowUp") next = Math.max(0, next - 1);
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = this.visibleSearchResults.length - 1;
+    else return;
+    event.preventDefault();
+    this.searchSelection = next;
+    this.updateSearchSelection();
+  }
+
+  private activateSearchResult(entry: SearchEntry<SearchTarget> | undefined): void {
+    if (!entry) return;
+    const target = entry.value;
+    this.goToDialog.close();
+    if (target.kind === "location") {
+      this.navigate(
+        { artifactId: target.artifactId, offset: target.start, end: target.end },
+        { history: "push", scroll: true },
+      );
+      this.hexScroll.focus();
+      return;
+    }
+    if (target.kind === "node" || target.kind === "address") {
+      this.selectNode(target.nodeId, true);
+      return;
+    }
+    if (target.kind === "link") {
+      this.selectNode(target.targetId, true, {
+        sourceNodeId: target.link.source,
+        targetNodeId: target.link.target,
+        kind: target.link.kind,
+      });
+      return;
+    }
+    const node = this.nodes.get(target.nodeId);
+    const field = node?.fields[target.fieldName];
+    const spans = field?.spans ?? [];
+    let index = spans.findIndex(span => span.artifact === this.current.artifactId);
+    if (index < 0) index = spans.length ? 0 : -1;
+    const span = index >= 0 ? spans[index] : undefined;
+    if (span) this.navigateSpan(span, target.nodeId, target.fieldName, index);
+    else this.selectNode(target.nodeId, true);
+  }
+
   private renderTabs(): void {
     this.artifactTabs.replaceChildren();
     for (const artifact of this.graph.artifacts) {
@@ -478,10 +710,59 @@ class Viewer {
     }
   }
 
+  private treeFilterState(): { included?: Set<string>; matches: Set<string>; active: boolean } {
+    const query = this.treeFilter.value.trim().toLowerCase();
+    const mode = this.options.treeMode;
+    const referenced = new Set<string>();
+    if (mode === "referenced" && this.current.nodeId) {
+      referenced.add(this.current.nodeId);
+      for (const link of this.graph.links) {
+        if (link.source === this.current.nodeId) referenced.add(link.target);
+        if (link.target === this.current.nodeId) referenced.add(link.source);
+      }
+    }
+    const covering = mode === "covers"
+      ? new Set(this.covering(this.current.artifactId, this.current.offset).map(node => node.id))
+      : new Set<string>();
+    const matches = new Set<string>();
+    for (const node of this.graph.nodes) {
+      let modeMatch = true;
+      if (mode === "relevant") modeMatch = !this.isIrrelevant(node);
+      else if (mode === "artifact") {
+        modeMatch = node.spans.some(span => span.artifact === this.current.artifactId)
+          || Object.values(node.fields).some(field =>
+            (field.spans ?? []).some(span => span.artifact === this.current.artifactId));
+      } else if (mode === "covers") modeMatch = covering.has(node.id);
+      else if (mode === "referenced") modeMatch = referenced.has(node.id);
+      if (!modeMatch) continue;
+      const text = [
+        node.label,
+        node.id,
+        node.kind,
+        node.description ?? "",
+        ...Object.entries(node.fields).flatMap(([name, field]) => [name, field.description ?? ""]),
+      ].join(" ").toLowerCase();
+      if (!query || query.split(/\s+/).every(token => text.includes(token))) matches.add(node.id);
+    }
+    const active = Boolean(query) || mode !== "all";
+    if (!active) return { matches, active };
+    const included = new Set(matches);
+    for (const nodeId of matches) {
+      let node = this.nodes.get(nodeId);
+      while (node?.parent) {
+        included.add(node.parent);
+        node = this.nodes.get(node.parent);
+      }
+    }
+    return { included, matches, active };
+  }
+
   private renderTree(): void {
     this.tree.replaceChildren();
+    const filter = this.treeFilterState();
     const fragment = document.createDocumentFragment();
     const appendNode = (node: NodeData, depth: number) => {
+      if (filter.included && !filter.included.has(node.id)) return;
       const row = document.createElement("div");
       row.className = `tree-row${this.current.nodeId === node.id ? " selected" : ""}`;
       if (this.options.dimIrrelevant && this.isIrrelevant(node)) row.classList.add("irrelevant");
@@ -492,13 +773,15 @@ class Viewer {
       row.setAttribute("aria-level", String(depth + 1));
       row.setAttribute("aria-selected", String(this.current.nodeId === node.id));
       const children = this.children.get(node.id) ?? [];
-      if (children.length) row.setAttribute("aria-expanded", String(this.expanded.has(node.id)));
+      const effectivelyExpanded = filter.active || this.expanded.has(node.id);
+      if (children.length) row.setAttribute("aria-expanded", String(effectivelyExpanded));
       const expander = document.createElement("button");
       expander.type = "button";
       expander.className = `tree-expander${children.length ? "" : " empty"}`;
       expander.tabIndex = -1;
-      expander.textContent = this.expanded.has(node.id) ? "▾" : "▸";
-      expander.setAttribute("aria-label", this.expanded.has(node.id) ? "Collapse" : "Expand");
+      expander.textContent = effectivelyExpanded ? "▾" : "▸";
+      expander.setAttribute("aria-label", effectivelyExpanded ? "Collapse" : "Expand");
+      expander.disabled = filter.active;
       expander.addEventListener("click", event => {
         event.stopPropagation();
         if (this.expanded.has(node.id)) this.expanded.delete(node.id); else this.expanded.add(node.id);
@@ -509,6 +792,7 @@ class Viewer {
       mark.style.background = this.displayColor(this.categoryColor(node.category), this.isIrrelevant(node));
       const label = document.createElement("span");
       label.className = "tree-label";
+      if (this.treeFilter.value.trim() && filter.matches.has(node.id)) label.classList.add("match");
       label.textContent = node.label;
       label.title = node.description ? `${node.label}\n${node.description}` : node.label;
       const kind = document.createElement("span");
@@ -524,9 +808,15 @@ class Viewer {
       row.addEventListener("mouseenter", () => this.setHovered(node.id));
       row.addEventListener("mouseleave", () => this.setHovered(undefined));
       fragment.append(row);
-      if (this.expanded.has(node.id)) for (const child of children) appendNode(child, depth + 1);
+      if (effectivelyExpanded) for (const child of children) appendNode(child, depth + 1);
     };
     for (const root of this.roots) appendNode(root, 0);
+    if (!fragment.childNodes.length) {
+      const empty = document.createElement("div");
+      empty.className = "go-to-empty";
+      empty.textContent = "no matching entities";
+      fragment.append(empty);
+    }
     this.tree.append(fragment);
   }
 
