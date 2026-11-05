@@ -8,5 +8,5 @@
     "outDir": "../python/npunlock/viz/static",
     "removeComments": true
   },
-  "include": ["src/app.ts"]
+  "include": ["src/*.ts"]
 }

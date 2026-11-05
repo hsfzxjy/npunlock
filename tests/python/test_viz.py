@@ -485,7 +485,7 @@ def test_dense_model() -> None:
 
 def test_bundled_frontend() -> None:
     static = files("npunlock.viz").joinpath("static")
-    for name in ("index.html", "app.css", "app.js"):
+    for name in ("index.html", "app.css", "app.js", "navigation.js"):
         content = static.joinpath(name).read_bytes()
         assert content
     javascript = static.joinpath("app.js").read_text(encoding="utf-8")

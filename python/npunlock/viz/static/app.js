@@ -1,4 +1,4 @@
-"use strict";
+import { NavigationHistory, } from "./navigation.js";
 const ROW_BYTES = 16;
 const ROW_HEIGHT = 21;
 const PAGE_BYTES = 16 * 1024;
@@ -186,8 +186,7 @@ class Viewer {
     knowledge = new Map();
     expanded = new Set();
     current;
-    history = [];
-    historyIndex = -1;
+    history = new NavigationHistory();
     hoveredNode;
     treeFocusId;
     renderToken = 0;
@@ -239,7 +238,7 @@ class Viewer {
         this.bind();
         this.renderTabs();
         this.renderTree();
-        this.navigate(this.current, true, false);
+        this.navigate(this.current, { history: "replace", scroll: false });
         new ResizeObserver(() => this.renderHex()).observe(this.hexScroll);
     }
     assignDepth(node, depth) {
@@ -282,7 +281,7 @@ class Viewer {
                 this.setStatus(`offset must be between ${hex(0)} and ${hex(Math.max(0, artifact.size - 1))}`);
                 return;
             }
-            this.navigate({ artifactId: artifact.id, offset: parsed, end: parsed + 1 }, true, true);
+            this.navigate({ artifactId: artifact.id, offset: parsed, end: parsed + 1 }, { history: "push", scroll: true });
         });
         required("copy").addEventListener("click", () => this.copyLocation());
         required("back").addEventListener("click", () => this.moveHistory(-1));
@@ -426,7 +425,7 @@ class Viewer {
     }
     selectArtifact(artifact, restoreFocus) {
         const offset = artifact.id === this.current.artifactId ? this.current.offset : 0;
-        this.navigate({ artifactId: artifact.id, offset, end: Math.min(artifact.size, offset + 1) }, true, true);
+        this.navigate({ artifactId: artifact.id, offset, end: Math.min(artifact.size, offset + 1) }, { history: "push", scroll: true });
         if (restoreFocus) {
             requestAnimationFrame(() => this.artifactTabs.querySelector(`[data-artifact-id="${CSS.escape(artifact.id)}"]`)?.focus());
         }
@@ -539,32 +538,35 @@ class Viewer {
         this.treeFocusId = target.dataset.nodeId;
         target.focus();
     }
-    selectNode(nodeId, push) {
+    selectNode(nodeId, push, arrival) {
         const node = this.nodes.get(nodeId);
         if (!node)
             return;
-        let span = node.spans.find(value => value.artifact === this.current.artifactId) ?? node.spans[0];
+        let spanIndex = node.spans.findIndex(value => value.artifact === this.current.artifactId);
+        if (spanIndex < 0)
+            spanIndex = node.spans.length ? 0 : -1;
+        const span = spanIndex >= 0 ? node.spans[spanIndex] : undefined;
         if (!span) {
-            this.navigate({ ...this.current, nodeId }, push, false);
+            this.navigate({ ...this.current, nodeId, fieldName: undefined, spanIndex: undefined, arrival }, { history: push ? "push" : "none", scroll: false });
             return;
         }
-        this.navigate({ artifactId: span.artifact, offset: span.start, end: span.end, nodeId }, push, true);
+        this.navigate({
+            artifactId: span.artifact,
+            offset: span.start,
+            end: span.end,
+            nodeId,
+            spanIndex,
+            arrival,
+        }, { history: push ? "push" : "none", scroll: true });
     }
-    navigate(location, push, scroll) {
+    navigate(location, options) {
         const artifact = this.artifacts.get(location.artifactId);
         if (!artifact)
             return;
         const offset = Math.max(0, Math.min(Math.max(0, artifact.size - 1), location.offset));
         const end = Math.max(offset + (artifact.size ? 1 : 0), Math.min(artifact.size, location.end));
         this.current = { ...location, offset, end };
-        if (push) {
-            const previous = this.history[this.historyIndex];
-            if (!previous || previous.artifactId !== this.current.artifactId || previous.offset !== this.current.offset || previous.nodeId !== this.current.nodeId) {
-                this.history = this.history.slice(0, this.historyIndex + 1);
-                this.history.push({ ...this.current });
-                this.historyIndex = this.history.length - 1;
-            }
-        }
+        this.history.record(this.current, options.history, options.coalesceKey);
         if (this.current.nodeId)
             this.revealTree(this.current.nodeId);
         this.offsetInput.value = hex(this.current.offset);
@@ -572,7 +574,7 @@ class Viewer {
         this.renderTree();
         this.renderInspector();
         this.updateHistoryButtons();
-        if (scroll)
+        if (options.scroll)
             this.scrollToOffset(this.current.offset);
         else
             this.renderHex();
@@ -587,17 +589,13 @@ class Viewer {
         requestAnimationFrame(() => this.tree.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.scrollIntoView({ block: "nearest" }));
     }
     moveHistory(delta) {
-        const next = this.historyIndex + delta;
-        if (next < 0 || next >= this.history.length)
-            return;
-        this.historyIndex = next;
-        const location = this.history[next];
+        const location = this.history.move(delta);
         if (location)
-            this.navigate(location, false, true);
+            this.navigate(location, { history: "none", scroll: true });
     }
     updateHistoryButtons() {
-        required("back").disabled = this.historyIndex <= 0;
-        required("forward").disabled = this.historyIndex >= this.history.length - 1;
+        required("back").disabled = !this.history.canBack;
+        required("forward").disabled = !this.history.canForward;
     }
     scrollToOffset(offset) {
         const artifact = this.artifacts.get(this.current.artifactId);
@@ -756,10 +754,16 @@ class Viewer {
         else if (offset >= this.current.offset && offset < this.current.end)
             cell.classList.add("range-selected");
         cell.addEventListener("click", event => {
-            const mostSpecific = annotations[0]?.node;
+            const mostSpecific = annotations[0];
             const start = event.shiftKey ? Math.min(this.current.offset, offset) : offset;
             const end = event.shiftKey ? Math.max(this.current.offset, offset) + 1 : offset + 1;
-            this.navigate({ artifactId: this.current.artifactId, offset: start, end, nodeId: mostSpecific?.id }, true, false);
+            this.navigate({
+                artifactId: this.current.artifactId,
+                offset: start,
+                end,
+                nodeId: mostSpecific?.node.id,
+                fieldName: mostSpecific?.fieldName,
+            }, { history: "push", scroll: false });
             this.hexScroll.focus();
         });
         if (primary) {
@@ -811,8 +815,8 @@ class Viewer {
             }
             if (node.spans.length) {
                 const section = this.section("byte spans");
-                for (const span of node.spans)
-                    section.append(this.spanButton(span));
+                for (const [index, span] of node.spans.entries())
+                    section.append(this.spanButton(span, index));
                 this.inspector.append(section);
             }
             if (Object.keys(node.addresses).length) {
@@ -829,7 +833,7 @@ class Viewer {
                     if (element instanceof HTMLButtonElement) {
                         element.type = "button";
                         element.title = "Navigate to field bytes";
-                        element.addEventListener("click", () => this.navigateSpan(spans[0], node.id));
+                        element.addEventListener("click", () => this.navigateSpan(spans[0], node.id, name, 0));
                     }
                     const irrelevant = this.isIrrelevant(node, name);
                     element.className = `field-row${spans.length ? " jump" : ""}`;
@@ -936,17 +940,17 @@ class Viewer {
         row.append(keyElement, valueElement);
         return row;
     }
-    spanButton(span) {
+    spanButton(span, spanIndex) {
         const artifact = this.artifacts.get(span.artifact);
         const button = document.createElement("button");
         button.type = "button";
         button.className = "jump";
         button.textContent = `${artifact.name}  ${hex(span.start)}–${hex(span.end)}  (${span.end - span.start})`;
-        button.addEventListener("click", () => this.navigateSpan(span, this.current.nodeId));
+        button.addEventListener("click", () => this.navigateSpan(span, this.current.nodeId, undefined, spanIndex));
         return button;
     }
-    navigateSpan(span, nodeId) {
-        this.navigate({ artifactId: span.artifact, offset: span.start, end: span.end, nodeId }, true, true);
+    navigateSpan(span, nodeId, fieldName, spanIndex) {
+        this.navigate({ artifactId: span.artifact, offset: span.start, end: span.end, nodeId, fieldName, spanIndex }, { history: "push", scroll: true });
     }
     referenceButton(link, outgoing) {
         const targetId = outgoing ? link.target : link.source;
@@ -960,7 +964,11 @@ class Viewer {
         const label = document.createTextNode(target ? `  ${target.label}` : `  ${targetId}`);
         button.append(prefix, label);
         button.title = displayValue(link.properties);
-        button.addEventListener("click", () => this.selectNode(targetId, true));
+        button.addEventListener("click", () => this.selectNode(targetId, true, {
+            sourceNodeId: link.source,
+            targetNodeId: link.target,
+            kind: link.kind,
+        }));
         return button;
     }
     hexKey(event) {
@@ -987,7 +995,7 @@ class Viewer {
         event.preventDefault();
         offset = Math.max(0, Math.min(Math.max(0, artifact.size - 1), offset));
         const primary = this.covering(artifact.id, offset)[0];
-        this.navigate({ artifactId: artifact.id, offset, end: offset + 1, nodeId: primary?.id }, true, true);
+        this.navigate({ artifactId: artifact.id, offset, end: offset + 1, nodeId: primary?.id }, { history: "coalesce", coalesceKey: "byte-step", scroll: true });
     }
     async copyLocation() {
         const artifact = this.artifacts.get(this.current.artifactId);
