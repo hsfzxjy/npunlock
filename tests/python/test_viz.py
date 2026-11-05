@@ -21,7 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python"))
 
 from npunlock.viz import Address, ArtifactGraph, Category, Field, Span, build_npunlock_graph, show  # noqa: E402
-from npunlock.viz._schema import decode_record_fields, load_schema, validate_schema  # noqa: E402
+from npunlock.viz._bundled_schema import load_bundled_schema  # noqa: E402
+from npunlock.viz._schema import decode_record_fields, validate_schema  # noqa: E402
 from npunlock.viz.cli import main as viz_main  # noqa: E402
 
 
@@ -424,11 +425,11 @@ def test_bundled_semantic_schemas() -> None:
     descriptor = json.loads(schemas.joinpath("descriptor.schema.json").read_text(encoding="utf-8"))
     assert descriptor["$id"].endswith("/viz-descriptor-v1.json")
 
-    elf_schema = load_schema("elf.json")
-    act_schema = load_schema("npu3720-act-compiler-8.3.json")
+    elf_schema = load_bundled_schema("elf.json")
+    act_schema = load_bundled_schema("npu3720-act-compiler-8.3.json")
     assert validate_schema(elf_schema) is elf_schema
     assert validate_schema(act_schema) is act_schema
-    expect_error(ValueError, load_schema, "outside.json")
+    expect_error(ValueError, load_bundled_schema, "outside.json")
 
     data = (ROOT / "tests/fixtures/npu3720/add1-fp16.elf").read_bytes()
     graph = ArtifactGraph("Schema decoding")

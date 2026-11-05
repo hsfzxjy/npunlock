@@ -5,12 +5,13 @@ from dataclasses import dataclass
 from os import PathLike
 from typing import Any, Sequence
 
-from ._schema import decode_record_fields, load_schema, lookup, match_rule, node_metadata
+from ._bundled_schema import load_bundled_schema
+from ._schema import decode_record_fields, lookup, match_rule, node_metadata
 from .model import Address, Artifact, ArtifactGraph, Field, Node, Span
 
 
-_ELF_SCHEMA = load_schema("elf.json")
-_NPU3720_ACT_SCHEMA = load_schema("npu3720-act-compiler-8.3.json")
+_ELF_SCHEMA = load_bundled_schema("elf.json")
+_NPU3720_ACT_SCHEMA = load_bundled_schema("npu3720-act-compiler-8.3.json")
 
 
 @dataclass(frozen=True, slots=True)

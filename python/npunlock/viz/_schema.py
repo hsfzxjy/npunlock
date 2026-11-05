@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
-from importlib.resources import files
 from typing import Any, Mapping
 
 from .model import Artifact, Field, Span
@@ -154,18 +152,6 @@ def validate_schema(value: Any) -> dict[str, Any]:
     return value
 
 
-@lru_cache(maxsize=None)
-def load_schema(name: str) -> dict[str, Any]:
-    if name not in {"elf.json", "npu3720-act-compiler-8.3.json"}:
-        raise ValueError(f"unknown bundled visualization schema: {name}")
-    resource = files("npunlock.viz").joinpath("schemas", name)
-    try:
-        value = json.loads(resource.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"cannot load bundled visualization schema {name!r}") from error
-    return validate_schema(value)
-
-
 def node_metadata(schema: Mapping[str, Any], node_id: str) -> dict[str, str]:
     try:
         node = schema["nodes"][node_id]
@@ -265,7 +251,6 @@ __all__ = [
     "SCHEMA_FORMAT",
     "SCHEMA_VERSION",
     "decode_record_fields",
-    "load_schema",
     "lookup",
     "match_rule",
     "node_metadata",

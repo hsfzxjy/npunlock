@@ -614,6 +614,10 @@ if(BUILD_TESTING AND NPUNLOCK_BUILD_TESTS)
         NAME python_visualizer
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_viz.py
       )
+      add_test(
+        NAME python_visualizer_boundaries
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_viz_boundaries.py
+      )
     endif()
   endif()
 
