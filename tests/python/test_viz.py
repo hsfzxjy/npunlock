@@ -532,6 +532,8 @@ def test_bundled_frontend() -> None:
     assert "focusedRangeGuide" in javascript
     assert "openGoTo" in javascript
     assert "treeFilterState" in javascript
+    assert "renderContextStatus" in javascript
+    assert "cycleOverlap" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
@@ -542,6 +544,8 @@ def test_bundled_frontend() -> None:
     assert stylesheet.count("opacity: var(--irrelevant-opacity)") == 3
     assert ".range-guide-segment" in stylesheet
     assert "border-right: 2px solid var(--select-line)" in stylesheet
+    assert ".status-crumb" in stylesheet
+    assert ".status-control" in stylesheet
     index = static.joinpath("index.html").read_text(encoding="utf-8")
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index

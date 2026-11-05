@@ -201,6 +201,7 @@ class Viewer {
     visibleSearchResults = [];
     searchSelection = 0;
     hoveredNode;
+    hoveredField;
     treeFocusId;
     renderToken = 0;
     options = loadOptions();
@@ -248,6 +249,12 @@ class Viewer {
         if (!first)
             throw new Error("artifact graph contains no artifacts");
         this.current = { artifactId: first.id, offset: 0, end: Math.min(1, first.size) };
+        const initial = this.selectionCandidates(first.id, 0)[0];
+        if (initial) {
+            this.current.nodeId = initial.node.id;
+            this.current.fieldName = initial.fieldName;
+            this.current.spanIndex = this.candidateSpanIndex(initial);
+        }
         this.applyOptions();
         this.bind();
         this.renderTabs();
@@ -876,7 +883,7 @@ class Viewer {
             this.scrollToOffset(this.current.offset);
         else
             this.renderHex();
-        this.setStatus(`${artifact.name}  ${hex(this.current.offset)}  ${this.current.end - this.current.offset} byte${this.current.end - this.current.offset === 1 ? "" : "s"}`);
+        this.renderContextStatus();
     }
     revealTree(nodeId) {
         let node = this.nodes.get(nodeId);
@@ -953,12 +960,13 @@ class Viewer {
                 cover[offset - start]?.push(span);
         }
         for (const values of cover) {
-            values.sort((a, b) => a.length - b.length
-                || Number(Boolean(b.fieldName)) - Number(Boolean(a.fieldName))
-                || (this.depths.get(b.node.id) ?? 0) - (this.depths.get(a.node.id) ?? 0));
+            values.sort((a, b) => this.compareIndexedSpans(a, b));
         }
         const focusedNode = this.current.nodeId ? this.nodes.get(this.current.nodeId) : undefined;
-        const focusedSpans = focusedNode?.spans.filter(span => span.artifact === artifact.id) ?? [];
+        const focusedSource = this.current.fieldName
+            ? focusedNode?.fields[this.current.fieldName]?.spans ?? []
+            : focusedNode?.spans ?? [];
+        const focusedSpans = focusedSource.filter(span => span.artifact === artifact.id);
         const fragment = document.createDocumentFragment();
         for (let rowIndex = first; rowIndex < last; rowIndex += 1) {
             const row = document.createElement("div");
@@ -1018,7 +1026,9 @@ class Viewer {
             const fields = annotations.filter(span => span.node.id === nodeId && span.fieldName);
             return fields.find(span => !this.isIrrelevant(span.node, span.fieldName)) ?? fields[0];
         };
-        const selectedField = this.current.nodeId ? preferredField(this.current.nodeId) : undefined;
+        const selectedField = this.current.nodeId && this.current.fieldName
+            ? annotations.find(span => span.node.id === this.current.nodeId && span.fieldName === this.current.fieldName)
+            : this.current.nodeId ? preferredField(this.current.nodeId) : undefined;
         if (primary) {
             cell.classList.add("annotated");
             const semanticSpan = selectedField ?? preferredField(primary.node.id) ?? primary;
@@ -1032,8 +1042,9 @@ class Viewer {
             cell.style.setProperty("--semantic-color", semanticColor);
             if (selectedField)
                 cell.classList.add("field-highlight");
-            if (this.hoveredNode && annotations.some(span => span.node.id === this.hoveredNode))
+            if (this.hoveredNode && annotations.some(span => span.node.id === this.hoveredNode && (!this.hoveredField || span.fieldName === this.hoveredField))) {
                 cell.classList.add("hovered");
+            }
             cell.title = annotations
                 .map(span => {
                 if (!span.fieldName)
@@ -1052,20 +1063,27 @@ class Viewer {
         else if (offset >= this.current.offset && offset < this.current.end)
             cell.classList.add("range-selected");
         cell.addEventListener("click", event => {
-            const mostSpecific = annotations[0];
+            const candidates = this.selectionCandidates(this.current.artifactId, offset);
+            let selected = candidates[0];
+            if (!event.shiftKey && offset === this.current.offset && candidates.length > 1) {
+                const currentIndex = candidates.findIndex(candidate => candidate.node.id === this.current.nodeId && candidate.fieldName === this.current.fieldName);
+                if (currentIndex >= 0)
+                    selected = candidates[(currentIndex + 1) % candidates.length];
+            }
             const start = event.shiftKey ? Math.min(this.current.offset, offset) : offset;
             const end = event.shiftKey ? Math.max(this.current.offset, offset) + 1 : offset + 1;
             this.navigate({
                 artifactId: this.current.artifactId,
                 offset: start,
                 end,
-                nodeId: mostSpecific?.node.id,
-                fieldName: mostSpecific?.fieldName,
+                nodeId: selected?.node.id,
+                fieldName: selected?.fieldName,
+                spanIndex: selected ? this.candidateSpanIndex(selected) : undefined,
             }, { history: "push", scroll: false });
             this.hexScroll.focus();
         });
         if (primary) {
-            cell.addEventListener("mouseenter", () => this.setHovered(primary.node.id));
+            cell.addEventListener("mouseenter", () => this.setHovered(primary.node.id, primary.fieldName, offset));
             cell.addEventListener("mouseleave", () => this.setHovered(undefined));
         }
         return cell;
@@ -1091,10 +1109,71 @@ class Viewer {
             return color;
         return `color-mix(in srgb, ${color} 24%, var(--text-faint))`;
     }
+    compareIndexedSpans(left, right) {
+        return Number(Boolean(right.fieldName)) - Number(Boolean(left.fieldName))
+            || left.length - right.length
+            || (this.depths.get(right.node.id) ?? 0) - (this.depths.get(left.node.id) ?? 0)
+            || left.start - right.start
+            || left.node.id.localeCompare(right.node.id)
+            || (left.fieldName ?? "").localeCompare(right.fieldName ?? "");
+    }
+    coveringSpans(artifactId, offset) {
+        return (this.spans.get(artifactId) ?? [])
+            .filter(span => span.start <= offset && offset < span.end)
+            .sort((left, right) => this.compareIndexedSpans(left, right));
+    }
+    selectionCandidates(artifactId, offset) {
+        const result = [];
+        for (const span of this.coveringSpans(artifactId, offset)) {
+            if (result.some(value => value.node.id === span.node.id && value.fieldName === span.fieldName))
+                continue;
+            result.push({ node: span.node, fieldName: span.fieldName, span });
+        }
+        return result;
+    }
+    candidateSpanIndex(candidate) {
+        const spans = candidate.fieldName
+            ? candidate.node.fields[candidate.fieldName]?.spans ?? []
+            : candidate.node.spans;
+        return Math.max(0, spans.findIndex(span => span.id !== undefined && candidate.span.id !== undefined
+            ? span.id === candidate.span.id
+            : span.artifact === candidate.span.artifact
+                && span.start === candidate.span.start
+                && span.end === candidate.span.end));
+    }
+    cycleOverlap(delta) {
+        const candidates = this.selectionCandidates(this.current.artifactId, this.current.offset);
+        if (candidates.length < 2)
+            return;
+        const currentIndex = candidates.findIndex(candidate => candidate.node.id === this.current.nodeId && candidate.fieldName === this.current.fieldName);
+        const index = currentIndex < 0
+            ? (delta > 0 ? 0 : candidates.length - 1)
+            : (currentIndex + delta + candidates.length) % candidates.length;
+        const selected = candidates[index];
+        this.navigate({
+            ...this.current,
+            nodeId: selected.node.id,
+            fieldName: selected.fieldName,
+            spanIndex: this.candidateSpanIndex(selected),
+            arrival: undefined,
+        }, { history: "push", scroll: false });
+    }
+    selectedSpans() {
+        const node = this.current.nodeId ? this.nodes.get(this.current.nodeId) : undefined;
+        return this.current.fieldName ? node?.fields[this.current.fieldName]?.spans ?? [] : node?.spans ?? [];
+    }
+    moveSelectedSpan(delta) {
+        const spans = this.selectedSpans();
+        if (spans.length < 2)
+            return;
+        const current = this.current.spanIndex ?? spans.findIndex(span => span.artifact === this.current.artifactId && span.start === this.current.offset && span.end === this.current.end);
+        const index = (Math.max(0, current) + delta + spans.length) % spans.length;
+        this.navigateSpan(spans[index], this.current.nodeId, this.current.fieldName, index);
+    }
     covering(artifactId, offset) {
-        const values = (this.spans.get(artifactId) ?? []).filter(span => span.start <= offset && offset < span.end);
-        values.sort((a, b) => a.length - b.length || (this.depths.get(b.node.id) ?? 0) - (this.depths.get(a.node.id) ?? 0));
-        return values.map(value => value.node).filter((node, index, all) => all.findIndex(value => value.id === node.id) === index);
+        return this.selectionCandidates(artifactId, offset)
+            .map(value => value.node)
+            .filter((node, index, all) => all.findIndex(value => value.id === node.id) === index);
     }
     renderInspector() {
         this.inspector.replaceChildren();
@@ -1274,6 +1353,14 @@ class Viewer {
         return button;
     }
     hexKey(event) {
+        if (event.key === "[" || event.key === "]") {
+            event.preventDefault();
+            if (event.altKey)
+                this.moveSelectedSpan(event.key === "]" ? 1 : -1);
+            else
+                this.cycleOverlap(event.key === "]" ? 1 : -1);
+            return;
+        }
         const artifact = this.artifacts.get(this.current.artifactId);
         let offset = this.current.offset;
         if (event.key === "ArrowLeft")
@@ -1296,8 +1383,15 @@ class Viewer {
             return;
         event.preventDefault();
         offset = Math.max(0, Math.min(Math.max(0, artifact.size - 1), offset));
-        const primary = this.covering(artifact.id, offset)[0];
-        this.navigate({ artifactId: artifact.id, offset, end: offset + 1, nodeId: primary?.id }, { history: "coalesce", coalesceKey: "byte-step", scroll: true });
+        const primary = this.selectionCandidates(artifact.id, offset)[0];
+        this.navigate({
+            artifactId: artifact.id,
+            offset,
+            end: offset + 1,
+            nodeId: primary?.node.id,
+            fieldName: primary?.fieldName,
+            spanIndex: primary ? this.candidateSpanIndex(primary) : undefined,
+        }, { history: "coalesce", coalesceKey: "byte-step", scroll: true });
     }
     async copyLocation() {
         const artifact = this.artifacts.get(this.current.artifactId);
@@ -1311,18 +1405,122 @@ class Viewer {
             this.setStatus(`copy unavailable · ${value}`);
         }
     }
-    setHovered(nodeId) {
-        if (this.hoveredNode === nodeId)
+    renderContextStatus(nodeId = this.current.nodeId, fieldName = this.current.fieldName, offset) {
+        this.status.replaceChildren();
+        const node = nodeId ? this.nodes.get(nodeId) : undefined;
+        const contextOffset = offset ?? this.current.offset;
+        const candidate = node
+            ? this.coveringSpans(this.current.artifactId, contextOffset).find(span => span.node.id === node.id && (fieldName === undefined || span.fieldName === fieldName))
+            : undefined;
+        const span = candidate ?? (fieldName ? node?.fields[fieldName]?.spans?.[0] : node?.spans[0]);
+        const artifact = this.artifacts.get(span?.artifact ?? this.current.artifactId);
+        const path = [];
+        let cursor = node;
+        while (cursor) {
+            path.push(cursor);
+            cursor = cursor.parent ? this.nodes.get(cursor.parent) : undefined;
+        }
+        path.reverse();
+        const artifactElement = document.createElement("span");
+        artifactElement.className = "status-artifact";
+        artifactElement.textContent = artifact.name;
+        this.status.append(artifactElement);
+        for (const pathNode of path) {
+            this.status.append(this.statusSeparator());
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "status-crumb";
+            button.textContent = pathNode.label;
+            button.title = pathNode.description ?? pathNode.label;
+            button.addEventListener("click", () => this.selectNode(pathNode.id, true));
+            this.status.append(button);
+        }
+        const field = node && fieldName ? node.fields[fieldName] : undefined;
+        if (fieldName) {
+            this.status.append(this.statusSeparator());
+            const fieldElement = document.createElement("span");
+            fieldElement.className = "status-field";
+            fieldElement.textContent = fieldName;
+            fieldElement.title = field?.description ?? fieldName;
+            this.status.append(fieldElement);
+        }
+        const rangeStart = span?.start ?? this.current.offset;
+        const rangeEnd = span?.end ?? this.current.end;
+        const range = document.createElement("span");
+        range.className = "status-meta";
+        const spanLabel = span?.label ? `${span.label} · ` : "";
+        range.textContent = `${spanLabel}${hex(rangeStart)}–${hex(rangeEnd)} · ${rangeEnd - rangeStart} B`;
+        this.status.append(range);
+        if (field) {
+            const value = document.createElement("span");
+            value.className = "status-meta";
+            value.textContent = field.display ?? displayValue(field.value);
+            const evidence = evidenceText(field);
+            value.title = [field.description, evidence].filter(Boolean).join("\n");
+            this.status.append(value);
+            if (evidence) {
+                const evidenceElement = document.createElement("span");
+                evidenceElement.className = "status-evidence";
+                evidenceElement.textContent = evidence;
+                this.status.append(evidenceElement);
+            }
+        }
+        if (offset === undefined) {
+            const candidates = this.selectionCandidates(this.current.artifactId, this.current.offset);
+            if (candidates.length > 1) {
+                const index = candidates.findIndex(value => value.node.id === this.current.nodeId && value.fieldName === this.current.fieldName);
+                const overlap = document.createElement("button");
+                overlap.type = "button";
+                overlap.className = "status-control";
+                overlap.textContent = `${Math.max(0, index) + 1}/${candidates.length} covering`;
+                overlap.title = "Cycle covering semantics ([ and ])";
+                overlap.addEventListener("click", () => this.cycleOverlap(1));
+                this.status.append(overlap);
+            }
+            const spans = this.selectedSpans();
+            if (spans.length > 1) {
+                const index = Math.max(0, Math.min(spans.length - 1, this.current.spanIndex ?? 0));
+                const previous = document.createElement("button");
+                previous.type = "button";
+                previous.className = "status-control compact";
+                previous.textContent = "‹";
+                previous.title = "Previous span (Alt+[)";
+                previous.addEventListener("click", () => this.moveSelectedSpan(-1));
+                const count = document.createElement("span");
+                count.className = "status-meta";
+                count.textContent = `span ${index + 1}/${spans.length}`;
+                const next = document.createElement("button");
+                next.type = "button";
+                next.className = "status-control compact";
+                next.textContent = "›";
+                next.title = "Next span (Alt+])";
+                next.addEventListener("click", () => this.moveSelectedSpan(1));
+                this.status.append(previous, count, next);
+            }
+            if (this.current.arrival) {
+                const arrival = document.createElement("span");
+                arrival.className = "status-evidence";
+                arrival.textContent = `via ${this.current.arrival.kind}`;
+                this.status.append(arrival);
+            }
+        }
+    }
+    statusSeparator() {
+        const separator = document.createElement("span");
+        separator.className = "status-separator";
+        separator.textContent = "›";
+        return separator;
+    }
+    setHovered(nodeId, fieldName, offset) {
+        if (this.hoveredNode === nodeId && this.hoveredField === fieldName)
             return;
         this.hoveredNode = nodeId;
+        this.hoveredField = fieldName;
         if (nodeId) {
-            const node = this.nodes.get(nodeId);
-            if (node)
-                this.setStatus(`${node.label} · ${node.kind}`);
+            this.renderContextStatus(nodeId, fieldName, offset);
         }
         else {
-            const artifact = this.artifacts.get(this.current.artifactId);
-            this.setStatus(`${artifact.name}  ${hex(this.current.offset)}  ${this.current.end - this.current.offset} byte${this.current.end - this.current.offset === 1 ? "" : "s"}`);
+            this.renderContextStatus();
         }
         this.renderHex();
     }

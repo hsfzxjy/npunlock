@@ -118,6 +118,12 @@ the ancestors needed for context.
 Navigation history records semantic jumps, artifact and span changes, and
 references. Consecutive byte-key movements coalesce into one destination so
 Back returns to the preceding semantic location rather than the previous byte.
+The context strip beneath the bytes keeps the active artifact, clickable
+containment path, field, named span, byte extent, value, and evidence visible.
+When several semantics cover a byte, repeated click or `[`/`]` cycles through
+fields and containing entities in deterministic specificity order. Named
+noncontiguous spans use the compact strip controls or `Alt+[`/`Alt+]` without
+losing the selected entity.
 
 `graph.dumps(include_data=True)` creates a portable JSON document with base64
 artifact data. The default omits bytes, matching the browser metadata endpoint;
