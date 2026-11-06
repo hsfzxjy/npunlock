@@ -1510,6 +1510,9 @@ class Viewer {
       ? focusedNode?.fields[this.current.fieldName]?.spans ?? []
       : focusedNode?.spans ?? [];
     const focusedSpans = focusedSource.filter(span => span.artifact === artifact.id);
+    const annotationCapacity = Math.max(1, Math.min(6, Math.floor(
+      Math.max(170, this.hexScroll.clientWidth - 550) / 170,
+    )));
     const fragment = document.createDocumentFragment();
     for (let rowIndex = first; rowIndex < last; rowIndex += 1) {
       const row = document.createElement("div");
@@ -1530,7 +1533,20 @@ class Viewer {
         hexCells.append(this.byteElement(offset, value, annotations, false));
         asciiCells.append(this.byteElement(offset, value, annotations, true));
       }
-      row.append(offsetElement, hexCells, asciiCells, this.focusedRangeGuide(rowOffset, focusedSpans));
+      const rowEnd = Math.min(artifact.size, rowOffset + ROW_BYTES);
+      const starts = new Set<IndexedSpan>();
+      for (let offset = Math.max(rowOffset, start); offset < Math.min(rowEnd, end); offset += 1) {
+        for (const span of cover[offset - start] ?? []) {
+          if (span.start === offset) starts.add(span);
+        }
+      }
+      row.append(
+        offsetElement,
+        hexCells,
+        asciiCells,
+        this.focusedRangeGuide(rowOffset, focusedSpans),
+        this.semanticRowAnnotations([...starts], annotationCapacity),
+      );
       fragment.append(row);
     }
     this.hexRows.replaceChildren(fragment);
@@ -1550,6 +1566,74 @@ class Viewer {
       guide.append(segment);
     }
     return guide;
+  }
+
+  private semanticRowAnnotations(starts: IndexedSpan[], capacity: number): HTMLElement {
+    const lane = document.createElement("span");
+    lane.className = "row-annotations";
+    const unique = new Map<string, IndexedSpan>();
+    for (const span of starts.sort((left, right) => this.compareIndexedSpans(left, right))) {
+      const key = `${span.node.id}\u0000${span.fieldName ?? ""}`;
+      if (!unique.has(key)) unique.set(key, span);
+    }
+    const candidates = [...unique.values()];
+    const regions = candidates.filter(span => !span.fieldName);
+    const fields = candidates.filter(span => span.fieldName)
+      .sort((left, right) => left.start - right.start || this.compareIndexedSpans(left, right));
+    const selected = candidates.find(span => span.node.id === this.current.nodeId
+      && span.fieldName === this.current.fieldName);
+    const prioritized = [selected, ...regions.slice(0, 2), ...fields, ...regions.slice(2)]
+      .filter((span): span is IndexedSpan => span !== undefined);
+    const ordered = prioritized.filter((span, index) => prioritized.indexOf(span) === index);
+    const visible = ordered.slice(0, capacity);
+    for (const span of visible) lane.append(this.semanticRowAnnotation(span));
+    if (ordered.length > visible.length) {
+      const more = document.createElement("span");
+      more.className = "row-annotation-more";
+      more.textContent = `+${ordered.length - visible.length}`;
+      more.title = ordered.slice(visible.length).map(span =>
+        span.fieldName ? `${span.node.label} › ${span.fieldName}` : span.node.label).join("\n");
+      lane.append(more);
+    }
+    return lane;
+  }
+
+  private semanticRowAnnotation(span: IndexedSpan): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.tabIndex = -1;
+    button.className = "row-annotation";
+    button.style.setProperty("--semantic-color", this.categoryColor(span.node.category));
+    const field = span.fieldName ? span.node.fields[span.fieldName] : undefined;
+    const rawValue = field ? displayValue(field.value).replace(/\s+/g, " ") : undefined;
+    const compactValue = rawValue && rawValue.length > 64 ? `${rawValue.slice(0, 63)}…` : rawValue;
+    button.textContent = span.fieldName
+      ? `${span.fieldName}${compactValue ? `: ${compactValue}` : ""}`
+      : span.node.label;
+    const detail = [
+      span.fieldName ? `${this.nodePath(span.node)} › ${span.fieldName}` : this.nodePath(span.node),
+      field?.description ?? span.node.description,
+      `${hex(span.start)}–${hex(span.end)} · ${span.end - span.start} B`,
+      evidenceText(field ?? span.node),
+    ].filter(Boolean);
+    button.title = detail.join("\n");
+    const selected = this.current.nodeId === span.node.id
+      && this.current.fieldName === span.fieldName;
+    if (selected) button.classList.add("selected");
+    if (this.options.dimIrrelevant && this.isIrrelevant(span.node, span.fieldName)) {
+      button.classList.add("irrelevant");
+    }
+    button.addEventListener("click", () => {
+      this.navigate({
+        artifactId: span.artifact,
+        offset: span.start,
+        end: span.end,
+        nodeId: span.node.id,
+        fieldName: span.fieldName,
+        spanIndex: this.candidateSpanIndex({ node: span.node, fieldName: span.fieldName, span }),
+      }, { history: "push", scroll: false });
+    });
+    return button;
   }
 
   private byteElement(offset: number, value: number | undefined, annotations: IndexedSpan[], ascii: boolean): HTMLElement {

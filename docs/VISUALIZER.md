@@ -140,6 +140,16 @@ current selection is a precise blue line. Click to jump by file offset, or
 focus the ruler and use arrows, Page Up/Down, Home, and End. Every ruler action
 uses the ordinary navigation controller and history.
 
+When the center pane is wide enough, the otherwise unused area after the ASCII
+and selected-range rail becomes a row-aligned annotation lane. It shows the
+active semantic first, then the most specific region and decoded fields that
+begin on that exact 16-byte row. Field labels include compact values; color,
+selection, and irrelevant-data fading follow the byte view. Labels navigate
+through the same history controller, while a count summarizes annotations that
+do not fit. Capacity scales with the actual hex-pane width, and the lane is
+removed entirely from narrow layouts so byte alignment and drawer access do
+not change.
+
 Navigation history records semantic jumps, artifact and span changes, and
 references. Consecutive byte-key movements coalesce into one destination so
 Back returns to the preceding semantic location rather than the previous byte.

@@ -227,6 +227,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   display: grid;
   grid-template-rows: 25px minmax(0, 1fr) var(--status-height);
   background: var(--bg);
+  container: hex-pane / inline-size;
 }
 
 .hex-head, .hex-row {
@@ -308,6 +309,56 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 .range-guide-segment.range-start::before { top: 0; }
 .range-guide-segment.range-end::after { bottom: 0; }
+.semantic-head, .row-annotations { display: none; }
+.semantic-head {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+}
+.row-annotations {
+  min-width: 0;
+  height: 18px;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  padding-left: 7px;
+  border-left: 1px solid var(--border);
+}
+.row-annotation {
+  flex: 0 1 auto;
+  min-width: 18px;
+  max-width: 27ch;
+  height: 18px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 4px;
+  border: 0;
+  border-left: 2px solid var(--semantic-color);
+  border-radius: 0;
+  color: var(--text-dim);
+  background: transparent;
+  font: 11px/18px var(--ui-font);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-annotation:hover { color: var(--text); background: var(--surface-2); }
+.row-annotation.selected { color: var(--text); background: rgba(47, 112, 159, .13); border-left-color: var(--select-line); }
+.row-annotation.irrelevant { opacity: var(--irrelevant-opacity); }
+.row-annotation-more {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font: 10px/18px var(--ui-font);
+}
+
+@container hex-pane (min-width: 720px) {
+  .hex-head, .hex-row {
+    grid-template-columns: 11ch max-content 16ch var(--range-rail-width) minmax(0, 1fr);
+  }
+  .semantic-head { display: block; }
+  .row-annotations { display: flex; }
+}
 .byte.annotated {
   background: color-mix(in srgb, var(--semantic-color) 24%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--semantic-color) 68%, transparent);
@@ -468,6 +519,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 
 @media (max-width: 820px) {
+  .hex-head, .hex-row { grid-template-columns: 11ch max-content 16ch var(--range-rail-width); }
+  .semantic-head, .row-annotations { display: none; }
   .workspace,
   .workspace.tree-hidden,
   .workspace.inspector-hidden,

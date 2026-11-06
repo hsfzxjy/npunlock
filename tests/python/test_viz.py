@@ -690,6 +690,7 @@ def test_bundled_frontend() -> None:
     assert "narrow-tree-open" in javascript
     assert "currentLocationExpression" in javascript
     assert "renderOverview" in javascript
+    assert "semanticRowAnnotations" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
@@ -697,7 +698,8 @@ def test_bundled_frontend() -> None:
     assert ".tree-row.irrelevant > *" in stylesheet
     assert ".field-row.irrelevant > *" in stylesheet
     assert ".byte.irrelevant:not(.selected)" in stylesheet
-    assert stylesheet.count("opacity: var(--irrelevant-opacity)") == 3
+    assert ".row-annotation.irrelevant" in stylesheet
+    assert stylesheet.count("opacity: var(--irrelevant-opacity)") == 4
     assert ".range-guide-segment" in stylesheet
     assert "border-right: 2px solid var(--select-line)" in stylesheet
     assert ".status-crumb" in stylesheet
@@ -708,7 +710,9 @@ def test_bundled_frontend() -> None:
     assert ".workspace.narrow-tree-open #tree-panel" in stylesheet
     assert ".workspace.narrow-inspector-open #inspector-panel" in stylesheet
     assert ".overview" in stylesheet
+    assert "@container hex-pane" in stylesheet
     index = static.joinpath("index.html").read_text(encoding="utf-8")
+    assert "semantic-head" in index
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index
     assert 'class="range-head"' in index
