@@ -18,6 +18,7 @@ export interface WorkspaceState {
   graphIdentity: string;
   graphFormat: string;
   graphVersion: number;
+  backendStateVersion: string;
   savedAt: number;
   location: LocationState;
   history: NavigationSnapshot;
@@ -32,6 +33,7 @@ export interface WorkspaceContext {
   graphIdentity: string;
   graphFormat: string;
   graphVersion: number;
+  backendStateVersion: string;
   validateLocation(location: LocationState): boolean;
   validateNodeId(nodeId: string): boolean;
   validateHexTopOffset(artifactId: string, offset: number): boolean;
@@ -41,6 +43,10 @@ interface StorageEnvelope<T> {
   schemaVersion: number;
   compatibilityEpoch: number;
   value: T;
+}
+
+export function workspaceStorageKey(graphIdentity: string): string {
+  return `npunlock.viz.workspace:${encodeURIComponent(graphIdentity)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -119,6 +125,7 @@ function validateWorkspace(value: unknown, context: WorkspaceContext): value is 
     || value.graphIdentity !== context.graphIdentity
     || value.graphFormat !== context.graphFormat
     || value.graphVersion !== context.graphVersion
+    || value.backendStateVersion !== context.backendStateVersion
     || !isFiniteNonnegative(value.savedAt)
     || !isLocation(value.location)
     || !context.validateLocation(value.location)

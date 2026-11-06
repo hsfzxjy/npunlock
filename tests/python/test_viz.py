@@ -159,6 +159,7 @@ def test_server_ranges_and_lifecycle() -> None:
             graph_body = response.read()
             metadata = json.loads(graph_body)
             assert response.headers["ETag"] == f'"{hashlib.sha256(graph_body).hexdigest()}"'
+            assert response.headers["X-NPUnlock-Viz-State-Version"] == "1"
         assert metadata["format"] == "npunlock.artifact-graph"
         assert "data_base64" not in metadata["artifacts"][0]
         url = session.url + "api/artifacts/a%2Fb/bytes?offset=65530&length=20"

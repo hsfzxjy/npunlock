@@ -12,6 +12,7 @@ import {
   MAX_PERSISTED_HISTORY,
   saveCompatibleValue,
   saveWorkspace,
+  workspaceStorageKey,
   type StorageLike,
   type WorkspaceState,
 } from "./persistence.js";
@@ -338,12 +339,17 @@ class Viewer {
   private narrowDrawer?: "tree" | "inspector";
   private renderToken = 0;
   private options = loadOptions();
-  private workspaceStorage = browserStorage("session");
-  private workspaceKey = `npunlock.viz.workspace:${window.location.pathname}`;
+  private workspaceStorage = browserStorage("local");
+  private workspaceKey?: string;
   private workspaceSaveTimer = 0;
   private restoringWorkspace = false;
 
-  constructor(private graph: GraphData, private graphIdentity?: string) {
+  constructor(
+    private graph: GraphData,
+    private graphIdentity?: string,
+    private backendStateVersion?: string,
+  ) {
+    if (graphIdentity && backendStateVersion) this.workspaceKey = workspaceStorageKey(graphIdentity);
     this.treeSpace.className = "tree-space";
     this.treeRowsLayer.className = "tree-rows";
     this.treeSpace.append(this.treeRowsLayer);
@@ -493,11 +499,14 @@ class Viewer {
   }
 
   private loadWorkspaceState(): WorkspaceState | undefined {
-    if (!this.workspaceStorage || !this.graphIdentity) return undefined;
+    if (!this.workspaceStorage || !this.workspaceKey || !this.graphIdentity || !this.backendStateVersion) {
+      return undefined;
+    }
     return loadWorkspace(this.workspaceStorage, this.workspaceKey, {
       graphIdentity: this.graphIdentity,
       graphFormat: this.graph.format,
       graphVersion: this.graph.version,
+      backendStateVersion: this.backendStateVersion,
       validateLocation: location => this.validateStoredLocation(location),
       validateNodeId: nodeId => this.nodes.has(nodeId),
       validateHexTopOffset: (artifactId, offset) => {
@@ -508,7 +517,7 @@ class Viewer {
   }
 
   private discardWorkspaceState(): void {
-    if (!this.workspaceStorage) return;
+    if (!this.workspaceStorage || !this.workspaceKey) return;
     try {
       this.workspaceStorage.removeItem(this.workspaceKey);
     } catch {
@@ -518,7 +527,11 @@ class Viewer {
 
   private saveWorkspaceState(): void {
     this.workspaceSaveTimer = 0;
-    if (this.restoringWorkspace || !this.workspaceStorage || !this.graphIdentity) return;
+    if (this.restoringWorkspace
+      || !this.workspaceStorage
+      || !this.workspaceKey
+      || !this.graphIdentity
+      || !this.backendStateVersion) return;
     const history = this.history.snapshot(MAX_PERSISTED_HISTORY);
     const historyLocation = history.entries[history.index];
     if (!historyLocation || !sameLocation(historyLocation, this.current)) return;
@@ -526,6 +539,7 @@ class Viewer {
       graphIdentity: this.graphIdentity,
       graphFormat: this.graph.format,
       graphVersion: this.graph.version,
+      backendStateVersion: this.backendStateVersion,
       savedAt: Date.now(),
       location: this.current,
       history,
@@ -538,7 +552,11 @@ class Viewer {
   }
 
   private scheduleWorkspaceSave(delay = 160): void {
-    if (this.restoringWorkspace || !this.workspaceStorage || !this.graphIdentity) return;
+    if (this.restoringWorkspace
+      || !this.workspaceStorage
+      || !this.workspaceKey
+      || !this.graphIdentity
+      || !this.backendStateVersion) return;
     if (this.workspaceSaveTimer) window.clearTimeout(this.workspaceSaveTimer);
     this.workspaceSaveTimer = window.setTimeout(() => this.saveWorkspaceState(), delay);
   }
@@ -2257,7 +2275,11 @@ async function main(): Promise<void> {
   if (graph.format !== "npunlock.artifact-graph" || ![1, 2].includes(graph.version)) {
     throw new Error("unsupported artifact graph format");
   }
-  new Viewer(graph, response.headers.get("ETag") ?? undefined);
+  new Viewer(
+    graph,
+    response.headers.get("ETag") ?? undefined,
+    response.headers.get("X-NPUnlock-Viz-State-Version") ?? undefined,
+  );
 }
 
 main().catch(error => {

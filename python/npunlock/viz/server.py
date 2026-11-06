@@ -16,6 +16,7 @@ from .model import ArtifactGraph
 
 
 MAX_RANGE_BYTES = 64 * 1024
+VIEWER_STATE_VERSION = "1"
 
 
 class _ViewerHTTPServer(ThreadingHTTPServer):
@@ -49,6 +50,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         *,
         cache: str = "no-store",
         etag: str | None = None,
+        viewer_state_version: str | None = None,
     ) -> None:
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
@@ -57,6 +59,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         if etag is not None:
             self.send_header("ETag", etag)
+        if viewer_state_version is not None:
+            self.send_header("X-NPUnlock-Viz-State-Version", viewer_state_version)
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -71,9 +75,16 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         status: HTTPStatus = HTTPStatus.OK,
         cache: str = "no-store",
         etag: str | None = None,
+        viewer_state_version: str | None = None,
     ) -> None:
         self.send_response(status)
-        self._headers(content_type, len(body), cache=cache, etag=etag)
+        self._headers(
+            content_type,
+            len(body),
+            cache=cache,
+            etag=etag,
+            viewer_state_version=viewer_state_version,
+        )
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -110,6 +121,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self.server.graph_metadata,
                 "application/json; charset=utf-8",
                 etag=self.server.graph_etag,
+                viewer_state_version=VIEWER_STATE_VERSION,
             )
             return
         if relative.startswith("api/artifacts/") and relative.endswith("/bytes"):

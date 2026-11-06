@@ -8,6 +8,7 @@ const {
   loadWorkspace,
   saveCompatibleValue,
   saveWorkspace,
+  workspaceStorageKey,
 } = require("../.test-build/persistence.js");
 
 class MemoryStorage {
@@ -29,6 +30,7 @@ function workspace(overrides = {}) {
     graphIdentity: '"graph-sha256"',
     graphFormat: "npunlock.artifact-graph",
     graphVersion: 2,
+    backendStateVersion: "backend-1",
     savedAt: 42,
     location: current,
     history: { entries: [current], index: 0 },
@@ -46,6 +48,7 @@ function context(overrides = {}) {
     graphIdentity: '"graph-sha256"',
     graphFormat: "npunlock.artifact-graph",
     graphVersion: 2,
+    backendStateVersion: "backend-1",
     validateLocation: value => value.artifactId === "artifact"
       && value.offset >= 0 && value.end > value.offset && value.end <= 64
       && value.nodeId === "node" && value.fieldName === "field" && value.spanIndex === 0,
@@ -68,6 +71,7 @@ test("workspace compatibility and graph drift discard the entire snapshot", () =
     envelope => { envelope.compatibilityEpoch = WORKSPACE_COMPATIBILITY_EPOCH + 1; },
     envelope => { envelope.value.graphIdentity = '"different"'; },
     envelope => { envelope.value.graphVersion = 1; },
+    envelope => { envelope.value.backendStateVersion = "backend-2"; },
     envelope => { envelope.value.location.nodeId = "missing"; },
     envelope => { envelope.value.history.index = 3; },
     envelope => { envelope.value.hexTopOffset = 64; },
@@ -82,6 +86,11 @@ test("workspace compatibility and graph drift discard the entire snapshot", () =
     assert.equal(storage.getItem("workspace"), null);
     assert.deepEqual(storage.removed, ["workspace"]);
   }
+});
+
+test("workspace keys are stable per exact graph identity", () => {
+  assert.equal(workspaceStorageKey('"graph-sha256"'), workspaceStorageKey('"graph-sha256"'));
+  assert.notEqual(workspaceStorageKey('"graph-sha256"'), workspaceStorageKey('"other"'));
 });
 
 test("malformed state and denied storage are nonfatal", () => {

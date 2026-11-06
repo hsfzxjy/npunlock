@@ -2,6 +2,9 @@ import { sameLocation, } from "./navigation.js";
 export const STORAGE_SCHEMA_VERSION = 1;
 export const WORKSPACE_COMPATIBILITY_EPOCH = 1;
 export const MAX_PERSISTED_HISTORY = 100;
+export function workspaceStorageKey(graphIdentity) {
+    return `npunlock.viz.workspace:${encodeURIComponent(graphIdentity)}`;
+}
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -75,6 +78,7 @@ function validateWorkspace(value, context) {
         || value.graphIdentity !== context.graphIdentity
         || value.graphFormat !== context.graphFormat
         || value.graphVersion !== context.graphVersion
+        || value.backendStateVersion !== context.backendStateVersion
         || !isFiniteNonnegative(value.savedAt)
         || !isLocation(value.location)
         || !context.validateLocation(value.location)

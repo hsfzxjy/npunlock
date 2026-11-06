@@ -186,19 +186,23 @@ viewer processes. Random-port sessions remain isolated.
 Refreshing an active viewer also restores its semantic selection, bounded
 Back/Forward history, expanded tree branches, structure filter, and the tree,
 hex, and inspector viewport positions. This workspace state is held in
-`sessionStorage` under the unguessable loopback token path, so it remains local
-to that browser tab and viewer process. The selected artifact, byte range,
-node, and field remain encoded in the URL fragment and take precedence when a
-different copied location is opened.
+`localStorage`, keyed by the exact graph metadata identity, so closing and
+reopening a tab retains it for the same file set and backend state contract.
+The selected artifact, byte range, node, and field remain encoded in the URL
+fragment and take precedence when a different copied location is opened.
+Browser storage is origin-scoped: reopening the live viewer URL works directly;
+across separate viewer processes, use the same explicit `--port` to retain the
+same storage origin.
 
 Both preference and workspace records fail closed. They carry an explicit
 storage schema and frontend compatibility epoch; workspace records also carry
-the artifact-graph format/version and the strong ETag of the exact graph
-metadata response. An update that changes stored-state meaning increments the
-compatibility epoch. Unknown versions, graph drift, malformed state, stale
-semantic IDs, or invalid offsets delete the complete record and start from
-clean defaults rather than attempting partial recovery. Artifact bytes and
-rendered content are never stored.
+the artifact-graph format/version, an explicit backend state-compatibility
+version, and the strong ETag of the exact graph metadata response. An update
+that changes stored-state meaning increments the corresponding compatibility
+version. Unknown versions, graph drift, malformed state, stale semantic IDs,
+or invalid offsets delete the complete record and start from clean defaults
+rather than attempting partial recovery. Artifact bytes and rendered content
+are never stored.
 
 Selecting any node with physical spans adds a compact, left-facing bracket rail
 just to the right of the ASCII column. The rail follows every visible row
