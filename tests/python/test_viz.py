@@ -156,7 +156,9 @@ def test_server_ranges_and_lifecycle() -> None:
         assert opened == [session.url]
         assert session.url.startswith("http://127.0.0.1:")
         with urllib.request.urlopen(session.url + "api/graph", timeout=3) as response:
-            metadata = json.load(response)
+            graph_body = response.read()
+            metadata = json.loads(graph_body)
+            assert response.headers["ETag"] == f'"{hashlib.sha256(graph_body).hexdigest()}"'
         assert metadata["format"] == "npunlock.artifact-graph"
         assert "data_base64" not in metadata["artifacts"][0]
         url = session.url + "api/artifacts/a%2Fb/bytes?offset=65530&length=20"
@@ -656,7 +658,15 @@ def test_dense_model() -> None:
 
 def test_bundled_frontend() -> None:
     static = files("npunlock.viz").joinpath("static")
-    for name in ("index.html", "app.css", "app.js", "navigation.js", "search.js", "tree.js"):
+    for name in (
+        "index.html",
+        "app.css",
+        "app.js",
+        "navigation.js",
+        "persistence.js",
+        "search.js",
+        "tree.js",
+    ):
         content = static.joinpath(name).read_bytes()
         assert content
     javascript = static.joinpath("app.js").read_text(encoding="utf-8")

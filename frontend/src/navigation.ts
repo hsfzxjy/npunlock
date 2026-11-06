@@ -16,6 +16,11 @@ export interface LocationState {
 
 export type HistoryMode = "none" | "push" | "replace" | "coalesce";
 
+export interface NavigationSnapshot {
+  entries: LocationState[];
+  index: number;
+}
+
 function sameArrival(left: ArrivalState | undefined, right: ArrivalState | undefined): boolean {
   if (left === undefined || right === undefined) return left === right;
   return left.sourceNodeId === right.sourceNodeId
@@ -23,13 +28,17 @@ function sameArrival(left: ArrivalState | undefined, right: ArrivalState | undef
     && left.kind === right.kind;
 }
 
-export function sameLocation(left: LocationState, right: LocationState): boolean {
+export function sameShareableLocation(left: LocationState, right: LocationState): boolean {
   return left.artifactId === right.artifactId
     && left.offset === right.offset
     && left.end === right.end
     && left.nodeId === right.nodeId
     && left.fieldName === right.fieldName
-    && left.spanIndex === right.spanIndex
+    && left.spanIndex === right.spanIndex;
+}
+
+export function sameLocation(left: LocationState, right: LocationState): boolean {
+  return sameShareableLocation(left, right)
     && sameArrival(left.arrival, right.arrival);
 }
 
@@ -80,6 +89,28 @@ export class NavigationHistory {
     this.coalesceKey = undefined;
     const value = this.entries[this.index];
     return value ? copyLocation(value) : undefined;
+  }
+
+  snapshot(limit = 100): NavigationSnapshot {
+    if (!Number.isInteger(limit) || limit < 1 || this.index < 0) return { entries: [], index: -1 };
+    const count = Math.min(limit, this.entries.length);
+    const start = Math.max(0, Math.min(this.index, this.entries.length - count));
+    return {
+      entries: this.entries.slice(start, start + count).map(copyLocation),
+      index: this.index - start,
+    };
+  }
+
+  restore(snapshot: NavigationSnapshot): boolean {
+    if (!Array.isArray(snapshot.entries)
+      || snapshot.entries.length < 1
+      || !Number.isInteger(snapshot.index)
+      || snapshot.index < 0
+      || snapshot.index >= snapshot.entries.length) return false;
+    this.entries = snapshot.entries.map(copyLocation);
+    this.index = snapshot.index;
+    this.coalesceKey = undefined;
+    return true;
   }
 
   get canBack(): boolean {

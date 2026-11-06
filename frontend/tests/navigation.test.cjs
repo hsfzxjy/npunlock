@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { NavigationHistory, sameLocation } = require("../.test-build/navigation.js");
+const { NavigationHistory, sameLocation, sameShareableLocation } = require("../.test-build/navigation.js");
 
 function location(offset, extra = {}) {
   return { artifactId: "a", offset, end: offset + 1, ...extra };
@@ -15,6 +15,14 @@ test("location equality includes ranges and semantic context", () => {
     location(4, { arrival: { sourceNodeId: "x", targetNodeId: "y", kind: "uses" } }),
     location(4, { arrival: { sourceNodeId: "x", targetNodeId: "y", kind: "uses" } }),
   ), true);
+  assert.equal(sameShareableLocation(
+    location(4, { arrival: { sourceNodeId: "x", targetNodeId: "y", kind: "uses" } }),
+    location(4),
+  ), true);
+  assert.equal(sameLocation(
+    location(4, { arrival: { sourceNodeId: "x", targetNodeId: "y", kind: "uses" } }),
+    location(4),
+  ), false);
 });
 
 test("byte stepping coalesces without losing the semantic origin", () => {
@@ -39,4 +47,21 @@ test("a semantic jump after back discards the forward branch", () => {
   assert.equal(history.canForward, false);
   assert.equal(history.length, 3);
   assert.deepEqual(history.move(-1), location(8, { nodeId: "first" }));
+});
+
+test("navigation history snapshots remain bounded and restore the active entry", () => {
+  const history = new NavigationHistory();
+  for (let index = 0; index < 140; index += 1) {
+    history.record(location(index), index === 0 ? "replace" : "push");
+  }
+  for (let index = 0; index < 70; index += 1) history.move(-1);
+  const snapshot = history.snapshot(100);
+  assert.equal(snapshot.entries.length, 100);
+  assert.deepEqual(snapshot.entries[snapshot.index], location(69));
+
+  const restored = new NavigationHistory();
+  assert.equal(restored.restore(snapshot), true);
+  assert.deepEqual(restored.move(-1), location(68));
+  assert.deepEqual(restored.move(1), location(69));
+  assert.equal(restored.restore({ entries: [], index: -1 }), false);
 });

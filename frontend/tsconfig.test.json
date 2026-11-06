@@ -7,5 +7,5 @@
     "noUncheckedIndexedAccess": true,
     "outDir": ".test-build"
   },
-  "include": ["src/navigation.ts", "src/search.ts", "src/tree.ts"]
+  "include": ["src/navigation.ts", "src/persistence.ts", "src/search.ts", "src/tree.ts"]
 }

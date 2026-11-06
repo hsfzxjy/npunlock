@@ -5,13 +5,16 @@ function sameArrival(left, right) {
         && left.targetNodeId === right.targetNodeId
         && left.kind === right.kind;
 }
-export function sameLocation(left, right) {
+export function sameShareableLocation(left, right) {
     return left.artifactId === right.artifactId
         && left.offset === right.offset
         && left.end === right.end
         && left.nodeId === right.nodeId
         && left.fieldName === right.fieldName
-        && left.spanIndex === right.spanIndex
+        && left.spanIndex === right.spanIndex;
+}
+export function sameLocation(left, right) {
+    return sameShareableLocation(left, right)
         && sameArrival(left.arrival, right.arrival);
 }
 function copyLocation(value) {
@@ -60,6 +63,28 @@ export class NavigationHistory {
         this.coalesceKey = undefined;
         const value = this.entries[this.index];
         return value ? copyLocation(value) : undefined;
+    }
+    snapshot(limit = 100) {
+        if (!Number.isInteger(limit) || limit < 1 || this.index < 0)
+            return { entries: [], index: -1 };
+        const count = Math.min(limit, this.entries.length);
+        const start = Math.max(0, Math.min(this.index, this.entries.length - count));
+        return {
+            entries: this.entries.slice(start, start + count).map(copyLocation),
+            index: this.index - start,
+        };
+    }
+    restore(snapshot) {
+        if (!Array.isArray(snapshot.entries)
+            || snapshot.entries.length < 1
+            || !Number.isInteger(snapshot.index)
+            || snapshot.index < 0
+            || snapshot.index >= snapshot.entries.length)
+            return false;
+        this.entries = snapshot.entries.map(copyLocation);
+        this.index = snapshot.index;
+        this.coalesceKey = undefined;
+        return true;
     }
     get canBack() {
         return this.index > 0;

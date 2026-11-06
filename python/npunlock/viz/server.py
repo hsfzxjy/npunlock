@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import secrets
@@ -25,6 +26,13 @@ class _ViewerHTTPServer(ThreadingHTTPServer):
         self.graph = graph
         self.token = token
         self.static_root = files("npunlock.viz").joinpath("static")
+        self.graph_metadata = json.dumps(
+            graph.to_dict(include_data=False),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        self.graph_etag = f'"{hashlib.sha256(self.graph_metadata).hexdigest()}"'
         super().__init__(address, _ViewerHandler)
 
 
@@ -34,12 +42,21 @@ class _ViewerHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *args: object) -> None:
         return
 
-    def _headers(self, content_type: str, length: int, *, cache: str = "no-store") -> None:
+    def _headers(
+        self,
+        content_type: str,
+        length: int,
+        *,
+        cache: str = "no-store",
+        etag: str | None = None,
+    ) -> None:
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        if etag is not None:
+            self.send_header("ETag", etag)
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -53,9 +70,10 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         *,
         status: HTTPStatus = HTTPStatus.OK,
         cache: str = "no-store",
+        etag: str | None = None,
     ) -> None:
         self.send_response(status)
-        self._headers(content_type, len(body), cache=cache)
+        self._headers(content_type, len(body), cache=cache, etag=etag)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -88,13 +106,11 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
         relative = parsed.path[len(prefix) :]
         if relative == "api/graph":
-            body = json.dumps(
-                self.server.graph.to_dict(include_data=False),
-                ensure_ascii=False,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
-            self._send_bytes(body, "application/json; charset=utf-8")
+            self._send_bytes(
+                self.server.graph_metadata,
+                "application/json; charset=utf-8",
+                etag=self.server.graph_etag,
+            )
             return
         if relative.startswith("api/artifacts/") and relative.endswith("/bytes"):
             encoded_id = relative[len("api/artifacts/") : -len("/bytes")]
@@ -123,7 +139,15 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
         if relative in {"", "index.html"}:
             relative = "index.html"
-        if relative not in {"index.html", "app.js", "navigation.js", "search.js", "tree.js", "app.css"}:
+        if relative not in {
+            "index.html",
+            "app.js",
+            "navigation.js",
+            "persistence.js",
+            "search.js",
+            "tree.js",
+            "app.css",
+        }:
             self._error(HTTPStatus.NOT_FOUND, "not found")
             return
         resource = self.server.static_root.joinpath(relative)

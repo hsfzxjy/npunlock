@@ -1,4 +1,5 @@
-import { NavigationHistory, } from "./navigation.js";
+import { NavigationHistory, sameLocation, sameShareableLocation, } from "./navigation.js";
+import { loadCompatibleValue, loadWorkspace, MAX_PERSISTED_HISTORY, saveCompatibleValue, saveWorkspace, } from "./persistence.js";
 import { formatLocationExpression, parseLocationExpression, searchEntries, } from "./search.js";
 import { flattenTree, visibleWindow } from "./tree.js";
 const ROW_BYTES = 16;
@@ -101,35 +102,43 @@ function evidenceText(value) {
         parts.push(scope);
     return parts.length ? parts.join(" · ") : undefined;
 }
-function loadOptions() {
+function browserStorage(kind) {
     try {
-        const value = JSON.parse(localStorage.getItem(OPTIONS_KEY) ?? "null");
-        if (!value || typeof value !== "object")
-            return { ...DEFAULT_OPTIONS };
-        return {
-            dimIrrelevant: typeof value.dimIrrelevant === "boolean" ? value.dimIrrelevant : true,
-            collapseIrrelevantFields: typeof value.collapseIrrelevantFields === "boolean"
-                ? value.collapseIrrelevantFields
-                : false,
-            treeVisible: typeof value.treeVisible === "boolean" ? value.treeVisible : true,
-            inspectorVisible: typeof value.inspectorVisible === "boolean" ? value.inspectorVisible : true,
-            treeWidth: typeof value.treeWidth === "number" && Number.isFinite(value.treeWidth) ? value.treeWidth : null,
-            inspectorWidth: typeof value.inspectorWidth === "number" && Number.isFinite(value.inspectorWidth) ? value.inspectorWidth : null,
-            treeMode: ["all", "relevant", "artifact", "covers", "referenced"].includes(String(value.treeMode))
-                ? value.treeMode
-                : "all",
-        };
+        return kind === "local" ? window.localStorage : window.sessionStorage;
     }
     catch {
-        return { ...DEFAULT_OPTIONS };
+        return undefined;
     }
 }
+function isViewerOptions(value) {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+        return false;
+    const options = value;
+    const width = (candidate, minimum, maximum) => candidate === null
+        || (typeof candidate === "number"
+            && Number.isFinite(candidate)
+            && candidate >= minimum
+            && candidate <= maximum);
+    return typeof options.dimIrrelevant === "boolean"
+        && typeof options.collapseIrrelevantFields === "boolean"
+        && typeof options.treeVisible === "boolean"
+        && typeof options.inspectorVisible === "boolean"
+        && width(options.treeWidth, 150, 520)
+        && width(options.inspectorWidth, 210, 620)
+        && typeof options.treeMode === "string"
+        && ["all", "relevant", "artifact", "covers", "referenced"].includes(options.treeMode);
+}
+function loadOptions() {
+    const storage = browserStorage("local");
+    if (!storage)
+        return { ...DEFAULT_OPTIONS };
+    const value = loadCompatibleValue(storage, OPTIONS_KEY, isViewerOptions);
+    return value ? { ...value } : { ...DEFAULT_OPTIONS };
+}
 function saveOptions(value) {
-    try {
-        localStorage.setItem(OPTIONS_KEY, JSON.stringify(value));
-    }
-    catch {
-    }
+    const storage = browserStorage("local");
+    if (storage)
+        saveCompatibleValue(storage, OPTIONS_KEY, value);
 }
 class ByteCache {
     artifact;
@@ -177,6 +186,7 @@ class ByteCache {
 }
 class Viewer {
     graph;
+    graphIdentity;
     artifactTabs = required("artifact-tabs");
     tree = required("tree");
     inspector = required("inspector");
@@ -224,8 +234,13 @@ class Viewer {
     narrowDrawer;
     renderToken = 0;
     options = loadOptions();
-    constructor(graph) {
+    workspaceStorage = browserStorage("session");
+    workspaceKey = `npunlock.viz.workspace:${window.location.pathname}`;
+    workspaceSaveTimer = 0;
+    restoringWorkspace = false;
+    constructor(graph, graphIdentity) {
         this.graph = graph;
+        this.graphIdentity = graphIdentity;
         this.treeSpace.className = "tree-space";
         this.treeRowsLayer.className = "tree-rows";
         this.treeSpace.append(this.treeRowsLayer);
@@ -289,13 +304,16 @@ class Viewer {
             this.current.fieldName = initial.fieldName;
             this.current.spanIndex = this.candidateSpanIndex(initial);
         }
+        const workspace = this.loadWorkspaceState();
+        let restoredWorkspace;
         const fragment = window.location.hash.slice(1);
+        let fragmentLocation;
         if (fragment) {
             const sizes = new Map(this.graph.artifacts.map(artifact => [artifact.id, artifact.size]));
             const parsed = parseLocationExpression(fragment, this.current.artifactId, sizes);
             const restored = parsed ? this.resolveLocation(parsed) : undefined;
             if (restored) {
-                this.current = {
+                fragmentLocation = {
                     artifactId: restored.artifactId,
                     offset: restored.start,
                     end: restored.end,
@@ -305,14 +323,150 @@ class Viewer {
                 };
             }
         }
+        if (fragmentLocation) {
+            this.current = fragmentLocation;
+            if (workspace && sameShareableLocation(workspace.location, fragmentLocation)) {
+                this.current = workspace.location;
+                restoredWorkspace = workspace;
+            }
+            else if (workspace)
+                this.discardWorkspaceState();
+        }
+        else if (workspace) {
+            this.current = workspace.location;
+            restoredWorkspace = workspace;
+        }
+        if (restoredWorkspace) {
+            this.expanded = new Set(restoredWorkspace.expandedNodeIds);
+            this.treeFilter.value = restoredWorkspace.treeFilter;
+            if (!this.history.restore(restoredWorkspace.history)) {
+                this.discardWorkspaceState();
+                restoredWorkspace = undefined;
+            }
+        }
+        this.restoringWorkspace = restoredWorkspace !== undefined;
         this.applyOptions();
         this.bind();
         this.renderTabs();
         this.renderTree();
-        this.navigate(this.current, { history: "replace", scroll: false });
+        this.navigate(this.current, {
+            history: restoredWorkspace ? "none" : "replace",
+            scroll: Boolean(fragmentLocation) && !restoredWorkspace,
+        });
         new ResizeObserver(() => this.renderHex()).observe(this.hexScroll);
         new ResizeObserver(() => this.renderTreeViewport()).observe(this.tree);
         new ResizeObserver(() => this.renderOverview()).observe(this.overview);
+        if (restoredWorkspace) {
+            requestAnimationFrame(() => this.restoreWorkspaceViewport(restoredWorkspace));
+        }
+        else {
+            this.scheduleWorkspaceSave(0);
+        }
+    }
+    validateStoredLocation(location) {
+        const artifact = this.artifacts.get(location.artifactId);
+        if (!artifact
+            || !Number.isSafeInteger(location.offset)
+            || !Number.isSafeInteger(location.end)
+            || location.offset < 0
+            || (artifact.size === 0 ? location.offset !== 0 || location.end !== 0
+                : location.offset >= artifact.size || location.end <= location.offset || location.end > artifact.size))
+            return false;
+        if (!location.nodeId) {
+            return location.fieldName === undefined
+                && location.spanIndex === undefined
+                && location.arrival === undefined;
+        }
+        const node = this.nodes.get(location.nodeId);
+        if (!node)
+            return false;
+        const spans = location.fieldName === undefined
+            ? node.spans
+            : Object.hasOwn(node.fields, location.fieldName) ? node.fields[location.fieldName].spans ?? [] : undefined;
+        if (!spans)
+            return false;
+        if (location.spanIndex !== undefined
+            && (!Number.isSafeInteger(location.spanIndex)
+                || location.spanIndex < 0
+                || location.spanIndex >= spans.length))
+            return false;
+        if (location.arrival) {
+            if (location.arrival.targetNodeId !== location.nodeId
+                || !this.nodes.has(location.arrival.sourceNodeId)
+                || !this.nodes.has(location.arrival.targetNodeId)
+                || !this.graph.links.some(link => link.source === location.arrival.sourceNodeId
+                    && link.target === location.arrival.targetNodeId
+                    && link.kind === location.arrival.kind))
+                return false;
+        }
+        return true;
+    }
+    loadWorkspaceState() {
+        if (!this.workspaceStorage || !this.graphIdentity)
+            return undefined;
+        return loadWorkspace(this.workspaceStorage, this.workspaceKey, {
+            graphIdentity: this.graphIdentity,
+            graphFormat: this.graph.format,
+            graphVersion: this.graph.version,
+            validateLocation: location => this.validateStoredLocation(location),
+            validateNodeId: nodeId => this.nodes.has(nodeId),
+            validateHexTopOffset: (artifactId, offset) => {
+                const artifact = this.artifacts.get(artifactId);
+                return Boolean(artifact) && offset >= 0 && (artifact.size === 0 ? offset === 0 : offset < artifact.size);
+            },
+        });
+    }
+    discardWorkspaceState() {
+        if (!this.workspaceStorage)
+            return;
+        try {
+            this.workspaceStorage.removeItem(this.workspaceKey);
+        }
+        catch {
+        }
+    }
+    saveWorkspaceState() {
+        this.workspaceSaveTimer = 0;
+        if (this.restoringWorkspace || !this.workspaceStorage || !this.graphIdentity)
+            return;
+        const history = this.history.snapshot(MAX_PERSISTED_HISTORY);
+        const historyLocation = history.entries[history.index];
+        if (!historyLocation || !sameLocation(historyLocation, this.current))
+            return;
+        saveWorkspace(this.workspaceStorage, this.workspaceKey, {
+            graphIdentity: this.graphIdentity,
+            graphFormat: this.graph.format,
+            graphVersion: this.graph.version,
+            savedAt: Date.now(),
+            location: this.current,
+            history,
+            expandedNodeIds: [...this.expanded],
+            treeFilter: this.treeFilter.value,
+            treeScrollTop: this.tree.scrollTop,
+            hexTopOffset: this.hexTopOffset(),
+            inspectorScrollTop: this.inspector.scrollTop,
+        });
+    }
+    scheduleWorkspaceSave(delay = 160) {
+        if (this.restoringWorkspace || !this.workspaceStorage || !this.graphIdentity)
+            return;
+        if (this.workspaceSaveTimer)
+            window.clearTimeout(this.workspaceSaveTimer);
+        this.workspaceSaveTimer = window.setTimeout(() => this.saveWorkspaceState(), delay);
+    }
+    flushWorkspaceState() {
+        if (this.workspaceSaveTimer)
+            window.clearTimeout(this.workspaceSaveTimer);
+        this.workspaceSaveTimer = 0;
+        this.saveWorkspaceState();
+    }
+    restoreWorkspaceViewport(workspace) {
+        this.tree.scrollTop = workspace.treeScrollTop;
+        this.renderTreeViewport();
+        this.setHexTopOffset(workspace.hexTopOffset);
+        this.inspector.scrollTop = workspace.inspectorScrollTop;
+        this.restoringWorkspace = false;
+        this.scheduleWorkspaceSave(0);
     }
     assignDepth(node, depth) {
         this.depths.set(node.id, depth);
@@ -407,6 +561,7 @@ class Viewer {
         this.hexScroll.addEventListener("scroll", () => {
             this.hexHead.scrollLeft = this.hexScroll.scrollLeft;
             this.renderHex();
+            this.scheduleWorkspaceSave();
         });
         this.hexScroll.addEventListener("keydown", event => this.hexKey(event));
         required("offset-form").addEventListener("submit", event => {
@@ -435,6 +590,7 @@ class Viewer {
         this.treeFilter.addEventListener("input", () => {
             this.treeStructureDirty = true;
             this.renderTree();
+            this.scheduleWorkspaceSave();
         });
         this.treeMode.addEventListener("change", () => {
             const mode = this.treeMode.value;
@@ -446,6 +602,7 @@ class Viewer {
             this.renderTree();
         });
         this.tree.addEventListener("scroll", () => {
+            this.scheduleWorkspaceSave();
             if (this.treeRenderFrame)
                 return;
             this.treeRenderFrame = requestAnimationFrame(() => {
@@ -453,6 +610,7 @@ class Viewer {
                 this.renderTreeViewport();
             });
         });
+        this.inspector.addEventListener("scroll", () => this.scheduleWorkspaceSave());
         this.narrowMedia.addEventListener("change", () => {
             this.narrowDrawer = undefined;
             this.applyOptions();
@@ -494,6 +652,11 @@ class Viewer {
                 this.treeFilter.focus();
                 this.treeFilter.select();
             }
+        });
+        window.addEventListener("pagehide", () => this.flushWorkspaceState());
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "hidden")
+                this.flushWorkspaceState();
         });
     }
     applyOptions() {
@@ -914,6 +1077,7 @@ class Viewer {
             this.treeStructureDirty = true;
             this.renderTree();
             this.focusTreeNode(node.id, false);
+            this.scheduleWorkspaceSave(0);
         });
         const mark = document.createElement("span");
         mark.className = "tree-mark";
@@ -956,6 +1120,7 @@ class Viewer {
                 this.expanded.add(node.id);
                 this.treeStructureDirty = true;
                 this.renderTree();
+                this.scheduleWorkspaceSave(0);
                 targetId = node.id;
             }
             else if (children.length) {
@@ -967,6 +1132,7 @@ class Viewer {
                 this.expanded.delete(node.id);
                 this.treeStructureDirty = true;
                 this.renderTree();
+                this.scheduleWorkspaceSave(0);
                 targetId = node.id;
             }
             else if (node.parent) {
@@ -1052,6 +1218,7 @@ class Viewer {
             this.renderHex();
         this.renderOverview();
         this.renderContextStatus();
+        this.scheduleWorkspaceSave(0);
     }
     revealTree(nodeId) {
         let changed = false;
@@ -1074,19 +1241,43 @@ class Viewer {
         required("forward").disabled = !this.history.canForward;
     }
     scrollToOffset(offset) {
+        this.setHexTopOffset(offset);
+    }
+    setHexTopOffset(offset) {
         const artifact = this.artifacts.get(this.current.artifactId);
         const rowCount = Math.ceil(artifact.size / ROW_BYTES);
-        const total = rowCount * ROW_HEIGHT;
-        const visual = Math.min(MAX_SCROLL_HEIGHT, Math.max(ROW_HEIGHT, total));
+        const total = Math.max(ROW_HEIGHT, rowCount * ROW_HEIGHT);
+        const visual = Math.min(MAX_SCROLL_HEIGHT, total);
         this.hexSpace.style.height = `${visual}px`;
         if (total <= MAX_SCROLL_HEIGHT) {
             this.hexScroll.scrollTop = Math.floor(offset / ROW_BYTES) * ROW_HEIGHT;
         }
         else {
+            const visible = Math.max(1, Math.ceil(this.hexScroll.clientHeight / ROW_HEIGHT));
+            const maximumFirst = Math.max(0, rowCount - visible);
+            const first = Math.max(0, Math.min(maximumFirst, Math.floor(offset / ROW_BYTES)));
             const maxScroll = Math.max(1, visual - this.hexScroll.clientHeight);
-            this.hexScroll.scrollTop = Math.floor((offset / Math.max(1, artifact.size - 1)) * maxScroll);
+            this.hexScroll.scrollTop = maximumFirst ? (first / maximumFirst) * maxScroll : 0;
         }
         this.renderHex();
+    }
+    hexTopOffset() {
+        const artifact = this.artifacts.get(this.current.artifactId);
+        if (!artifact.size)
+            return 0;
+        const rowCount = Math.ceil(artifact.size / ROW_BYTES);
+        const total = Math.max(ROW_HEIGHT, rowCount * ROW_HEIGHT);
+        let row;
+        if (total <= MAX_SCROLL_HEIGHT) {
+            row = Math.floor(this.hexScroll.scrollTop / ROW_HEIGHT);
+        }
+        else {
+            const visible = Math.max(1, Math.ceil(this.hexScroll.clientHeight / ROW_HEIGHT));
+            const maximumFirst = Math.max(0, rowCount - visible);
+            const maximumScroll = Math.max(1, MAX_SCROLL_HEIGHT - this.hexScroll.clientHeight);
+            row = Math.floor((this.hexScroll.scrollTop / maximumScroll) * maximumFirst);
+        }
+        return Math.min(artifact.size - 1, Math.max(0, row * ROW_BYTES));
     }
     renderOverview() {
         const artifact = this.artifacts.get(this.current.artifactId);
@@ -1996,7 +2187,7 @@ async function main() {
     if (graph.format !== "npunlock.artifact-graph" || ![1, 2].includes(graph.version)) {
         throw new Error("unsupported artifact graph format");
     }
-    new Viewer(graph);
+    new Viewer(graph, response.headers.get("ETag") ?? undefined);
 }
 main().catch(error => {
     const app = required("app");
