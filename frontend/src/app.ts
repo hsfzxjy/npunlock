@@ -9,6 +9,7 @@ import {
   searchEntries,
   type SearchEntry,
 } from "./search.js";
+import { flattenTree, visibleWindow, type VisibleTreeItem } from "./tree.js";
 
 interface SpanData { artifact: string; start: number; end: number; id?: string; label?: string; role?: string }
 interface FieldData {
@@ -91,6 +92,7 @@ const ROW_HEIGHT = 21;
 const PAGE_BYTES = 16 * 1024;
 const MAX_SCROLL_HEIGHT = 16_000_000;
 const OVERSCAN = 8;
+const TREE_OVERSCAN = 6;
 const OPTIONS_KEY = "npunlock.viz.options.v1";
 const DEFAULT_OPTIONS: ViewerOptions = {
   dimIrrelevant: true,
@@ -291,10 +293,22 @@ class Viewer {
   private hoveredNode?: string;
   private hoveredField?: string;
   private treeFocusId?: string;
+  private treeRows: VisibleTreeItem<NodeData>[] = [];
+  private treeMatches = new Set<string>();
+  private treeFilterActive = false;
+  private treeStructureDirty = true;
+  private treeRenderFrame = 0;
+  private treeSpace = document.createElement("div");
+  private treeRowsLayer = document.createElement("div");
+  private narrowMedia = window.matchMedia("(max-width: 820px)");
+  private narrowDrawer?: "tree" | "inspector";
   private renderToken = 0;
   private options = loadOptions();
 
   constructor(private graph: GraphData) {
+    this.treeSpace.className = "tree-space";
+    this.treeRowsLayer.className = "tree-rows";
+    this.treeSpace.append(this.treeRowsLayer);
     for (const artifact of graph.artifacts) {
       this.artifacts.set(artifact.id, artifact);
       this.cache.set(artifact.id, new ByteCache(artifact));
@@ -343,6 +357,7 @@ class Viewer {
     this.renderTree();
     this.navigate(this.current, { history: "replace", scroll: false });
     new ResizeObserver(() => this.renderHex()).observe(this.hexScroll);
+    new ResizeObserver(() => this.renderTreeViewport()).observe(this.tree);
   }
 
   private assignDepth(node: NodeData, depth: number): void {
@@ -467,14 +482,31 @@ class Viewer {
     required<HTMLButtonElement>("toggle-tree").addEventListener("click", event => this.togglePanel("tree", event));
     required<HTMLButtonElement>("toggle-inspector").addEventListener("click", event => this.togglePanel("inspector", event));
     required<HTMLButtonElement>("toggle-dim-irrelevant").addEventListener("click", () => this.toggleDimIrrelevant());
-    this.treeFilter.addEventListener("input", () => this.renderTree());
+    this.treeFilter.addEventListener("input", () => {
+      this.treeStructureDirty = true;
+      this.renderTree();
+    });
     this.treeMode.addEventListener("change", () => {
       const mode = this.treeMode.value;
       if (!(["all", "relevant", "artifact", "covers", "referenced"] as string[]).includes(mode)) return;
       this.options.treeMode = mode as TreeMode;
       saveOptions(this.options);
+      this.treeStructureDirty = true;
       this.renderTree();
     });
+    this.tree.addEventListener("scroll", () => {
+      if (this.treeRenderFrame) return;
+      this.treeRenderFrame = requestAnimationFrame(() => {
+        this.treeRenderFrame = 0;
+        this.renderTreeViewport();
+      });
+    });
+    this.narrowMedia.addEventListener("change", () => {
+      this.narrowDrawer = undefined;
+      this.applyOptions();
+      this.renderHex();
+    });
+    required<HTMLElement>("hex-panel").addEventListener("pointerdown", () => this.closeNarrowDrawer());
     this.goToInput.addEventListener("input", () => this.renderGoTo());
     this.goToInput.addEventListener("keydown", event => this.goToKey(event));
     required<HTMLFormElement>("go-to-form").addEventListener("submit", event => {
@@ -490,6 +522,10 @@ class Viewer {
       if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); this.moveHistory(-1); }
       if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); this.moveHistory(1); }
       if (event.ctrlKey && event.key.toLowerCase() === "k") { event.preventDefault(); this.openGoTo(); }
+      if (event.key === "Escape" && this.narrowDrawer) {
+        event.preventDefault();
+        this.closeNarrowDrawer();
+      }
       if (event.key === "/" && !event.ctrlKey && !event.altKey && !event.metaKey
         && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLSelectElement)) {
         event.preventDefault();
@@ -502,8 +538,13 @@ class Viewer {
   private applyOptions(): void {
     this.workspace.classList.toggle("tree-hidden", !this.options.treeVisible);
     this.workspace.classList.toggle("inspector-hidden", !this.options.inspectorVisible);
-    required<HTMLButtonElement>("toggle-tree").setAttribute("aria-pressed", String(this.options.treeVisible));
-    required<HTMLButtonElement>("toggle-inspector").setAttribute("aria-pressed", String(this.options.inspectorVisible));
+    this.workspace.classList.toggle("narrow-tree-open", this.narrowDrawer === "tree");
+    this.workspace.classList.toggle("narrow-inspector-open", this.narrowDrawer === "inspector");
+    const narrow = this.narrowMedia.matches;
+    required<HTMLButtonElement>("toggle-tree").setAttribute(
+      "aria-pressed", String(narrow ? this.narrowDrawer === "tree" : this.options.treeVisible));
+    required<HTMLButtonElement>("toggle-inspector").setAttribute(
+      "aria-pressed", String(narrow ? this.narrowDrawer === "inspector" : this.options.inspectorVisible));
     required<HTMLButtonElement>("toggle-dim-irrelevant").setAttribute("aria-pressed", String(this.options.dimIrrelevant));
     this.treeMode.value = this.options.treeMode;
     if (this.options.treeWidth !== null) {
@@ -568,6 +609,14 @@ class Viewer {
   }
 
   private togglePanel(panel: "tree" | "inspector", event: Event): void {
+    if (this.narrowMedia.matches) {
+      this.narrowDrawer = this.narrowDrawer === panel ? undefined : panel;
+      this.applyOptions();
+      if (this.narrowDrawer === "tree") this.renderTree();
+      if (this.narrowDrawer === "inspector") this.renderInspector();
+      this.renderHex();
+      return;
+    }
     const button = event.currentTarget as HTMLButtonElement;
     const className = `${panel}-hidden`;
     const hidden = this.workspace.classList.toggle(className);
@@ -575,6 +624,13 @@ class Viewer {
     if (panel === "tree") this.options.treeVisible = !hidden;
     else this.options.inspectorVisible = !hidden;
     saveOptions(this.options);
+    this.renderHex();
+  }
+
+  private closeNarrowDrawer(): void {
+    if (!this.narrowDrawer) return;
+    this.narrowDrawer = undefined;
+    this.applyOptions();
     this.renderHex();
   }
 
@@ -794,113 +850,161 @@ class Viewer {
   }
 
   private renderTree(): void {
-    this.tree.replaceChildren();
-    const filter = this.treeFilterState();
-    const fragment = document.createDocumentFragment();
-    const appendNode = (node: NodeData, depth: number) => {
-      if (filter.included && !filter.included.has(node.id)) return;
-      const row = document.createElement("div");
-      row.className = `tree-row${this.current.nodeId === node.id ? " selected" : ""}`;
-      if (this.options.dimIrrelevant && this.isIrrelevant(node)) row.classList.add("irrelevant");
-      row.role = "treeitem";
-      row.dataset.nodeId = node.id;
-      row.tabIndex = (this.treeFocusId ?? this.current.nodeId ?? this.roots[0]?.id) === node.id ? 0 : -1;
-      row.style.paddingLeft = `${depth * 14 + 3}px`;
-      row.setAttribute("aria-level", String(depth + 1));
-      row.setAttribute("aria-selected", String(this.current.nodeId === node.id));
-      const children = this.children.get(node.id) ?? [];
-      const effectivelyExpanded = filter.active || this.expanded.has(node.id);
-      if (children.length) row.setAttribute("aria-expanded", String(effectivelyExpanded));
-      const expander = document.createElement("button");
-      expander.type = "button";
-      expander.className = `tree-expander${children.length ? "" : " empty"}`;
-      expander.tabIndex = -1;
-      expander.textContent = effectivelyExpanded ? "▾" : "▸";
-      expander.setAttribute("aria-label", effectivelyExpanded ? "Collapse" : "Expand");
-      expander.disabled = filter.active;
-      expander.addEventListener("click", event => {
-        event.stopPropagation();
-        if (this.expanded.has(node.id)) this.expanded.delete(node.id); else this.expanded.add(node.id);
-        this.renderTree();
-      });
-      const mark = document.createElement("span");
-      mark.className = "tree-mark";
-      mark.style.background = this.displayColor(this.categoryColor(node.category), this.isIrrelevant(node));
-      const label = document.createElement("span");
-      label.className = "tree-label";
-      if (this.treeFilter.value.trim() && filter.matches.has(node.id)) label.classList.add("match");
-      label.textContent = node.label;
-      label.title = node.description ? `${node.label}\n${node.description}` : node.label;
-      const kind = document.createElement("span");
-      kind.className = "tree-kind";
-      kind.textContent = node.kind;
-      row.append(expander, mark, label, kind);
-      row.addEventListener("click", () => {
-        this.treeFocusId = node.id;
-        this.selectNode(node.id, true);
-      });
-      row.addEventListener("focus", () => { this.treeFocusId = node.id; });
-      row.addEventListener("keydown", event => this.treeKey(event, node));
-      row.addEventListener("mouseenter", () => this.setHovered(node.id));
-      row.addEventListener("mouseleave", () => this.setHovered(undefined));
-      fragment.append(row);
-      if (effectivelyExpanded) for (const child of children) appendNode(child, depth + 1);
-    };
-    for (const root of this.roots) appendNode(root, 0);
-    if (!fragment.childNodes.length) {
+    if (this.treeStructureDirty) {
+      const filter = this.treeFilterState();
+      this.treeMatches = filter.matches;
+      this.treeFilterActive = filter.active;
+      this.treeRows = flattenTree(this.roots, this.children, this.expanded, filter.included, filter.active);
+      this.treeStructureDirty = false;
+      this.treeSpace.style.height = `${Math.max(1, this.treeRows.length * ROW_HEIGHT + 6)}px`;
+    }
+    if (!this.treeRows.length) {
       const empty = document.createElement("div");
       empty.className = "go-to-empty";
       empty.textContent = "no matching entities";
-      fragment.append(empty);
+      this.tree.replaceChildren(empty);
+      return;
     }
-    this.tree.append(fragment);
+    if (this.treeSpace.parentElement !== this.tree) this.tree.replaceChildren(this.treeSpace);
+    this.renderTreeViewport();
+  }
+
+  private renderTreeViewport(): void {
+    if (!this.treeRows.length || this.treeSpace.parentElement !== this.tree) return;
+    const window = visibleWindow(
+      this.treeRows.length,
+      this.tree.scrollTop,
+      this.tree.clientHeight,
+      ROW_HEIGHT,
+      TREE_OVERSCAN,
+    );
+    const fragment = document.createDocumentFragment();
+    for (let index = window.start; index < window.end; index += 1) {
+      const item = this.treeRows[index]!;
+      fragment.append(this.treeRow(item.node, item.depth, index));
+    }
+    this.treeRowsLayer.replaceChildren(fragment);
+  }
+
+  private treeRow(node: NodeData, depth: number, index: number): HTMLElement {
+    const row = document.createElement("div");
+    row.className = `tree-row${this.current.nodeId === node.id ? " selected" : ""}`;
+    if (this.options.dimIrrelevant && this.isIrrelevant(node)) row.classList.add("irrelevant");
+    row.role = "treeitem";
+    row.dataset.nodeId = node.id;
+    row.dataset.rowIndex = String(index);
+    row.tabIndex = (this.treeFocusId ?? this.current.nodeId ?? this.roots[0]?.id) === node.id ? 0 : -1;
+    row.style.top = `${index * ROW_HEIGHT + 3}px`;
+    row.style.paddingLeft = `${depth * 14 + 3}px`;
+    row.setAttribute("aria-level", String(depth + 1));
+    const siblings = node.parent ? this.children.get(node.parent) ?? [] : this.roots;
+    row.setAttribute("aria-setsize", String(siblings.length));
+    row.setAttribute("aria-posinset", String(siblings.findIndex(value => value.id === node.id) + 1));
+    row.setAttribute("aria-selected", String(this.current.nodeId === node.id));
+    const children = this.children.get(node.id) ?? [];
+    const effectivelyExpanded = this.treeFilterActive || this.expanded.has(node.id);
+    if (children.length) row.setAttribute("aria-expanded", String(effectivelyExpanded));
+    const expander = document.createElement("button");
+    expander.type = "button";
+    expander.className = `tree-expander${children.length ? "" : " empty"}`;
+    expander.tabIndex = -1;
+    expander.textContent = effectivelyExpanded ? "▾" : "▸";
+    expander.setAttribute("aria-label", effectivelyExpanded ? "Collapse" : "Expand");
+    expander.disabled = this.treeFilterActive;
+    expander.addEventListener("click", event => {
+      event.stopPropagation();
+      if (this.expanded.has(node.id)) this.expanded.delete(node.id); else this.expanded.add(node.id);
+      this.treeStructureDirty = true;
+      this.renderTree();
+      this.focusTreeNode(node.id, false);
+    });
+    const mark = document.createElement("span");
+    mark.className = "tree-mark";
+    mark.style.background = this.displayColor(this.categoryColor(node.category), this.isIrrelevant(node));
+    const label = document.createElement("span");
+    label.className = "tree-label";
+    if (this.treeFilter.value.trim() && this.treeMatches.has(node.id)) label.classList.add("match");
+    label.textContent = node.label;
+    label.title = node.description ? `${node.label}\n${node.description}` : node.label;
+    const kind = document.createElement("span");
+    kind.className = "tree-kind";
+    kind.textContent = node.kind;
+    row.append(expander, mark, label, kind);
+    row.addEventListener("click", () => {
+      this.treeFocusId = node.id;
+      this.closeNarrowDrawer();
+      this.selectNode(node.id, true);
+    });
+    row.addEventListener("focus", () => { this.treeFocusId = node.id; });
+    row.addEventListener("keydown", event => this.treeKey(event, node));
+    row.addEventListener("mouseenter", () => this.setHovered(node.id));
+    row.addEventListener("mouseleave", () => this.setHovered(undefined));
+    return row;
   }
 
   private treeKey(event: KeyboardEvent, node: NodeData): void {
-    const rows = Array.from(this.tree.querySelectorAll<HTMLElement>(".tree-row"));
-    const index = rows.findIndex(row => row.dataset.nodeId === node.id);
-    let target: HTMLElement | undefined;
-    if (event.key === "ArrowDown") target = rows[index + 1];
-    if (event.key === "ArrowUp") target = rows[index - 1];
-    if (event.key === "Home") target = rows[0];
-    if (event.key === "End") target = rows[rows.length - 1];
+    const index = this.treeRows.findIndex(item => item.node.id === node.id);
+    let targetId: string | undefined;
+    if (event.key === "ArrowDown") targetId = this.treeRows[index + 1]?.node.id;
+    if (event.key === "ArrowUp") targetId = this.treeRows[index - 1]?.node.id;
+    if (event.key === "Home") targetId = this.treeRows[0]?.node.id;
+    if (event.key === "End") targetId = this.treeRows[this.treeRows.length - 1]?.node.id;
     if (event.key === "ArrowRight") {
       const children = this.children.get(node.id) ?? [];
       if (children.length && !this.expanded.has(node.id)) {
         this.expanded.add(node.id);
+        this.treeStructureDirty = true;
         this.renderTree();
-        target = this.tree.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`) ?? undefined;
+        targetId = node.id;
       } else if (children.length) {
-        target = this.tree.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(children[0]!.id)}"]`) ?? undefined;
+        targetId = children[0]!.id;
       }
     }
     if (event.key === "ArrowLeft") {
       if (this.expanded.has(node.id) && (this.children.get(node.id)?.length ?? 0) > 0) {
         this.expanded.delete(node.id);
+        this.treeStructureDirty = true;
         this.renderTree();
-        target = this.tree.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`) ?? undefined;
+        targetId = node.id;
       } else if (node.parent) {
-        target = this.tree.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.parent)}"]`) ?? undefined;
+        targetId = node.parent;
       }
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       this.treeFocusId = node.id;
       this.selectNode(node.id, true);
-      requestAnimationFrame(() => this.tree.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`)?.focus());
+      this.focusTreeNode(node.id, true);
       return;
     }
-    if (!target) return;
+    if (!targetId) return;
     event.preventDefault();
-    for (const row of rows) row.tabIndex = -1;
-    target.tabIndex = 0;
-    this.treeFocusId = target.dataset.nodeId;
-    target.focus();
+    this.focusTreeNode(targetId, true);
+  }
+
+  private focusTreeNode(nodeId: string, focus: boolean): void {
+    const index = this.treeRows.findIndex(item => item.node.id === nodeId);
+    if (index < 0) return;
+    this.treeFocusId = nodeId;
+    const top = index * ROW_HEIGHT + 3;
+    const bottom = top + ROW_HEIGHT;
+    if (this.tree.clientHeight <= 0) this.tree.scrollTop = top;
+    else if (top < this.tree.scrollTop) this.tree.scrollTop = top;
+    else if (bottom > this.tree.scrollTop + this.tree.clientHeight) {
+      this.tree.scrollTop = Math.max(0, bottom - this.tree.clientHeight);
+    }
+    this.renderTreeViewport();
+    if (focus) {
+      requestAnimationFrame(() => this.tree.querySelector<HTMLElement>(
+        `[data-node-id="${CSS.escape(nodeId)}"]`,
+      )?.focus());
+    }
   }
 
   private selectNode(nodeId: string, push: boolean, arrival?: ArrivalState): void {
     const node = this.nodes.get(nodeId);
     if (!node) return;
+    this.closeNarrowDrawer();
     let spanIndex = node.spans.findIndex(value => value.artifact === this.current.artifactId);
     if (spanIndex < 0) spanIndex = node.spans.length ? 0 : -1;
     const span = spanIndex >= 0 ? node.spans[spanIndex] : undefined;
@@ -931,10 +1035,14 @@ class Viewer {
     const end = Math.max(offset + (artifact.size ? 1 : 0), Math.min(artifact.size, location.end));
     this.current = { ...location, offset, end };
     this.history.record(this.current, options.history, options.coalesceKey);
-    if (this.current.nodeId) this.revealTree(this.current.nodeId);
+    const expanded = this.current.nodeId ? this.revealTree(this.current.nodeId) : false;
+    if (expanded || ["artifact", "covers", "referenced"].includes(this.options.treeMode)) {
+      this.treeStructureDirty = true;
+    }
     this.offsetInput.value = hex(this.current.offset);
     this.renderTabs();
     this.renderTree();
+    if (this.current.nodeId) this.focusTreeNode(this.current.nodeId, false);
     this.renderInspector();
     this.updateHistoryButtons();
     if (options.scroll) this.scrollToOffset(this.current.offset);
@@ -942,13 +1050,15 @@ class Viewer {
     this.renderContextStatus();
   }
 
-  private revealTree(nodeId: string): void {
+  private revealTree(nodeId: string): boolean {
+    let changed = false;
     let node = this.nodes.get(nodeId);
     while (node?.parent) {
+      if (!this.expanded.has(node.parent)) changed = true;
       this.expanded.add(node.parent);
       node = this.nodes.get(node.parent);
     }
-    requestAnimationFrame(() => this.tree.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)?.scrollIntoView({ block: "nearest" }));
+    return changed;
   }
 
   private moveHistory(delta: number): void {
@@ -1503,6 +1613,7 @@ class Viewer {
   }
 
   private navigateSpan(span: SpanData, nodeId?: string, fieldName?: string, spanIndex?: number): void {
+    this.closeNarrowDrawer();
     this.navigate(
       { artifactId: span.artifact, offset: span.start, end: span.end, nodeId, fieldName, spanIndex },
       { history: "push", scroll: true },

@@ -123,7 +123,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
         if relative in {"", "index.html"}:
             relative = "index.html"
-        if relative not in {"index.html", "app.js", "navigation.js", "search.js", "app.css"}:
+        if relative not in {"index.html", "app.js", "navigation.js", "search.js", "tree.js", "app.css"}:
             self._error(HTTPStatus.NOT_FOUND, "not found")
             return
         resource = self.server.static_root.joinpath(relative)

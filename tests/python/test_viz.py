@@ -656,7 +656,7 @@ def test_dense_model() -> None:
 
 def test_bundled_frontend() -> None:
     static = files("npunlock.viz").joinpath("static")
-    for name in ("index.html", "app.css", "app.js", "navigation.js", "search.js"):
+    for name in ("index.html", "app.css", "app.js", "navigation.js", "search.js", "tree.js"):
         content = static.joinpath(name).read_bytes()
         assert content
     javascript = static.joinpath("app.js").read_text(encoding="utf-8")
@@ -675,6 +675,8 @@ def test_bundled_frontend() -> None:
     assert "collapseIrrelevantFields" in javascript
     assert "referenceGroups" in javascript
     assert "semantic color and evidence" in javascript
+    assert "renderTreeViewport" in javascript
+    assert "narrow-tree-open" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
@@ -689,6 +691,9 @@ def test_bundled_frontend() -> None:
     assert ".status-control" in stylesheet
     assert ".reference-group" in stylesheet
     assert ".semantic-help" in stylesheet
+    assert ".tree-space" in stylesheet
+    assert ".workspace.narrow-tree-open #tree-panel" in stylesheet
+    assert ".workspace.narrow-inspector-open #inspector-panel" in stylesheet
     index = static.joinpath("index.html").read_text(encoding="utf-8")
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index

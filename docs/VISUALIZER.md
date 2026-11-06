@@ -115,6 +115,15 @@ limit the tree to matching text, relevant entities, the active artifact,
 entities covering the selected byte, or direct references while preserving
 the ancestors needed for context.
 
+The hierarchy is flattened into a virtual visible-row model: filtering,
+expansion, selection reveal, and keyboard focus operate on the complete tree,
+while the DOM contains only the viewport plus a small overscan. This keeps a
+fully expanded 10,000-entity graph bounded without changing initial
+discoverability. At narrow widths the hex view remains primary; the `structure`
+and `inspector` controls open temporary left/right drawers, and Escape or a
+semantic jump returns to the bytes. Neither panel becomes unavailable merely
+because the viewport is narrow.
+
 Navigation history records semantic jumps, artifact and span changes, and
 references. Consecutive byte-key movements coalesce into one destination so
 Back returns to the preceding semantic location rather than the previous byte.
