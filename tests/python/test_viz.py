@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import signal
 import subprocess
@@ -12,9 +13,11 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 from importlib.resources import files
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +27,7 @@ from npunlock.viz import Address, ArtifactGraph, Category, Field, Span, build_np
 from npunlock.viz._bundled_schema import load_bundled_schema  # noqa: E402
 from npunlock.viz._schema import decode_record_fields, link_metadata, validate_schema  # noqa: E402
 from npunlock.viz.cli import main as viz_main  # noqa: E402
+from npunlock.viz.evidence import SOURCE_CONTRACTS, project_prepared_evidence, validate_evidence  # noqa: E402
 
 
 def expect_error(error_type: type[BaseException], function, *args, **kwargs) -> None:
@@ -451,6 +455,129 @@ def test_npunlock_fixture_annotations() -> None:
     assert dpu.fields["cluster"].value == 0
 
 
+def test_core_evidence_projection_and_attachment() -> None:
+    native = (ROOT / "tests/fixtures/npu3720/add1-shared-1x16.blob").read_bytes()
+
+    @dataclass(frozen=True)
+    class Coverage:
+        group_index: int
+        invocation_count: int
+        direct_output_state: str
+        act_consumer_state: str = "not_observed"
+        dpu_consumer_state: str = "not_observed"
+        dma_dpu_consumer_state: str = "not_observed"
+        dma_act_consumer_state: str = "not_observed"
+
+        @property
+        def direct_output_unresolved_names(self) -> tuple[str, ...]:
+            return ()
+
+        @property
+        def act_consumer_unresolved_names(self) -> tuple[str, ...]:
+            return ()
+
+        @property
+        def dpu_consumer_unresolved_names(self) -> tuple[str, ...]:
+            return ()
+
+        @property
+        def dma_dpu_consumer_unresolved_names(self) -> tuple[str, ...]:
+            return ()
+
+        @property
+        def dma_act_consumer_unresolved_names(self) -> tuple[str, ...]:
+            return ()
+
+    groups = tuple(
+        SimpleNamespace(
+            index=index,
+            invocation_indices=(index,),
+            range_indices=(index,),
+            input_count=1,
+            input_dtypes=("f16",),
+            output_dtype="f16",
+            per_invocation_input_element_counts=(8,),
+            per_invocation_output_element_count=8,
+            scalar_input_indices=(),
+        )
+        for index in range(2)
+    )
+    output = SimpleNamespace(kind="graph_output", primary_index=1, secondary_index=None)
+    relation = SimpleNamespace(
+        kind="act_to_output",
+        source=SimpleNamespace(kind="act_group", primary_index=1, secondary_index=None),
+        destination=output,
+        evidence_count=1,
+    )
+    symbol = SimpleNamespace(
+        kind="output",
+        symbol_table_index=23,
+        symbol_index=1,
+        size_bytes=16,
+        name="result",
+    )
+    proposal = SimpleNamespace(
+        status="unique",
+        reason="one exact native path remains after contract filtering",
+        names=("custom result",),
+        contract_candidates=((0, 1),),
+        viable_candidates=((1,),),
+        assignments=((1,),),
+        truncated=False,
+        outputs=(),
+    )
+
+    class Prepared:
+        ir_provenance = SimpleNamespace(graph_blob=native)
+
+        def __init__(self) -> None:
+            self.groups = groups
+
+        @staticmethod
+        def inspect_group_coverage():
+            return (Coverage(0, 1, "not_observed"), Coverage(1, 1, "complete"))
+
+        @staticmethod
+        def inspect_exact_relations():
+            return (relation,)
+
+        @staticmethod
+        def inspect_graph_io_symbols():
+            return (symbol,)
+
+        @staticmethod
+        def propose_native_topology_mapping():
+            return proposal
+
+    evidence = project_prepared_evidence(Prepared())
+    assert evidence["format"] == "npunlock.viz-evidence"
+    assert evidence["artifact"]["sha256"] == hashlib.sha256(native).hexdigest()
+    assert evidence["sources"] == SOURCE_CONTRACTS
+    assert validate_evidence(evidence) is evidence
+
+    graph = build_npunlock_graph(native, evidence=evidence)
+    graph.validate()
+    assert graph.nodes["native.evidence"].properties["diagnostic_only"] is True
+    assert graph.nodes["native.evidence.act-group.1"].properties["coverage"]["direct_output"]["state"] == "complete"
+    exact = [link for link in graph.links if link.kind == "act_to_output"]
+    assert len(exact) == 1
+    assert exact[0].description == "An ACT group's output exactly covers this native graph output."
+    assert exact[0].confidence == "confirmed"
+    proposal_links = [link for link in graph.links if link.kind == "proposes_group"]
+    assert len(proposal_links) == 1
+    assert proposal_links[0].target == "native.evidence.act-group.1"
+
+    stale = json.loads(json.dumps(evidence))
+    stale["artifact"]["sha256"] = "0" * 64
+    expect_error(ValueError, build_npunlock_graph, native, evidence=stale)
+    unsupported = json.loads(json.dumps(evidence))
+    unsupported["sources"]["exact_relations"] = "patchblob.exact-relations.v2"
+    expect_error(ValueError, validate_evidence, unsupported)
+    incomplete = json.loads(json.dumps(evidence))
+    incomplete["graph_io"] = []
+    expect_error(ValueError, validate_evidence, incomplete)
+
+
 def test_bundled_semantic_schemas() -> None:
     schemas = files("npunlock.viz").joinpath("schemas")
     descriptor = json.loads(schemas.joinpath("descriptor.schema.json").read_text(encoding="utf-8"))
@@ -582,6 +709,7 @@ def main() -> None:
     test_cli_entry_points()
     test_windows_ctrl_c_stops_cli()
     test_npunlock_fixture_annotations()
+    test_core_evidence_projection_and_attachment()
     test_bundled_semantic_schemas()
     test_dense_model()
     test_bundled_frontend()

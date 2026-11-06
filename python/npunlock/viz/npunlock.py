@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import struct
+from collections.abc import Mapping
 from dataclasses import dataclass
 from os import PathLike
 from typing import Any, Sequence
 
 from ._bundled_schema import load_bundled_schema
 from ._schema import decode_record_fields, link_metadata, lookup, match_rule, node_metadata
+from .evidence import validate_evidence
 from .model import Address, Artifact, ArtifactGraph, Field, Node, Span
 
 
@@ -156,6 +158,195 @@ def _link(
 ) -> None:
     metadata = link_metadata(_NPU3720_ACT_SCHEMA, kind) or link_metadata(_ELF_SCHEMA, kind) or {}
     graph.link(source, target, kind, properties=properties, **metadata)
+
+
+def _attach_core_evidence(
+    graph: ArtifactGraph,
+    artifact: Artifact,
+    evidence: Mapping[str, Any],
+) -> None:
+    projection = validate_evidence(evidence)
+    identity = projection["artifact"]
+    if identity["id"] != artifact.id:
+        raise ValueError(f"core evidence targets artifact {identity['id']!r}, not {artifact.id!r}")
+    if identity["size"] != artifact.size or identity["sha256"] != artifact.sha256:
+        raise ValueError("core evidence does not match the native artifact size and SHA-256")
+
+    scope = f"exact native artifact sha256:{artifact.sha256}"
+    root = graph.nodes[f"{artifact.id}.elf"]
+    evidence_node = graph.node(
+        f"{artifact.id}.evidence",
+        label="validated core evidence",
+        properties={
+            "projection_format": projection["format"],
+            "projection_version": projection["version"],
+            "artifact_sha256": artifact.sha256,
+            "source_contracts": dict(projection["sources"]),
+            "diagnostic_only": True,
+        },
+        parent=root,
+        confidence="confirmed",
+        scope=scope,
+        **node_metadata(_NPU3720_ACT_SCHEMA, "core_evidence"),
+    )
+
+    coverage_by_group = {value["group_index"]: value for value in projection["group_coverage"]}
+    group_nodes: dict[int, Node] = {}
+    for value in projection["groups"]:
+        index = value["index"]
+        coverage = coverage_by_group[index]
+        properties = {
+            key: value[key]
+            for key in (
+                "invocation_indices",
+                "range_indices",
+                "input_count",
+                "input_dtypes",
+                "output_dtype",
+                "input_element_counts",
+                "output_element_count",
+                "scalar_input_indices",
+            )
+        }
+        properties["coverage"] = coverage["kinds"]
+        properties["coverage_details"] = coverage["properties"]
+        node = graph.node(
+            f"{artifact.id}.evidence.act-group.{index}",
+            label=f"validated ACT group {index}",
+            properties=properties,
+            parent=evidence_node,
+            confidence="confirmed",
+            scope=scope,
+            **node_metadata(_NPU3720_ACT_SCHEMA, "act_group"),
+        )
+        group_nodes[index] = node
+        for invocation_index in value["invocation_indices"]:
+            target = graph.nodes.get(f"{artifact.id}.invocation.{invocation_index}")
+            if target is not None:
+                _link(graph, node, target, "contains_invocation")
+        for range_index in value["range_indices"]:
+            target = graph.nodes.get(f"{artifact.id}.range.{range_index}")
+            if target is not None:
+                _link(graph, node, target, "contains_range")
+
+    endpoint_nodes: dict[tuple[str, int, int | None], Node] = {
+        ("act_group", index, None): node for index, node in group_nodes.items()
+    }
+    for value in projection["graph_io"]:
+        kind = value["kind"]
+        table_index = value["symbol_table_index"]
+        symbol_index = value["symbol_index"]
+        node = graph.node(
+            f"{artifact.id}.evidence.graph-{kind}.{table_index}.{symbol_index}",
+            label=f"graph {kind} · {value['name']}",
+            properties={
+                "name": value["name"],
+                "size_bytes": value["size_bytes"],
+                "symbol_table_index": table_index,
+                "symbol_index": symbol_index,
+            },
+            parent=evidence_node,
+            confidence="confirmed",
+            scope=scope,
+            **node_metadata(_NPU3720_ACT_SCHEMA, f"graph_{kind}"),
+        )
+        endpoint_nodes[
+            (
+                f"graph_{kind}",
+                symbol_index,
+                table_index if kind == "input" else None,
+            )
+        ] = node
+        symbol = graph.nodes.get(f"{artifact.id}.symbol.{table_index}.{symbol_index}")
+        if symbol is not None:
+            _link(graph, node, symbol, "represented_by_symbol")
+
+    def endpoint_node(value: Mapping[str, Any]) -> Node:
+        key = (value["kind"], value["primary_index"], value["secondary_index"])
+        existing = endpoint_nodes.get(key)
+        if existing is not None:
+            return existing
+        if value["kind"] != "dpu_invariant":
+            raise ValueError(f"core evidence endpoint has no projected entity: {key!r}")
+        physical = graph.nodes.get(f"{artifact.id}.dpu-invariant.{value['primary_index']}")
+        if physical is not None:
+            endpoint_nodes[key] = physical
+            return physical
+        logical = graph.node(
+            f"{artifact.id}.evidence.dpu-invariant.{value['primary_index']}",
+            label=f"DPU invariant {value['primary_index']} endpoint",
+            properties={"invariant_index": value["primary_index"]},
+            parent=evidence_node,
+            confidence="unresolved",
+            scope=scope,
+            **node_metadata(_NPU3720_ACT_SCHEMA, "dpu_endpoint"),
+        )
+        endpoint_nodes[key] = logical
+        return logical
+
+    for relation in projection["exact_relations"]:
+        _link(
+            graph,
+            endpoint_node(relation["source"]),
+            endpoint_node(relation["destination"]),
+            relation["kind"],
+            properties={
+                "evidence_count": relation["evidence_count"],
+                "source_contract": projection["sources"]["exact_relations"],
+            },
+        )
+
+    topology = projection["topology"]
+    proposal = graph.node(
+        f"{artifact.id}.evidence.topology",
+        label=f"native topology · {topology['status']}",
+        properties={
+            "status": topology["status"],
+            "reason": topology["reason"],
+            "assignments": topology["assignments"],
+            "truncated": topology["truncated"],
+            "source_contract": projection["sources"]["topology"],
+        },
+        parent=evidence_node,
+        confidence="strong-inference" if topology["status"] == "unique" else "unresolved",
+        scope=scope,
+        **node_metadata(_NPU3720_ACT_SCHEMA, "topology_proposal"),
+    )
+    review = topology["review"]
+    unique_assignment = topology["assignments"][0] if topology["status"] == "unique" else None
+    for index, name in enumerate(topology["names"]):
+        properties = {
+            "contract_candidates": topology["contract_candidates"][index],
+            "viable_candidates": topology["viable_candidates"][index],
+        }
+        if review is not None:
+            properties["reviewed_coverage_kind"] = review["coverage_kinds"][index]
+        binding = graph.node(
+            f"{artifact.id}.evidence.topology.binding.{index}",
+            label=name,
+            properties=properties,
+            parent=proposal,
+            confidence=(
+                "confirmed"
+                if review is not None
+                else ("strong-inference" if unique_assignment is not None else "unresolved")
+            ),
+            scope=scope,
+            **node_metadata(_NPU3720_ACT_SCHEMA, "topology_binding"),
+        )
+        group_index = (
+            review["group_indices"][index]
+            if review is not None
+            else (unique_assignment[index] if unique_assignment is not None else None)
+        )
+        if group_index is not None:
+            _link(
+                graph,
+                binding,
+                group_nodes[group_index],
+                "reviewed_group_assignment" if review is not None else "proposes_group",
+                properties={"diagnostic_only": True},
+            )
 
 
 def _add_elf_nodes(graph: ArtifactGraph, artifact: Artifact, data: bytes, prefix: str) -> tuple[_Elf, dict[int, Node]]:
@@ -872,12 +1063,15 @@ def build_npunlock_graph(
     native_name: str = "native graph",
     kernel_name: str = "SHAVE kernel",
     target_groups: Sequence[Sequence[Any]] | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> ArtifactGraph:
     """Build a hardware-independent semantic view of npunlock ELF artifacts.
 
     ``target_groups`` may be the result of ``NativeLibraries.discover_patch_targets``
-    or its v2 counterpart. It enriches invocation properties using the project's
-    validated parser; the structural demo itself does not require the native DLL.
+    or its v2 counterpart. ``evidence`` may be the plain mapping returned by
+    :func:`npunlock.viz.project_prepared_evidence`; its exact artifact identity
+    is checked before read-only core facts are attached. The structural demo
+    itself does not require the native DLL.
     """
 
     graph = ArtifactGraph(title)
@@ -914,6 +1108,8 @@ def build_npunlock_graph(
         prefix="native",
         target_groups=target_groups,
     )
+    if evidence is not None:
+        _attach_core_evidence(graph, native_artifact, evidence)
     if kernel is not None:
         kernel_artifact = graph.artifact("kernel", data=kernel, name=kernel_name)
         kernel_data = kernel_artifact.read()

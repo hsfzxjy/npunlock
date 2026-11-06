@@ -253,6 +253,31 @@ The optional `target_groups=` argument accepts the existing
 result and adds the validated tensor contract to invocation properties. The
 visualization parser is diagnostic only: it is not used to authorize patching.
 
+Prepared graphs can additionally project the current validated core inspection
+through a plain, versioned mapping:
+
+```python
+from npunlock.viz import build_npunlock_graph, project_prepared_evidence, show
+
+evidence = project_prepared_evidence(prepared, review=optional_topology_review)
+graph = build_npunlock_graph(
+    prepared.ir_provenance.graph_blob,
+    target_groups=[group.targets for group in prepared.groups],
+    evidence=evidence,
+)
+show(graph)
+```
+
+The `npunlock.viz-evidence` version-1 projection records the native artifact
+size and SHA-256 plus explicit source-contract versions for ACT groups, group
+coverage, exact relations, graph I/O symbols, and topology. The adapter rejects
+an unsupported contract, incomplete endpoint, stale topology review, or any
+artifact identity mismatch before adding evidence. Attached nodes distinguish
+confirmed exact-cover/graph-I/O facts, strong-inference topology proposals,
+explicit complete reviews, and unresolved candidates. The projection is
+read-only diagnostic input to the visualizer; it is not accepted by
+`plan()`, `patchblob`, or any execution API and cannot authorize a patch.
+
 Run either hardware-independent example from a source checkout:
 
 ```powershell

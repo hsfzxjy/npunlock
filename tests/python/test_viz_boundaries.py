@@ -26,7 +26,7 @@ def imported_modules(path: Path) -> set[tuple[int, str]]:
 
 
 def test_generic_modules_do_not_import_adapter_or_core() -> None:
-    generic_modules = (VIZ / "model.py", VIZ / "server.py", VIZ / "_schema.py")
+    generic_modules = (VIZ / "model.py", VIZ / "server.py", VIZ / "_schema.py", VIZ / "evidence.py")
     forbidden = {
         "npunlock._native",
         "npunlock.cache",
@@ -59,7 +59,11 @@ def test_generic_public_import_keeps_adapter_lazy() -> None:
     code = (
         "import sys; import npunlock.viz as viz; "
         "assert 'npunlock.viz.npunlock' not in sys.modules; "
+        "assert 'npunlock.viz.evidence' not in sys.modules; "
         "assert viz.ArtifactGraph.__module__ == 'npunlock.viz.model'; "
+        "assert 'npunlock.viz.npunlock' not in sys.modules; "
+        "assert callable(viz.validate_evidence); "
+        "assert 'npunlock.viz.evidence' in sys.modules; "
         "assert 'npunlock.viz.npunlock' not in sys.modules; "
         "assert callable(viz.build_npunlock_graph); "
         "assert 'npunlock.viz.npunlock' in sys.modules"

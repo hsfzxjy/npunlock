@@ -67,6 +67,41 @@
       "kind": "DPU invariant",
       "category": "data",
       "description": "Observed 0x130-byte DPU invariant. npunlock decodes selected tensor-shape, type, address-relocation, and scheduling fields for ACT/DPU routing checks."
+    },
+    "core_evidence": {
+      "kind": "validated core evidence",
+      "category": "metadata",
+      "description": "Read-only facts projected from npunlock core inspection for this exact artifact identity. These facts explain the carrier and do not authorize patching."
+    },
+    "act_group": {
+      "kind": "validated ACT group",
+      "category": "metadata",
+      "description": "One positional ACT group and its validated invocation/range contract as reported by the prepared carrier."
+    },
+    "graph_input": {
+      "kind": "native graph input",
+      "category": "reference",
+      "description": "Validated native graph-input identity and byte size reported by patchblob's graph I/O inspection."
+    },
+    "graph_output": {
+      "kind": "native graph output",
+      "category": "reference",
+      "description": "Validated native graph-output identity and byte size reported by patchblob's graph I/O inspection."
+    },
+    "dpu_endpoint": {
+      "kind": "DPU relation endpoint",
+      "category": "reference",
+      "description": "Logical DPU-invariant endpoint reported by core exact-relation inspection when no independently decoded physical record is available."
+    },
+    "topology_proposal": {
+      "kind": "native topology proposal",
+      "category": "reference",
+      "description": "Read-only candidate mapping constrained by tensor contracts and exact native reachability. A unique proposal is still evidence, not an implicit patch selection."
+    },
+    "topology_binding": {
+      "kind": "topology binding",
+      "category": "reference",
+      "description": "One symbolic custom output's candidate or explicitly reviewed association with a native ACT group."
     }
   },
   "links": {
@@ -124,6 +159,66 @@
       "description": "The two executable regions are byte-for-byte identical over their complete extents.",
       "confidence": "confirmed",
       "scope": "exact artifact-byte comparison"
+    },
+    "contains_invocation": {
+      "description": "The validated positional ACT group contains this invocation index.",
+      "confidence": "confirmed",
+      "scope": "prepared carrier ACT-group report"
+    },
+    "contains_range": {
+      "description": "The validated positional ACT group uses this range index.",
+      "confidence": "confirmed",
+      "scope": "prepared carrier ACT-group report"
+    },
+    "represented_by_symbol": {
+      "description": "The validated graph I/O identity is carried by this exact ELF symbol entry.",
+      "confidence": "confirmed",
+      "scope": "patchblob graph-I/O symbol inspection"
+    },
+    "act_to_output": {
+      "description": "An ACT group's output exactly covers this native graph output.",
+      "confidence": "confirmed",
+      "scope": "patchblob unique exact-cover inspection"
+    },
+    "act_to_act": {
+      "description": "An ACT group exactly supplies an input of another ACT group.",
+      "confidence": "confirmed",
+      "scope": "patchblob unique exact-cover inspection"
+    },
+    "act_to_dpu": {
+      "description": "An ACT group exactly supplies a DPU consumer.",
+      "confidence": "confirmed",
+      "scope": "patchblob unique exact-cover inspection"
+    },
+    "act_to_dpu_via_dma": {
+      "description": "An ACT group reaches a DPU consumer through validated DMA routing and an exact cover.",
+      "confidence": "confirmed",
+      "scope": "patchblob unique exact-cover inspection"
+    },
+    "act_to_act_via_dma": {
+      "description": "An ACT group reaches another ACT group through validated DMA routing and an exact cover.",
+      "confidence": "confirmed",
+      "scope": "patchblob unique exact-cover inspection"
+    },
+    "dpu_to_act": {
+      "description": "A DPU producer exactly supplies an ACT-group input.",
+      "confidence": "confirmed",
+      "scope": "patchblob unique exact-cover inspection"
+    },
+    "graph_input_to_act_via_dma": {
+      "description": "A native graph input reaches an ACT group through validated DMA routing and an exact cover.",
+      "confidence": "confirmed",
+      "scope": "patchblob unique exact-cover inspection"
+    },
+    "proposes_group": {
+      "description": "The current unique topology proposal associates this symbolic output with the ACT group. This remains read-only evidence.",
+      "confidence": "strong-inference",
+      "scope": "tensor contracts plus exact native reachability"
+    },
+    "reviewed_group_assignment": {
+      "description": "An explicit complete topology review associates this symbolic output with the ACT group for the exact carrier hash.",
+      "confidence": "confirmed",
+      "scope": "artifact-bound explicit topology review; evidence only"
     }
   },
   "records": {
