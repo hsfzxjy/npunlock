@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { parseLocationExpression, searchEntries } = require("../.test-build/search.js");
+const { formatLocationExpression, parseLocationExpression, searchEntries } = require("../.test-build/search.js");
 
 test("location expressions preserve artifact and half-open range semantics", () => {
   const sizes = new Map([["native", 0x100], ["Kernel", 0x80]]);
@@ -13,6 +13,21 @@ test("location expressions preserve artifact and half-open range semantics", () 
   });
   assert.equal(parseLocationExpression("kernel:0x70-0x90", "native", sizes), undefined);
   assert.equal(parseLocationExpression("virtual:0x20", "native", sizes), undefined);
+  const semantic = {
+    artifactId: "Kernel",
+    start: 0x10,
+    end: 0x20,
+    nodeId: "kernel.symbol:1",
+    fieldName: "encoded value",
+    spanIndex: 2,
+  };
+  assert.equal(
+    formatLocationExpression(semantic),
+    "Kernel:0x10-0x20?node=kernel.symbol%3A1&field=encoded+value&span=2",
+  );
+  assert.deepEqual(parseLocationExpression(formatLocationExpression(semantic), "native", sizes), semantic);
+  assert.equal(parseLocationExpression("native:0x10?field=size", "native", sizes), undefined);
+  assert.equal(parseLocationExpression("native:0x10?node=x&unknown=y", "native", sizes), undefined);
 });
 
 test("search favors exact and prefix labels while retaining stable ties", () => {

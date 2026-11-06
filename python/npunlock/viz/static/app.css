@@ -250,6 +250,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   height: 100%;
   min-width: 82ch;
 }
+.hex-body { display: grid; grid-template-columns: minmax(0, 1fr) 10px; min-height: 0; overflow: hidden; }
 .offset-head { text-align: right; }
 .hex-labels, .ascii-labels { display: flex; height: 18px; align-items: stretch; }
 .hex-labels { gap: .42ch; }
@@ -257,7 +258,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .hex-label { width: 2ch; min-width: 2ch; text-align: center; }
 .ascii-labels span { width: 1ch; min-width: 1ch; text-align: center; }
 
-.hex-scroll { position: relative; overflow: auto; min-width: 0; scrollbar-color: var(--border-strong) transparent; font-family: var(--mono); }
+.hex-scroll { position: relative; height: 100%; overflow: auto; min-width: 0; scrollbar-color: var(--border-strong) transparent; font-family: var(--mono); }
+.overview {
+  width: 10px;
+  height: 100%;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface-2);
+  cursor: crosshair;
+}
 .hex-space { width: 82ch; min-width: 100%; }
 .hex-rows { position: absolute; inset: 0 auto auto 0; min-width: 82ch; width: 100%; pointer-events: none; }
 .hex-row { position: absolute; left: 0; right: 0; height: var(--row-height); pointer-events: auto; }

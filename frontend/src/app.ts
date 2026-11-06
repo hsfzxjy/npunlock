@@ -5,8 +5,10 @@ import {
   type LocationState,
 } from "./navigation.js";
 import {
+  formatLocationExpression,
   parseLocationExpression,
   searchEntries,
+  type ParsedLocation,
   type SearchEntry,
 } from "./search.js";
 import { flattenTree, visibleWindow, type VisibleTreeItem } from "./tree.js";
@@ -60,6 +62,8 @@ interface GraphData {
   links: LinkData[];
 }
 interface IndexedSpan extends SpanData { node: NodeData; length: number; fieldName?: string }
+interface OverviewSpan { start: number; end: number; color: string; irrelevant: boolean }
+interface OverviewBase { canvas: HTMLCanvasElement; width: number; height: number; dimIrrelevant: boolean }
 interface SelectionCandidate { node: NodeData; fieldName?: string; span: IndexedSpan }
 interface NavigateOptions { history: HistoryMode; scroll: boolean; coalesceKey?: string }
 type TreeMode = "all" | "relevant" | "artifact" | "covers" | "referenced";
@@ -68,7 +72,15 @@ type SearchTarget =
   | { kind: "field"; nodeId: string; fieldName: string }
   | { kind: "link"; link: LinkData; targetId: string }
   | { kind: "address"; nodeId: string; space: string; value: number }
-  | { kind: "location"; artifactId: string; start: number; end: number };
+  | {
+    kind: "location";
+    artifactId: string;
+    start: number;
+    end: number;
+    nodeId?: string;
+    fieldName?: string;
+    spanIndex?: number;
+  };
 interface ArtifactKnowledge {
   entityCount: number;
   relationshipCount: number;
@@ -267,6 +279,7 @@ class Viewer {
   private hexScroll = required<HTMLElement>("hex-scroll");
   private hexSpace = required<HTMLElement>("hex-space");
   private hexRows = required<HTMLElement>("hex-rows");
+  private overview = required<HTMLCanvasElement>("overview");
   private status = required<HTMLElement>("status");
   private workspace = required<HTMLElement>("workspace");
   private offsetInput = required<HTMLInputElement>("offset-input");
@@ -284,6 +297,8 @@ class Viewer {
   private spans = new Map<string, IndexedSpan[]>();
   private cache = new Map<string, ByteCache>();
   private knowledge = new Map<string, ArtifactKnowledge>();
+  private overviewSpans = new Map<string, OverviewSpan[]>();
+  private overviewBases = new Map<string, OverviewBase>();
   private expanded = new Set<string>();
   private current!: LocationState;
   private history = new NavigationHistory();
@@ -313,6 +328,7 @@ class Viewer {
       this.artifacts.set(artifact.id, artifact);
       this.cache.set(artifact.id, new ByteCache(artifact));
       this.spans.set(artifact.id, []);
+      this.overviewSpans.set(artifact.id, []);
     }
     for (const category of graph.categories) this.categories.set(category.id, category);
     for (const node of graph.nodes) {
@@ -326,6 +342,14 @@ class Viewer {
       }
       for (const span of node.spans) {
         this.spans.get(span.artifact)?.push({ ...span, node, length: span.end - span.start });
+        if (node.contributes_to_coverage !== false) {
+          this.overviewSpans.get(span.artifact)?.push({
+            start: span.start,
+            end: span.end,
+            color: this.categoryColor(node.category),
+            irrelevant: this.isIrrelevant(node),
+          });
+        }
       }
       for (const [fieldName, field] of Object.entries(node.fields)) {
         for (const span of field.spans ?? []) {
@@ -334,6 +358,9 @@ class Viewer {
       }
     }
     for (const values of this.spans.values()) values.sort((a, b) => a.start - b.start || a.end - b.end);
+    for (const values of this.overviewSpans.values()) {
+      values.sort((left, right) => (right.end - right.start) - (left.end - left.start));
+    }
     for (const node of graph.nodes) {
       if ((this.children.get(node.id)?.length ?? 0) > 0) this.expanded.add(node.id);
     }
@@ -351,6 +378,22 @@ class Viewer {
       this.current.fieldName = initial.fieldName;
       this.current.spanIndex = this.candidateSpanIndex(initial);
     }
+    const fragment = window.location.hash.slice(1);
+    if (fragment) {
+      const sizes = new Map(this.graph.artifacts.map(artifact => [artifact.id, artifact.size]));
+      const parsed = parseLocationExpression(fragment, this.current.artifactId, sizes);
+      const restored = parsed ? this.resolveLocation(parsed) : undefined;
+      if (restored) {
+        this.current = {
+          artifactId: restored.artifactId,
+          offset: restored.start,
+          end: restored.end,
+          nodeId: restored.nodeId,
+          fieldName: restored.fieldName,
+          spanIndex: restored.spanIndex,
+        };
+      }
+    }
     this.applyOptions();
     this.bind();
     this.renderTabs();
@@ -358,6 +401,7 @@ class Viewer {
     this.navigate(this.current, { history: "replace", scroll: false });
     new ResizeObserver(() => this.renderHex()).observe(this.hexScroll);
     new ResizeObserver(() => this.renderTreeViewport()).observe(this.tree);
+    new ResizeObserver(() => this.renderOverview()).observe(this.overview);
   }
 
   private assignDepth(node: NodeData, depth: number): void {
@@ -482,6 +526,11 @@ class Viewer {
     required<HTMLButtonElement>("toggle-tree").addEventListener("click", event => this.togglePanel("tree", event));
     required<HTMLButtonElement>("toggle-inspector").addEventListener("click", event => this.togglePanel("inspector", event));
     required<HTMLButtonElement>("toggle-dim-irrelevant").addEventListener("click", () => this.toggleDimIrrelevant());
+    this.overview.addEventListener("click", event => {
+      const bounds = this.overview.getBoundingClientRect();
+      this.navigateOverview((event.clientY - bounds.top) / Math.max(1, bounds.height), "push");
+    });
+    this.overview.addEventListener("keydown", event => this.overviewKey(event));
     this.treeFilter.addEventListener("input", () => {
       this.treeStructureDirty = true;
       this.renderTree();
@@ -642,6 +691,7 @@ class Viewer {
     this.renderTree();
     this.renderInspector();
     this.renderHex();
+    this.renderOverview();
   }
 
   private openGoTo(): void {
@@ -656,14 +706,19 @@ class Viewer {
     const query = this.goToInput.value;
     const artifactSizes = new Map(this.graph.artifacts.map(artifact => [artifact.id, artifact.size]));
     const parsed = parseLocationExpression(query, this.current.artifactId, artifactSizes);
+    const location = parsed ? this.resolveLocation(parsed) : undefined;
     const matches = searchEntries(this.searchIndex, query, 60);
-    this.visibleSearchResults = parsed
+    this.visibleSearchResults = location
       ? [{
-        id: `location:${parsed.artifactId}:${parsed.start}:${parsed.end}`,
-        label: `${parsed.artifactId}:${hex(parsed.start)}${parsed.end > parsed.start + 1 ? `-${hex(parsed.end)}` : ""}`,
-        detail: `${parsed.end - parsed.start} byte${parsed.end - parsed.start === 1 ? "" : "s"} · file offset`,
+        id: `location:${formatLocationExpression(location)}`,
+        label: `${location.artifactId}:${hex(location.start)}${location.end > location.start + 1 ? `-${hex(location.end)}` : ""}`,
+        detail: [
+          `${location.end - location.start} byte${location.end - location.start === 1 ? "" : "s"}`,
+          location.nodeId ? this.nodePath(this.nodes.get(location.nodeId)!) : "file offset",
+          location.fieldName,
+        ].filter(Boolean).join(" · "),
         terms: [],
-        value: { kind: "location", artifactId: parsed.artifactId, start: parsed.start, end: parsed.end },
+        value: location,
       }, ...matches]
       : matches;
     this.searchSelection = Math.max(0, Math.min(this.searchSelection, this.visibleSearchResults.length - 1));
@@ -704,6 +759,16 @@ class Viewer {
     this.updateSearchSelection();
   }
 
+  private resolveLocation(parsed: ParsedLocation): Extract<SearchTarget, { kind: "location" }> | undefined {
+    if (!parsed.nodeId) return { kind: "location", ...parsed };
+    const node = this.nodes.get(parsed.nodeId);
+    if (!node) return undefined;
+    if (parsed.fieldName && !node.fields[parsed.fieldName]) return undefined;
+    const spans = parsed.fieldName ? node.fields[parsed.fieldName]!.spans ?? [] : node.spans;
+    if (parsed.spanIndex !== undefined && parsed.spanIndex >= spans.length) return undefined;
+    return { kind: "location", ...parsed };
+  }
+
   private updateSearchSelection(): void {
     for (const [index, element] of Array.from(this.goToResults.querySelectorAll<HTMLElement>(".go-to-result")).entries()) {
       element.setAttribute("aria-selected", String(index === this.searchSelection));
@@ -733,7 +798,14 @@ class Viewer {
     this.goToDialog.close();
     if (target.kind === "location") {
       this.navigate(
-        { artifactId: target.artifactId, offset: target.start, end: target.end },
+        {
+          artifactId: target.artifactId,
+          offset: target.start,
+          end: target.end,
+          nodeId: target.nodeId,
+          fieldName: target.fieldName,
+          spanIndex: target.spanIndex,
+        },
         { history: "push", scroll: true },
       );
       this.hexScroll.focus();
@@ -1035,6 +1107,7 @@ class Viewer {
     const end = Math.max(offset + (artifact.size ? 1 : 0), Math.min(artifact.size, location.end));
     this.current = { ...location, offset, end };
     this.history.record(this.current, options.history, options.coalesceKey);
+    window.history.replaceState(null, "", `#${this.currentLocationExpression()}`);
     const expanded = this.current.nodeId ? this.revealTree(this.current.nodeId) : false;
     if (expanded || ["artifact", "covers", "referenced"].includes(this.options.treeMode)) {
       this.treeStructureDirty = true;
@@ -1047,6 +1120,7 @@ class Viewer {
     this.updateHistoryButtons();
     if (options.scroll) this.scrollToOffset(this.current.offset);
     else this.renderHex();
+    this.renderOverview();
     this.renderContextStatus();
   }
 
@@ -1084,6 +1158,105 @@ class Viewer {
       this.hexScroll.scrollTop = Math.floor((offset / Math.max(1, artifact.size - 1)) * maxScroll);
     }
     this.renderHex();
+  }
+
+  private renderOverview(): void {
+    const artifact = this.artifacts.get(this.current.artifactId);
+    const context = this.overview.getContext("2d");
+    const bounds = this.overview.getBoundingClientRect();
+    if (!artifact || !context || bounds.width <= 0 || bounds.height <= 0) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(bounds.width * ratio));
+    const height = Math.max(1, Math.round(bounds.height * ratio));
+    if (this.overview.width !== width || this.overview.height !== height) {
+      this.overview.width = width;
+      this.overview.height = height;
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    let base = this.overviewBases.get(artifact.id);
+    if (!base || base.width !== width || base.height !== height
+      || base.dimIrrelevant !== this.options.dimIrrelevant) {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const baseContext = canvas.getContext("2d")!;
+      baseContext.fillStyle = getComputedStyle(this.overview).backgroundColor;
+      baseContext.fillRect(0, 0, width, height);
+      const baseScale = height / Math.max(1, artifact.size);
+      for (const span of this.overviewSpans.get(artifact.id) ?? []) {
+        const top = Math.floor(span.start * baseScale);
+        const bottom = Math.max(top + 1, Math.ceil(span.end * baseScale));
+        baseContext.globalAlpha = span.irrelevant ? (this.options.dimIrrelevant ? 0.12 : 0.3) : 0.22;
+        baseContext.fillStyle = span.color;
+        baseContext.fillRect(ratio, top, Math.max(1, width - ratio), bottom - top);
+      }
+      base = { canvas, width, height, dimIrrelevant: this.options.dimIrrelevant };
+      this.overviewBases.set(artifact.id, base);
+    }
+    context.clearRect(0, 0, width, height);
+    context.drawImage(base.canvas, 0, 0);
+    const scale = height / Math.max(1, artifact.size);
+    const referenced = new Set<string>();
+    if (this.current.nodeId) {
+      for (const link of this.graph.links) {
+        if (link.source === this.current.nodeId) referenced.add(link.target);
+        if (link.target === this.current.nodeId) referenced.add(link.source);
+      }
+    }
+    context.globalAlpha = 0.85;
+    context.fillStyle = this.categoryColor("reference");
+    for (const nodeId of referenced) {
+      for (const span of this.nodes.get(nodeId)?.spans ?? []) {
+        if (span.artifact !== artifact.id) continue;
+        const top = Math.floor(span.start * scale);
+        context.fillRect(0, top, width, Math.max(1, ratio));
+      }
+    }
+    const selectionTop = Math.floor(this.current.offset * scale);
+    const selectionBottom = Math.max(selectionTop + 2, Math.ceil(this.current.end * scale));
+    context.globalAlpha = 1;
+    context.fillStyle = "#176da8";
+    context.fillRect(0, selectionTop, width, Math.max(2 * ratio, selectionBottom - selectionTop));
+    context.globalAlpha = 1;
+    this.overview.title = `${artifact.name} · ${byteCount(artifact.size)}\nsemantic regions, references, and current selection`;
+  }
+
+  private navigateOverview(position: number, history: HistoryMode): void {
+    const artifact = this.artifacts.get(this.current.artifactId)!;
+    if (!artifact.size) return;
+    const offset = Math.max(0, Math.min(artifact.size - 1, Math.floor(
+      Math.max(0, Math.min(1, position)) * artifact.size,
+    )));
+    const primary = this.selectionCandidates(artifact.id, offset)[0];
+    this.navigate(
+      {
+        artifactId: artifact.id,
+        offset,
+        end: offset + 1,
+        nodeId: primary?.node.id,
+        fieldName: primary?.fieldName,
+        spanIndex: primary ? this.candidateSpanIndex(primary) : undefined,
+      },
+      { history, scroll: true },
+    );
+    this.overview.focus();
+  }
+
+  private overviewKey(event: KeyboardEvent): void {
+    const artifact = this.artifacts.get(this.current.artifactId)!;
+    if (!artifact.size) return;
+    const small = Math.max(1, Math.floor(artifact.size / 100));
+    const large = Math.max(1, Math.floor(artifact.size / 10));
+    let offset = this.current.offset;
+    if (event.key === "ArrowUp") offset -= small;
+    else if (event.key === "ArrowDown") offset += small;
+    else if (event.key === "PageUp") offset -= large;
+    else if (event.key === "PageDown") offset += large;
+    else if (event.key === "Home") offset = 0;
+    else if (event.key === "End") offset = artifact.size - 1;
+    else return;
+    event.preventDefault();
+    this.navigateOverview(offset / Math.max(1, artifact.size), "push");
   }
 
   private async renderHex(): Promise<void> {
@@ -1735,15 +1908,24 @@ class Viewer {
   }
 
   private async copyLocation(): Promise<void> {
-    const artifact = this.artifacts.get(this.current.artifactId)!;
-    const range = this.current.end > this.current.offset + 1 ? `${hex(this.current.offset)}-${hex(this.current.end)}` : hex(this.current.offset);
-    const value = `${artifact.id}:${range}`;
+    const value = this.currentLocationExpression();
     try {
       await navigator.clipboard.writeText(value);
       this.setStatus(`copied ${value}`);
     } catch {
       this.setStatus(`copy unavailable · ${value}`);
     }
+  }
+
+  private currentLocationExpression(): string {
+    return formatLocationExpression({
+      artifactId: this.current.artifactId,
+      start: this.current.offset,
+      end: this.current.end,
+      nodeId: this.current.nodeId,
+      fieldName: this.current.fieldName,
+      spanIndex: this.current.spanIndex,
+    });
   }
 
   private renderContextStatus(nodeId = this.current.nodeId, fieldName = this.current.fieldName, offset?: number): void {

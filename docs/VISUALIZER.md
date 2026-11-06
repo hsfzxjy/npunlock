@@ -124,6 +124,22 @@ and `inspector` controls open temporary left/right drawers, and Escape or a
 semantic jump returns to the bytes. Neither panel becomes unavailable merely
 because the viewport is narrow.
 
+`copy` writes a go-to expression containing the artifact, exact half-open byte
+range, and any current node, field, and named-span identity. Pasting that value
+into `Ctrl+K` restores the complete semantic location after validating that the
+identity still exists. The current expression is also mirrored in the URL
+fragment with `replaceState`; it is useful within the running viewer session,
+but the random loopback token and process lifetime mean it is not a permanent
+external link.
+
+A thin ruler at the right edge of the bytes provides coarse artifact
+navigation without becoming a minimap. Its neutral background is unknown
+space; restrained category marks show semantic regions, explicitly irrelevant
+regions remain faint, reference destinations receive fine ticks, and the
+current selection is a precise blue line. Click to jump by file offset, or
+focus the ruler and use arrows, Page Up/Down, Home, and End. Every ruler action
+uses the ordinary navigation controller and history.
+
 Navigation history records semantic jumps, artifact and span changes, and
 references. Consecutive byte-key movements coalesce into one destination so
 Back returns to the preceding semantic location rather than the previous byte.

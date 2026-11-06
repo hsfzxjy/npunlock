@@ -677,6 +677,8 @@ def test_bundled_frontend() -> None:
     assert "semantic color and evidence" in javascript
     assert "renderTreeViewport" in javascript
     assert "narrow-tree-open" in javascript
+    assert "currentLocationExpression" in javascript
+    assert "renderOverview" in javascript
     stylesheet = static.joinpath("app.css").read_text(encoding="utf-8")
     assert "color-scheme: light" in stylesheet
     assert "color-scheme: dark" not in stylesheet
@@ -694,6 +696,7 @@ def test_bundled_frontend() -> None:
     assert ".tree-space" in stylesheet
     assert ".workspace.narrow-tree-open #tree-panel" in stylesheet
     assert ".workspace.narrow-inspector-open #inspector-panel" in stylesheet
+    assert ".overview" in stylesheet
     index = static.joinpath("index.html").read_text(encoding="utf-8")
     assert index.count('class="hex-label"') == 16
     assert "hex-head-viewport" in index
@@ -701,6 +704,7 @@ def test_bundled_frontend() -> None:
     assert 'id="toggle-dim-irrelevant"' in index
     assert 'id="go-to-dialog"' in index
     assert 'id="tree-filter"' in index
+    assert 'id="overview"' in index
     assert ">focus relevant</button>" in index
     schemas = files("npunlock.viz").joinpath("schemas")
     for name in ("descriptor.schema.json", "elf.json", "npu3720-act-compiler-8.3.json"):
